@@ -315,37 +315,37 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('wake_message_default',
 ## 6. TODO
 
 ### Phase 1 - Gateway foundation (this iteration)
-- [ ] 1. Add `migrations/0007_gateway.sql`; update `internal/servers` Store to
+- [x] 1. Add `migrations/0007_gateway.sql`; update `internal/servers` Store to
       read/write `wake_message`, `last_motd`, `last_motd_updated`; add
       accessors.
-- [ ] 2. Create `internal/gateway` package: listener manager with reconcile
+- [x] 2. Create `internal/gateway` package: listener manager with reconcile
       loop (startup + periodic + on create/delete), per-server `host_port`
       listeners, duplicate-bind guard, clean shutdown.
-- [ ] 3. Change `internal/docker/docker.go` `Create` to expose `25565` without
+- [x] 3. Change `internal/docker/docker.go` `Create` to expose `25565` without
       binding it to the host; add `containerAddr(ctx, srv)` resolving the
       container internal IP with published-port fallback.
-- [ ] 4. Wake-on-connect: on accept, resolve server, call `spindown.Wake` if
+- [x] 4. Wake-on-connect: on accept, resolve server, call `spindown.Wake` if
       stopped/sleeping.
-- [ ] 5. Limbo hold: buffer first length-prefixed packet, poll backend until
+- [x] 5. Limbo hold: buffer first length-prefixed packet, poll backend until
       it accepts (bounded ~90s), then replay buffered bytes and stream
       bidirectionally. Half-close + deadlines.
-- [ ] 6. Status ping responder on the gateway listener serving last-known-good
+- [x] 6. Status ping responder on the gateway listener serving last-known-good
       MOTD while sleeping (lightweight, status-only for Phase 1).
-- [ ] 7. Capture last-known-good MOTD while running (status probe against the
+- [x] 7. Capture last-known-good MOTD while running (status probe against the
       running container; store to DB).
-- [ ] 8. `internal/config`: `MCM_GATEWAY` env knob (default `auto`).
-- [ ] 9. Wire gateway enable to spin-down enable; start/stop gateway in
+- [x] 8. `internal/config`: `MCM_GATEWAY` env knob (default `auto`).
+- [x] 9. Wire gateway enable to spin-down enable; start/stop gateway in
       `cmd/mcm/main.go`.
-- [ ] 10. API: `GET/PUT /api/servers/{id}/gateway`, extend status endpoint
+- [x] 10. API: `GET/PUT /api/servers/{id}/gateway`, extend status endpoint
       with `last_motd`, add `gateway_enabled`/`wake_message_default` to
       settings.
-- [ ] 11. Frontend: types + client methods; server detail shows MOTD when
+- [x] 11. Frontend: types + client methods; server detail shows MOTD when
       sleeping; per-server wake-message input in settings; global gateway +
       default-message settings.
-- [ ] 12. Tests: gateway package (listener reconcile, wake-on-connect, limbo
+- [x] 12. Tests: gateway package (listener reconcile, wake-on-connect, limbo
       hold with a stub backend, status responder), MOTD capture, API handlers,
       existing tests still pass (`go test ./...`).
-- [ ] 13. Docs: update `README.md` + `TODO.md`; document migration + config.
+- [x] 13. Docs: update `README.md` + `TODO.md`; document migration + config.
 
 ### Phase 2 - Protocol proxy (limbo void + warp-in)
 - [ ] 1. `internal/proxy/protocol`: VarInt/VarLong/String/Position/UUID/Chat/NBT
