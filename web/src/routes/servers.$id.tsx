@@ -6,7 +6,6 @@ import type { Server, ServerState } from '../api/types';
 import { AppShell } from '../components/app-shell';
 import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
-import { GatewayPanel } from '../components/gateway-panel';
 import { InstallPanel } from '../components/install-panel';
 import { ModsPanel } from '../components/mods-panel';
 import { OpsPanel } from '../components/ops-panel';
@@ -169,7 +168,6 @@ function ServerDetailRoute() {
               server={server}
               onSaved={(s) => setServer(s)}
             />
-            <GatewayPanel serverId={server.id} state={state} />
             <InstallPanel
               serverId={server.id}
               serverType={server.server_type}

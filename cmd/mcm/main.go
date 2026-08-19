@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
@@ -15,7 +14,6 @@ import (
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/docker"
-	"github.com/mcm-panel/mcm/internal/gateway"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/servers"
 	"github.com/mcm-panel/mcm/internal/spindown"
@@ -74,33 +72,6 @@ func main() {
 	spinService := spindown.New(serverStore, serverStore, logger, 30*time.Minute)
 	spinService.Start()
 	defer spinService.Stop()
-
-	// The gateway owns each server's public port and wakes on connect. It is
-	// enabled per MCM_GATEWAY; in auto mode it tracks the gateway_enabled
-	// setting (tied to spin-down), read live on each reconcile.
-	gatewayEnabled := func(ctx context.Context) (bool, error) {
-		switch cfg.Gateway {
-		case "on":
-			return true, nil
-		case "off":
-			return false, nil
-		default: // auto
-			en, err := serverStore.GatewayEnabled(ctx)
-			if err != nil {
-				return false, err
-			}
-			return en, nil
-		}
-	}
-	gatewayMgr := gateway.New(gateway.Options{
-		Logger:  logger,
-		Store:   serverStore,
-		Docker:  dockerMgr,
-		Waker:   spinService,
-		Enabled: gatewayEnabled,
-	})
-	gatewayMgr.Start()
-	defer gatewayMgr.Stop()
 
 	handler := api.New(api.Options{
 		Cfg:      cfg,

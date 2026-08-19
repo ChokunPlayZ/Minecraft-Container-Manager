@@ -149,10 +149,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/servers/{id}/spindown", s.requireAuth(s.wrapJSON(s.handlePutServerSpindown)))
 	s.mux.HandleFunc("POST /api/servers/{id}/activity", s.requireAuth(s.wrapJSON(s.handleServerActivity)))
 
-	// Gateway / wake-on-rejoin.
-	s.mux.HandleFunc("GET /api/servers/{id}/gateway", s.requireAuth(s.wrapJSON(s.handleGetGateway)))
-	s.mux.HandleFunc("PUT /api/servers/{id}/gateway", s.requireAuth(s.wrapJSON(s.handlePutGateway)))
-
 	// Backups.
 	s.mux.HandleFunc("POST /api/servers/{id}/backup", s.requireAuth(s.wrapJSON(s.handleBackupServer)))
 	s.mux.HandleFunc("GET /api/servers/{id}/backups", s.requireAuth(s.wrapJSON(s.handleListBackups)))

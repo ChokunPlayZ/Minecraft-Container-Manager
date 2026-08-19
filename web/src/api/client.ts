@@ -7,7 +7,6 @@ import type {
   ServerType,
   Settings,
   BackupRecord,
-  GatewayInfo,
   VersionInfo,
   VersionMeta,
   Op,
@@ -112,14 +111,6 @@ export const api = {
   restartServer: (id: string) => request<Server>(`/api/servers/${id}/restart`, { method: 'POST' }),
 
   serverStatus: (id: string) => request<ServerStatus>(`/api/servers/${id}/status`),
-
-  serverGateway: (id: string) => request<GatewayInfo>(`/api/servers/${id}/gateway`),
-
-  putServerGateway: (id: string, wakeMessage: string) =>
-    request<GatewayInfo>(`/api/servers/${id}/gateway`, {
-      method: 'PUT',
-      body: JSON.stringify({ wake_message: wakeMessage }),
-    }),
 
   consoleTail: (id: string, opts?: { since?: string }) => {
     const q = opts?.since ? `?since=${encodeURIComponent(opts.since)}` : '';

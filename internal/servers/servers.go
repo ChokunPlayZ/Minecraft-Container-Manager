@@ -47,15 +47,10 @@ type Server struct {
 	State         string  `json:"state"`
 	// Backup settings. BackupEnabled defaults to true; BackupIntervalMinutes
 	// is the minutes between automatic backups (default 720).
-	BackupEnabled         bool `json:"backup_enabled"`
-	BackupIntervalMinutes int  `json:"backup_interval_minutes"`
-	// Gateway / wake-on-rejoin fields. WakeMessage is the per-server wait
-	// message; LastMotd and LastMotdUpdated are the last-known-good MOTD.
-	WakeMessage     string `json:"wake_message,omitempty"`
-	LastMotd        string `json:"last_motd,omitempty"`
-	LastMotdUpdated string `json:"last_motd_updated,omitempty"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	BackupEnabled         bool   `json:"backup_enabled"`
+	BackupIntervalMinutes int    `json:"backup_interval_minutes"`
+	CreatedAt             string `json:"created_at"`
+	UpdatedAt             string `json:"updated_at"`
 }
 
 // CreateInput is the payload for creating a server.
@@ -130,7 +125,7 @@ func (s *Store) Pool() *ports.Pool {
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, COALESCE(wake_message,''), COALESCE(last_motd,''), COALESCE(last_motd_updated,''), created_at, updated_at FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +136,7 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 	out := make([]Server, 0)
 	for rows.Next() {
 		var srv Server
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.WakeMessage, &srv.LastMotd, &srv.LastMotdUpdated, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, srv)
@@ -153,24 +148,8 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var srv Server
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, COALESCE(wake_message,''), COALESCE(last_motd,''), COALESCE(last_motd_updated,''), created_at, updated_at FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.WakeMessage, &srv.LastMotd, &srv.LastMotdUpdated, &srv.CreatedAt, &srv.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Server{}, ErrNotFound
-	}
-	if err != nil {
-		return Server{}, err
-	}
-	return srv, nil
-}
-
-// GetByPort returns a single server by its host (public) port, used by the
-// gateway to resolve an inbound connection on a given port.
-func (s *Store) GetByPort(ctx context.Context, port int) (Server, error) {
-	var srv Server
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, COALESCE(wake_message,''), COALESCE(last_motd,''), COALESCE(last_motd_updated,''), created_at, updated_at FROM servers WHERE host_port = ?`, port).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.WakeMessage, &srv.LastMotd, &srv.LastMotdUpdated, &srv.CreatedAt, &srv.UpdatedAt)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}

@@ -36,10 +36,6 @@ type Config struct {
 	// SecureCookies forces Secure on session cookies. It is controlled by
 	// MCM_TLS and defaults to false.
 	SecureCookies bool
-	// Gateway selects gateway activation. "auto" (default) runs the gateway
-	// whenever spin-down/gateway is enabled; "on" always runs it; "off"
-	// disables it.
-	Gateway string
 }
 
 // WebAuthnConfig configures the WebAuthn (passkey) relying party.
@@ -94,7 +90,6 @@ const (
 	EnvS3SecretKey      = "MCM_S3_SECRET_KEY"
 	EnvS3Bucket         = "MCM_S3_BUCKET"
 	EnvS3Region         = "MCM_S3_REGION"
-	EnvGateway          = "MCM_GATEWAY"
 )
 
 const (
@@ -111,7 +106,6 @@ const (
 	defaultRateLimitWindow  = time.Minute
 	defaultCPULimit         = 0
 	defaultMemoryMB         = 0
-	defaultGateway          = "auto"
 )
 
 // Load builds a Config from the environment. Missing variables fall back to
@@ -138,7 +132,6 @@ func Load() (*Config, error) {
 			Bucket:    getenv(EnvS3Bucket, ""),
 			Region:    getenv(EnvS3Region, "us-east-1"),
 		},
-		Gateway: getenv(EnvGateway, defaultGateway),
 	}
 	cfg.LoginMaxAttempts, err = parseIntEnv(EnvLoginMaxAttempts, defaultLoginMaxAttempts)
 	if err != nil {
