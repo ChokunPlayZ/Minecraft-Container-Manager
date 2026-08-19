@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/mcm-panel/mcm/internal/api"
 	"github.com/mcm-panel/mcm/internal/auth"
 	"github.com/mcm-panel/mcm/internal/backups"
@@ -37,6 +38,16 @@ func main() {
 
 	users := auth.NewUsers(handle.DB)
 	sessions := auth.NewManager(handle.DB)
+	passkeys := auth.NewPasskeys(handle.DB)
+
+	webAuthn, err := webauthn.New(&webauthn.Config{
+		RPID:          cfg.WebAuthn.RPID,
+		RPDisplayName: cfg.WebAuthn.RPDisplayName,
+		RPOrigins:     cfg.WebAuthn.RPOrigins,
+	})
+	if err != nil {
+		logger.Fatalf("configure webauthn: %v", err)
+	}
 
 	dockerMgr, err := docker.New(cfg.DockerHost)
 	if err != nil {
@@ -69,6 +80,8 @@ func main() {
 		Backups:  backupStore,
 		Users:    users,
 		Sessions: sessions,
+		Passkeys: passkeys,
+		WebAuthn: webAuthn,
 		Jars:     jarResolver,
 		DNS:      dnsService,
 		Spin:     spinService,

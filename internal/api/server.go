@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/mcm-panel/mcm/internal/auth"
 	"github.com/mcm-panel/mcm/internal/backups"
 	"github.com/mcm-panel/mcm/internal/config"
@@ -24,17 +25,20 @@ import (
 
 // Server wires the API handlers and middleware together.
 type Server struct {
-	cfg      *config.Config
-	db       *db.Store
-	servers  *servers.Store
-	backups  *backups.Store
-	users    *auth.Users
-	sessions *auth.Manager
-	jars     *jars.Resolver
-	dns      *dns.Service
-	spin     *spindown.Service
-	logger   *log.Logger
-	mux      *http.ServeMux
+	cfg        *config.Config
+	db         *db.Store
+	servers    *servers.Store
+	backups    *backups.Store
+	users      *auth.Users
+	sessions   *auth.Manager
+	passkeys   *auth.Passkeys
+	webAuthn   *webauthn.WebAuthn
+	ceremonies *ceremonyStore
+	jars       *jars.Resolver
+	dns        *dns.Service
+	spin       *spindown.Service
+	logger     *log.Logger
+	mux        *http.ServeMux
 }
 
 // Config holds the dependencies required to build the API server.
@@ -45,6 +49,8 @@ type Options struct {
 	Backups  *backups.Store
 	Users    *auth.Users
 	Sessions *auth.Manager
+	Passkeys *auth.Passkeys
+	WebAuthn *webauthn.WebAuthn
 	Jars     *jars.Resolver
 	DNS      *dns.Service
 	Spin     *spindown.Service
@@ -63,17 +69,20 @@ func New(opts Options) http.Handler {
 		opts.Logger = log.Default()
 	}
 	s := &Server{
-		cfg:      opts.Cfg,
-		db:       opts.DB,
-		servers:  opts.Servers,
-		backups:  opts.Backups,
-		users:    opts.Users,
-		sessions: opts.Sessions,
-		jars:     opts.Jars,
-		dns:      opts.DNS,
-		spin:     opts.Spin,
-		logger:   opts.Logger,
-		mux:      http.NewServeMux(),
+		cfg:        opts.Cfg,
+		db:         opts.DB,
+		servers:    opts.Servers,
+		backups:    opts.Backups,
+		users:      opts.Users,
+		sessions:   opts.Sessions,
+		passkeys:   opts.Passkeys,
+		webAuthn:   opts.WebAuthn,
+		ceremonies: newCeremonyStore(),
+		jars:       opts.Jars,
+		dns:        opts.DNS,
+		spin:       opts.Spin,
+		logger:     opts.Logger,
+		mux:        http.NewServeMux(),
 	}
 	s.routes()
 	return s.withMiddleware(s.mux)
@@ -81,10 +90,25 @@ func New(opts Options) http.Handler {
 
 func (s *Server) routes() {
 	// Auth and onboarding.
+	s.mux.HandleFunc("GET /api/auth/csrf", s.wrapJSON(s.handleCSRF))
 	s.mux.HandleFunc("POST /api/onboarding", s.wrapJSON(s.handleOnboarding))
 	s.mux.HandleFunc("POST /api/auth/login", s.wrapJSON(s.handleLogin))
 	s.mux.HandleFunc("POST /api/auth/logout", s.requireAuth(s.wrapJSON(s.handleLogout)))
 	s.mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.wrapJSON(s.handleMe)))
+
+	// TOTP two-factor authentication.
+	s.mux.HandleFunc("GET /api/auth/totp", s.requireAuth(s.wrapJSON(s.handleTOTPStatus)))
+	s.mux.HandleFunc("POST /api/auth/totp/enroll", s.requireAuth(s.wrapJSON(s.handleTOTPEnroll)))
+	s.mux.HandleFunc("POST /api/auth/totp/enroll/confirm", s.requireAuth(s.wrapJSON(s.handleTOTPConfirm)))
+	s.mux.HandleFunc("POST /api/auth/totp/disable", s.requireAuth(s.wrapJSON(s.handleTOTPDisable)))
+
+	// Passkey (WebAuthn) enrollment and login.
+	s.mux.HandleFunc("POST /api/passkey/register/begin", s.requireAuth(s.wrapJSON(s.handlePasskeyRegisterBegin)))
+	s.mux.HandleFunc("POST /api/passkey/register/finish", s.requireAuth(s.wrapJSON(s.handlePasskeyRegisterFinish)))
+	s.mux.HandleFunc("GET /api/passkey", s.requireAuth(s.wrapJSON(s.handlePasskeyList)))
+	s.mux.HandleFunc("DELETE /api/passkey", s.requireAuth(s.wrapJSON(s.handlePasskeyDelete)))
+	s.mux.HandleFunc("POST /api/passkey/login/begin", s.wrapJSON(s.handlePasskeyLoginBegin))
+	s.mux.HandleFunc("POST /api/passkey/login/finish", s.wrapJSON(s.handlePasskeyLoginFinish))
 
 	// Servers.
 	s.mux.HandleFunc("GET /api/servers", s.requireAuth(s.wrapJSON(s.handleListServers)))
@@ -134,8 +158,31 @@ func (s *Server) routes() {
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if !csrfExempt(r) && !csrfTokenValid(r) {
+			writeError(w, http.StatusForbidden, "csrf_missing", "missing or invalid CSRF token")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// csrfExempt reports whether a request is allowed to skip CSRF validation.
+// Only safe (read) methods and the unauthenticated onboarding/login endpoints
+// are exempt.
+func csrfExempt(r *http.Request) bool {
+	if csrfSafeMethods[r.Method] {
+		return true
+	}
+	return csrfExemptPaths[r.URL.Path]
+}
+
+// csrfTokenValid verifies the double-submit cookie matches the header token.
+func csrfTokenValid(r *http.Request) bool {
+	cookie, err := r.Cookie(CSRFCookieName)
+	if err != nil {
+		return false
+	}
+	return csrfTokenMatches(cookie.Value, r.Header.Get(csrfHeaderName))
 }
 
 func (s *Server) wrapJSON(h http.HandlerFunc) http.HandlerFunc {

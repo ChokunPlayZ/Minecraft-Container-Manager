@@ -71,6 +71,12 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.SessionSecret) == 0 {
 		t.Error("expected a non-empty ephemeral session secret")
 	}
+	if len(cfg.WebAuthn.RPOrigins) != 1 || cfg.WebAuthn.RPOrigins[0] != "http://localhost:8080" {
+		t.Errorf("WebAuthn RPOrigins = %v, want [http://localhost:8080]", cfg.WebAuthn.RPOrigins)
+	}
+	if cfg.WebAuthn.RPID != "localhost" {
+		t.Errorf("WebAuthn RPID = %q, want localhost", cfg.WebAuthn.RPID)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -97,6 +103,18 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if !cfg.SecureCookies {
 		t.Error("SecureCookies should be true when MCM_TLS=true")
+	}
+	t.Setenv(EnvWebAuthnRPID, "mc.example.com")
+	t.Setenv(EnvWebAuthnOrigin, "https://mc.example.com")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WebAuthn.RPID != "mc.example.com" {
+		t.Errorf("WebAuthn RPID = %q, want mc.example.com", cfg.WebAuthn.RPID)
+	}
+	if len(cfg.WebAuthn.RPOrigins) != 1 || cfg.WebAuthn.RPOrigins[0] != "https://mc.example.com" {
+		t.Errorf("WebAuthn RPOrigins = %v, want [https://mc.example.com]", cfg.WebAuthn.RPOrigins)
 	}
 }
 

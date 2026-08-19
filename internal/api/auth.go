@@ -56,6 +56,7 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	TOTPCode string `json:"totp_code"`
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +77,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := auth.VerifyPassword(req.Password, user.PasswordHash); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
+	}
+	if user.TOTPEnabled {
+		if req.TOTPCode == "" {
+			writeJSON(w, http.StatusAccepted, map[string]bool{"2fa_required": true})
+			return
+		}
+		if !auth.VerifyTOTP(user.TOTPSecret, req.TOTPCode, 1) {
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid or missing totp code")
+			return
+		}
 	}
 	s.issueSession(w, r, user.ID)
 	writeJSON(w, http.StatusOK, user)

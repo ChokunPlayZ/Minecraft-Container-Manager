@@ -17,12 +17,23 @@ type Config struct {
 	DBPath        string
 	DockerHost    string
 	SessionSecret []byte
+	WebAuthn      WebAuthnConfig
 	// S3 holds the object-storage configuration used for world backups. An
 	// empty Endpoint disables backups.
 	S3 S3Config
 	// SecureCookies forces Secure on session cookies. It is controlled by
 	// MCM_TLS and defaults to false.
 	SecureCookies bool
+}
+
+// WebAuthnConfig configures the WebAuthn (passkey) relying party.
+type WebAuthnConfig struct {
+	// RPID is the relying party ID (the effective domain, e.g. "localhost").
+	RPID string
+	// RPOrigins lists the permitted origins, e.g. "https://example.com".
+	RPOrigins []string
+	// RPDisplayName is shown during passkey creation.
+	RPDisplayName string
 }
 
 // S3Config describes a path-style S3-compatible object store endpoint.
@@ -42,18 +53,21 @@ type PortRange struct {
 
 // EnvVar names, kept as constants so tests and docs can refer to them.
 const (
-	EnvAddr          = "MCM_ADDR"
-	EnvPortRange     = "MCM_PORT_RANGE"
-	EnvDataDir       = "MCM_DATA_DIR"
-	EnvDBPath        = "MCM_DB_PATH"
-	EnvDockerHost    = "DOCKER_HOST"
-	EnvSessionSecret = "MCM_SESSION_SECRET"
-	EnvTLS           = "MCM_TLS"
-	EnvS3Endpoint    = "MCM_S3_ENDPOINT"
-	EnvS3AccessKey   = "MCM_S3_ACCESS_KEY"
-	EnvS3SecretKey   = "MCM_S3_SECRET_KEY"
-	EnvS3Bucket      = "MCM_S3_BUCKET"
-	EnvS3Region      = "MCM_S3_REGION"
+	EnvAddr           = "MCM_ADDR"
+	EnvPortRange      = "MCM_PORT_RANGE"
+	EnvDataDir        = "MCM_DATA_DIR"
+	EnvDBPath         = "MCM_DB_PATH"
+	EnvDockerHost     = "DOCKER_HOST"
+	EnvSessionSecret  = "MCM_SESSION_SECRET"
+	EnvTLS            = "MCM_TLS"
+	EnvWebAuthnRPID   = "MCM_WEB_AUTHN_RPID"
+	EnvWebAuthnOrigin = "MCM_WEB_AUTHN_RP_ORIGIN"
+	EnvWebAuthnName   = "MCM_WEB_AUTHN_RP_NAME"
+	EnvS3Endpoint     = "MCM_S3_ENDPOINT"
+	EnvS3AccessKey    = "MCM_S3_ACCESS_KEY"
+	EnvS3SecretKey    = "MCM_S3_SECRET_KEY"
+	EnvS3Bucket       = "MCM_S3_BUCKET"
+	EnvS3Region       = "MCM_S3_REGION"
 )
 
 const (
@@ -62,6 +76,8 @@ const (
 	defaultDataDir       = "./data"
 	defaultDockerHost    = "unix:///var/run/docker.sock"
 	defaultSessionSecret = ""
+	defaultRPID          = "localhost"
+	defaultRPName        = "Minecraft Container Manager"
 )
 
 // Load builds a Config from the environment. Missing variables fall back to
@@ -71,6 +87,11 @@ func Load() (*Config, error) {
 		Addr:       getenv(EnvAddr, defaultAddr),
 		DataDir:    getenv(EnvDataDir, defaultDataDir),
 		DockerHost: getenv(EnvDockerHost, defaultDockerHost),
+		WebAuthn: WebAuthnConfig{
+			RPID:          getenv(EnvWebAuthnRPID, defaultRPID),
+			RPOrigins:     splitOrigins(getenv(EnvWebAuthnOrigin, "")),
+			RPDisplayName: getenv(EnvWebAuthnName, defaultRPName),
+		},
 		S3: S3Config{
 			Endpoint:  getenv(EnvS3Endpoint, ""),
 			AccessKey: getenv(EnvS3AccessKey, ""),
@@ -104,6 +125,9 @@ func Load() (*Config, error) {
 			cfg.SecureCookies = b
 		}
 	}
+	if len(cfg.WebAuthn.RPOrigins) == 0 {
+		cfg.WebAuthn.RPOrigins = []string{defaultOrigin(cfg.Addr)}
+	}
 
 	return cfg, nil
 }
@@ -113,6 +137,30 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func splitOrigins(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func defaultOrigin(addr string) string {
+	host := "localhost"
+	if i := strings.LastIndex(addr, ":"); i >= 0 {
+		if p := addr[i+1:]; p != "" {
+			host += ":" + p
+		}
+	}
+	return "http://" + host
 }
 
 // ParsePortRange parses "start-end". Both ends are inclusive. It rejects
