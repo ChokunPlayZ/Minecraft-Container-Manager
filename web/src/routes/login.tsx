@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '../lib/auth';
 import { api, ApiError } from '../api/client';
@@ -73,12 +73,6 @@ function LoginRoute() {
           {busy ? 'Signing in...' : 'Sign in'}
         </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-muted-foreground">
-        No account yet?{' '}
-        <Link to="/onboarding" className="font-medium text-primary hover:underline">
-          Set up admin
-        </Link>
-      </p>
     </AuthScreen>
   );
 }

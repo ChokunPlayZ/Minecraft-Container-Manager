@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, ApiError } from '../api/client';
+import { api } from '../api/client';
 import type { Me } from '../api/types';
 
 export type AuthStatus = 'loading' | 'onboarding' | 'unauthenticated' | 'authenticated';
@@ -22,20 +22,6 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function statusFromError(err: unknown): AuthStatus {
-  if (err instanceof ApiError) {
-    if (err.status === 404) {
-      const detail = err.detail.toLowerCase();
-      if (detail.includes('onboard') || detail.includes('admin') || detail.includes('no admin')) {
-        return 'onboarding';
-      }
-    }
-    if (err.status === 401) return 'unauthenticated';
-    if (err.status === 403) return 'unauthenticated';
-  }
-  return 'unauthenticated';
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<Me | null>(null);
@@ -45,10 +31,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await api.me();
       setUser(me);
       setStatus('authenticated');
-    } catch (err) {
+      return;
+    } catch {
       setUser(null);
-      setStatus(statusFromError(err));
     }
+
+    // No valid session. If the instance still needs its first admin account,
+    // route straight to onboarding so a fresh install never dead-ends on login.
+    // A set-up instance is never sent here, so this only fires the first time.
+    try {
+      const onboard = await api.onboardingStatus();
+      if (onboard.onboarding_required) {
+        setStatus('onboarding');
+        return;
+      }
+    } catch {
+      /* endpoint unavailable; fall through to unauthenticated */
+    }
+    setStatus('unauthenticated');
   }, []);
 
   useEffect(() => {

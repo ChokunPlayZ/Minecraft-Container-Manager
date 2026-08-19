@@ -136,7 +136,9 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 	}
 	defer rows.Close()
 
-	var out []Server
+	// Initialize to an empty (non-nil) slice so an empty result serializes as
+	// [] rather than null in the JSON API.
+	out := make([]Server, 0)
 	for rows.Next() {
 		var srv Server
 		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.WakeMessage, &srv.LastMotd, &srv.LastMotdUpdated, &srv.CreatedAt, &srv.UpdatedAt); err != nil {

@@ -82,6 +82,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  onboardingStatus: () => request<{ onboarding_required: boolean }>('/api/onboarding/status'),
+
   onboarding: (email: string, password: string) =>
     request<Me>('/api/onboarding', { method: 'POST', body: JSON.stringify({ email, password }) }),
 
@@ -92,7 +94,8 @@ export const api = {
 
   me: () => request<Me>('/api/auth/me'),
 
-  listServers: () => request<Server[]>('/api/servers'),
+  listServers: () =>
+    request<{ servers: Server[] }>('/api/servers').then((res) => res.servers ?? []),
 
   createServer: (input: CreateServerInput) =>
     request<Server>('/api/servers', { method: 'POST', body: JSON.stringify(input) }),

@@ -98,6 +98,7 @@ func (s *Server) routes() {
 
 	// Auth and onboarding.
 	s.mux.HandleFunc("GET /api/auth/csrf", s.wrapJSON(s.handleCSRF))
+	s.mux.HandleFunc("GET /api/onboarding/status", s.wrapJSON(s.handleOnboardingStatus))
 	s.mux.HandleFunc("POST /api/onboarding", s.wrapJSON(s.handleOnboarding))
 	s.mux.HandleFunc("POST /api/auth/login", s.wrapJSON(s.handleLogin))
 	s.mux.HandleFunc("POST /api/auth/logout", s.requireAuth(s.wrapJSON(s.handleLogout)))

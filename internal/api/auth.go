@@ -15,6 +15,22 @@ type onboardingRequest struct {
 	Password string `json:"password"`
 }
 
+// handleOnboardingStatus reports whether the instance still needs its first
+// admin account. The frontend checks this to route a fresh install to the
+// onboarding screen instead of dead-ending on login.
+func (s *Server) handleOnboardingStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	count, err := s.users.Count(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "could not check users")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"onboarding_required": count == 0})
+}
+
 func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
