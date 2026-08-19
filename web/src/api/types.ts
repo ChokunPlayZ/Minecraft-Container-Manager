@@ -69,3 +69,30 @@ export interface BackupRecord {
   status: BackupStatus;
   created_at: string;
 }
+
+export interface Player {
+  name: string;
+}
+
+export interface PlayerList {
+  players: Player[];
+  source: 'rcon' | 'console';
+}
+
+export interface Op {
+  uuid: string;
+  name: string;
+  level: number;
+  bypassesPlayerLimit?: boolean;
+}
+
+export interface Mod {
+  name: string;
+  file: string;
+  enabled: boolean;
+}
+
+export interface ModList {
+  type: 'mods' | 'plugins';
+  items: Mod[];
+}

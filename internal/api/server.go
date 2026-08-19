@@ -124,6 +124,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(false))))
 	s.mux.HandleFunc("POST /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(true))))
 
+	// Server management (players, ops, mods/plugins).
+	s.mux.HandleFunc("GET /api/servers/{id}/players", s.requireAuth(s.wrapJSON(s.handleListPlayers)))
+	s.mux.HandleFunc("GET /api/servers/{id}/ops", s.requireAuth(s.wrapJSON(s.handleListOps)))
+	s.mux.HandleFunc("POST /api/servers/{id}/ops", s.requireAuth(s.wrapJSON(s.handleAddOP)))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/ops/{name}", s.requireAuth(s.wrapJSON(s.handleRemoveOP)))
+	s.mux.HandleFunc("GET /api/servers/{id}/mods", s.requireAuth(s.wrapJSON(s.handleListMods)))
+	s.mux.HandleFunc("POST /api/servers/{id}/mods", s.requireAuth(s.wrapJSON(s.handleUploadMod)))
+	s.mux.HandleFunc("PATCH /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleSetModEnabled)))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleDeleteMod)))
+
 	// Idle spin-down.
 	s.mux.HandleFunc("GET /api/spindown", s.requireAuth(s.wrapJSON(s.handleListSpindown)))
 	s.mux.HandleFunc("POST /api/servers/{id}/wake", s.requireAuth(s.wrapJSON(s.handleWakeServer)))

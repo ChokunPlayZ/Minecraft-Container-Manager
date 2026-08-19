@@ -7,6 +7,9 @@ import { AppShell } from '../components/app-shell';
 import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
 import { InstallPanel } from '../components/install-panel';
+import { ModsPanel } from '../components/mods-panel';
+import { OpsPanel } from '../components/ops-panel';
+import { PlayersPanel } from '../components/players-panel';
 import { RequireAuth } from '../components/require-auth';
 import { ServerSettings } from '../components/server-settings';
 import { StatusBadge } from '../components/status-badge';
@@ -155,6 +158,9 @@ function ServerDetailRoute() {
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <ConsoleViewer serverId={server.id} />
+            <div className="mt-4">
+              <PlayersPanel server={server} />
+            </div>
           </div>
           <div className="space-y-4">
             <ServerSettings
@@ -167,6 +173,8 @@ function ServerDetailRoute() {
               serverType={server.server_type}
               onInstalled={loadServer}
             />
+            <OpsPanel server={server} refreshKey={state} />
+            <ModsPanel server={server} />
             <BackupsPanel server={server} />
           </div>
         </div>

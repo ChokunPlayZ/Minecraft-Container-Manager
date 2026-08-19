@@ -9,6 +9,10 @@ import type {
   BackupRecord,
   VersionInfo,
   VersionMeta,
+  Op,
+  PlayerList,
+  Mod,
+  ModList,
 } from './types';
 
 export class ApiError extends Error {
@@ -23,10 +27,41 @@ export class ApiError extends Error {
   }
 }
 
+const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+let csrfToken: string | null = null;
+let csrfPromise: Promise<string> | null = null;
+
+async function ensureCsrf(): Promise<string> {
+  if (csrfToken) return csrfToken;
+  if (!csrfPromise) {
+    csrfPromise = fetch('/api/auth/csrf', { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('csrf unavailable'))))
+      .then((body) => {
+        csrfToken = String(body?.csrf_token ?? '');
+        return csrfToken;
+      })
+      .finally(() => {
+        csrfPromise = null;
+      });
+  }
+  return csrfPromise;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = init.method ?? 'GET';
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string> | undefined),
+  };
+  const isFormData = init.body instanceof FormData;
+  if (!isFormData) headers['Content-Type'] = 'application/json';
+  if (!safeMethods.has(method)) {
+    const token = await ensureCsrf();
+    if (token) headers['X-CSRF-Token'] = token;
+  }
   const res = await fetch(path, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    headers,
     ...init,
   });
 
@@ -98,6 +133,40 @@ export const api = {
 
   listBackups: (serverId: string) =>
     request<{ backups: BackupRecord[] }>(`/api/servers/${serverId}/backups`),
+
+  players: (serverId: string) => request<PlayerList>(`/api/servers/${serverId}/players`),
+
+  ops: (serverId: string) => request<{ ops: Op[] }>(`/api/servers/${serverId}/ops`),
+
+  addOp: (serverId: string, name: string, level?: number) =>
+    request<{ ops: Op[] }>(`/api/servers/${serverId}/ops`, {
+      method: 'POST',
+      body: JSON.stringify({ name, level: level ?? 4 }),
+    }),
+
+  removeOp: (serverId: string, name: string) =>
+    request<{ ok: boolean }>(`/api/servers/${serverId}/ops/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+
+  mods: (serverId: string) => request<ModList>(`/api/servers/${serverId}/mods`),
+
+  uploadMod: (serverId: string, file: File) => {
+    const body = new FormData();
+    body.append('file', file);
+    return request<Mod>(`/api/servers/${serverId}/mods`, { method: 'POST', body });
+  },
+
+  setModEnabled: (serverId: string, name: string, enabled: boolean) =>
+    request<Mod>(`/api/servers/${serverId}/mods/${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
+
+  deleteMod: (serverId: string, name: string) =>
+    request<{ ok: boolean }>(`/api/servers/${serverId}/mods/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
 
   createBackup: (serverId: string, name?: string) =>
     request<BackupRecord>(`/api/servers/${serverId}/backup`, {

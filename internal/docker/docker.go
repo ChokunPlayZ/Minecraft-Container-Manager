@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -24,6 +26,7 @@ const (
 // MCM servers.
 type Manager struct {
 	client *client.Client
+	host   string
 }
 
 // New builds a Manager from a Docker host string (e.g. "unix:///...").
@@ -33,7 +36,27 @@ func New(host string) (*Manager, error) {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
 	cli.NegotiateAPIVersion(context.Background())
-	return &Manager{client: cli}, nil
+	return &Manager{client: cli, host: host}, nil
+}
+
+// HostAddress returns the network address on which the Docker daemon is
+// reachable, suitable for reaching a container's published host port. It maps
+// unix/local sockets to localhost and strips any transport scheme or path.
+func (m *Manager) HostAddress() string {
+	h := strings.TrimPrefix(m.host, "unix://")
+	if idx := strings.Index(h, "://"); idx >= 0 {
+		h = h[idx+3:]
+	}
+	if idx := strings.Index(h, "/"); idx >= 0 {
+		h = h[:idx]
+	}
+	if h == "" {
+		return "127.0.0.1"
+	}
+	if host, _, err := net.SplitHostPort(h); err == nil && host != "" {
+		return host
+	}
+	return h
 }
 
 // CreateOpts describes a server container to create.
