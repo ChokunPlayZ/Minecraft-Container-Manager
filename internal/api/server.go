@@ -18,6 +18,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/servers"
+	"github.com/mcm-panel/mcm/internal/spindown"
 	"github.com/mcm-panel/mcm/internal/web"
 )
 
@@ -31,6 +32,7 @@ type Server struct {
 	sessions *auth.Manager
 	jars     *jars.Resolver
 	dns      *dns.Service
+	spin     *spindown.Service
 	logger   *log.Logger
 	mux      *http.ServeMux
 }
@@ -45,6 +47,7 @@ type Options struct {
 	Sessions *auth.Manager
 	Jars     *jars.Resolver
 	DNS      *dns.Service
+	Spin     *spindown.Service
 	Logger   *log.Logger
 }
 
@@ -68,6 +71,7 @@ func New(opts Options) http.Handler {
 		sessions: opts.Sessions,
 		jars:     opts.Jars,
 		dns:      opts.DNS,
+		spin:     opts.Spin,
 		logger:   opts.Logger,
 		mux:      http.NewServeMux(),
 	}
@@ -95,6 +99,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/console", s.requireAuth(s.handleServerConsole))
 	s.mux.HandleFunc("GET /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(false))))
 	s.mux.HandleFunc("POST /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(true))))
+
+	// Idle spin-down.
+	s.mux.HandleFunc("GET /api/spindown", s.requireAuth(s.wrapJSON(s.handleListSpindown)))
+	s.mux.HandleFunc("POST /api/servers/{id}/wake", s.requireAuth(s.wrapJSON(s.handleWakeServer)))
+	s.mux.HandleFunc("GET /api/servers/{id}/spindown", s.requireAuth(s.wrapJSON(s.handleGetServerSpindown)))
+	s.mux.HandleFunc("PUT /api/servers/{id}/spindown", s.requireAuth(s.wrapJSON(s.handlePutServerSpindown)))
+	s.mux.HandleFunc("POST /api/servers/{id}/activity", s.requireAuth(s.wrapJSON(s.handleServerActivity)))
 
 	// Backups.
 	s.mux.HandleFunc("POST /api/servers/{id}/backup", s.requireAuth(s.wrapJSON(s.handleBackupServer)))

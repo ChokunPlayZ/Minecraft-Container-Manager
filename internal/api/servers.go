@@ -122,6 +122,7 @@ func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
+	rc = s.configureConsoleJoinWatcher(r.Context(), r.PathValue("id"), rc)
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	_, _ = stdcopy.StdCopy(w, w, rc)
