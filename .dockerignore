@@ -1,0 +1,15 @@
+node_modules
+web/node_modules
+web/dist
+web/.tanstack
+web/.output
+.git
+data
+*.db
+*.db-wal
+*.db-shm
+.env
+/mcm
+coverage
+*.log
+.DS_Store

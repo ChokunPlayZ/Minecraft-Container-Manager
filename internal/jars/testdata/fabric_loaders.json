@@ -1,0 +1,4 @@
+[
+  {"loader": {"separator": ".", "build": 3, "maven": "x", "version": "0.15.2", "stable": true}, "intermediary": {}, "launcherMeta": {}},
+  {"loader": {"separator": ".", "build": 4, "maven": "x", "version": "0.15.5", "stable": true}, "intermediary": {}, "launcherMeta": {}}
+]

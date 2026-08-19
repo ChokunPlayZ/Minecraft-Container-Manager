@@ -1,0 +1,25 @@
+services:
+  mcm:
+    build:
+      context: .
+    container_name: mcm
+    ports:
+      - "8080:8080"
+    environment:
+      MCM_ADDR: ${MCM_ADDR:-:8080}
+      MCM_PORT_RANGE: ${MCM_PORT_RANGE:-25565-25665}
+      MCM_DATA_DIR: ${MCM_DATA_DIR:-/data}
+      MCM_DB_PATH: ${MCM_DB_PATH:-/data/mcm.db}
+      DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
+      MCM_SESSION_SECRET: ${MCM_SESSION_SECRET:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - mcm-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - default
+
+volumes:
+  mcm-data:
+    name: mcm-data

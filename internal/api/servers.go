@@ -1,0 +1,155 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/mcm-panel/mcm/internal/ports"
+	"github.com/mcm-panel/mcm/internal/servers"
+)
+
+func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
+	list, err := s.servers.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "could not list servers")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"servers": list})
+}
+
+func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
+	var in servers.CreateInput
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if in.Name == "" || in.Version == "" || in.RAMMB <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "name, version, and ram_mb are required")
+		return
+	}
+	srv, err := s.servers.Create(r.Context(), in)
+	if err != nil {
+		if errors.Is(err, ports.ErrPortPoolFull) {
+			writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, srv)
+}
+
+func (s *Server) handleGetServer(w http.ResponseWriter, r *http.Request) {
+	srv, err := s.servers.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, srv)
+}
+
+func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
+	var in servers.UpdateInput
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	srv, err := s.servers.Update(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, srv)
+}
+
+func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
+	if err := s.servers.Delete(r.Context(), r.PathValue("id")); err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleServerAction(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var (
+			srv servers.Server
+			err error
+		)
+		switch action {
+		case "start":
+			srv, err = s.servers.Start(r.Context(), r.PathValue("id"))
+		case "stop":
+			srv, err = s.servers.Stop(r.Context(), r.PathValue("id"))
+		case "restart":
+			srv, err = s.servers.Restart(r.Context(), r.PathValue("id"))
+		}
+		if err != nil {
+			s.writeServerErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, srv)
+	}
+}
+
+func (s *Server) handleServerStatus(w http.ResponseWriter, r *http.Request) {
+	srv, err := s.servers.Status(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, srv)
+}
+
+func (s *Server) handleAvailablePorts(w http.ResponseWriter, r *http.Request) {
+	free, err := s.servers.Pool().Available(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "could not query available ports")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": free})
+}
+
+func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
+	follow := false
+	if q := r.URL.Query().Get("follow"); q == "1" || q == "true" {
+		follow = true
+	}
+	rc, err := s.servers.Console(r.Context(), r.PathValue("id"), follow)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	_, _ = stdcopy.StdCopy(w, w, rc)
+}
+
+func (s *Server) handleInstall(provision bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		res, err := s.servers.Install(r.Context(), r.PathValue("id"), provision)
+		if err != nil {
+			s.writeServerErr(w, err)
+			return
+		}
+		status := http.StatusOK
+		if provision {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, res)
+	}
+}
+
+func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, servers.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "server not found")
+		return
+	}
+	if errors.Is(err, ports.ErrPortPoolFull) {
+		writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal", err.Error())
+}

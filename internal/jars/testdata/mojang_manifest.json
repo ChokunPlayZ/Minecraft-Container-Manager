@@ -1,0 +1,8 @@
+{
+  "latest": {"release": "1.21.1", "snapshot": "25w01a"},
+  "versions": [
+    {"id": "1.20.4", "type": "release", "url": "https://example.test/1.20.4.json", "time": "2024-01-01T00:00:00Z", "releaseTime": "2023-12-05T00:00:00Z"},
+    {"id": "1.21.1", "type": "release", "url": "https://example.test/1.21.1.json", "time": "2024-01-02T00:00:00Z", "releaseTime": "2024-06-18T00:00:00Z"},
+    {"id": "25w01a", "type": "snapshot", "url": "https://example.test/25w01a.json", "time": "2024-01-03T00:00:00Z", "releaseTime": "2024-01-03T00:00:00Z"}
+  ]
+}

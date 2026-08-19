@@ -1,0 +1,376 @@
+// Package servers implements server record CRUD and container orchestration.
+package servers
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"path/filepath"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/docker"
+	"github.com/mcm-panel/mcm/internal/jars"
+	"github.com/mcm-panel/mcm/internal/ports"
+)
+
+// Server state values.
+const (
+	StateStopped  = "stopped"
+	StateStarting = "starting"
+	StateRunning  = "running"
+	StateStopping = "stopping"
+	StateError    = "error"
+)
+
+// ErrNotFound is returned when a server id does not exist.
+var ErrNotFound = errors.New("server not found")
+
+// Server is the public representation of a server record.
+type Server struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	ServerType  string `json:"server_type"`
+	Version     string `json:"version"`
+	Build       string `json:"build,omitempty"`
+	RAMMB       int    `json:"ram_mb"`
+	HostPort    int    `json:"host_port"`
+	ContainerID string `json:"container_id,omitempty"`
+	State       string `json:"state"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// CreateInput is the payload for creating a server.
+type CreateInput struct {
+	Name       string       `json:"name"`
+	ServerType jars.JarType `json:"server_type"`
+	Version    string       `json:"version"`
+	Build      string       `json:"build,omitempty"`
+	RAMMB      int          `json:"ram_mb"`
+}
+
+// UpdateInput is the payload for updating a server.
+type UpdateInput struct {
+	Name       *string       `json:"name"`
+	ServerType *jars.JarType `json:"server_type"`
+	Version    *string       `json:"version"`
+	Build      *string       `json:"build"`
+	RAMMB      *int          `json:"ram_mb"`
+}
+
+// InstallResult describes a server's resolved install configuration.
+type InstallResult struct {
+	Server   Server        `json:"server"`
+	Resolved jars.Resolved `json:"resolved"`
+	DataDir  string        `json:"data_dir"`
+}
+
+// Store coordinates the database, docker, jar resolution, and port allocation.
+type Store struct {
+	db      *sql.DB
+	docker  *docker.Manager
+	jars    *jars.Resolver
+	ports   *ports.Pool
+	dataDir string
+}
+
+// NewStore wires the server store together.
+func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, end int, dataDir string) *Store {
+	return &Store{
+		db:      handle.DB,
+		docker:  dm,
+		jars:    jr,
+		ports:   ports.NewPool(handle.DB, start, end),
+		dataDir: dataDir,
+	}
+}
+
+// Pool exposes the underlying port pool for the available-ports endpoint.
+func (s *Store) Pool() *ports.Pool {
+	return s.ports
+}
+
+// List returns all servers ordered by creation time.
+func (s *Store) List(ctx context.Context) ([]Server, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, host_port, COALESCE(container_id,''), state, created_at, updated_at FROM servers ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Server
+	for rows.Next() {
+		var srv Server
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, srv)
+	}
+	return out, rows.Err()
+}
+
+// Get returns a single server by id.
+func (s *Store) Get(ctx context.Context, id string) (Server, error) {
+	var srv Server
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, host_port, COALESCE(container_id,''), state, created_at, updated_at FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.CreatedAt, &srv.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Server{}, ErrNotFound
+	}
+	if err != nil {
+		return Server{}, err
+	}
+	return srv, nil
+}
+
+// Create validates the requested jar, allocates a host port, and persists a new
+// stopped server. The container itself is created lazily on install/start.
+func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
+	resolved, err := s.jars.Validate(ctx, in.ServerType, in.Version, in.Build)
+	if err != nil {
+		return Server{}, fmt.Errorf("validate jar: %w", err)
+	}
+	port, err := s.ports.Allocate(ctx)
+	if err != nil {
+		return Server{}, fmt.Errorf("allocate port: %w", err)
+	}
+
+	id := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, host_port, container_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
+		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, port, StateStopped, now, now)
+	if err != nil {
+		return Server{}, fmt.Errorf("insert server: %w", err)
+	}
+	return s.Get(ctx, id)
+}
+
+// Update applies non-nil fields from the input to a server record.
+func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+	if in.Name != nil {
+		srv.Name = *in.Name
+	}
+	if in.Version != nil && in.ServerType != nil {
+		resolved, verr := s.jars.Validate(ctx, *in.ServerType, *in.Version, ptrStr(in.Build))
+		if verr != nil {
+			return Server{}, fmt.Errorf("validate jar: %w", verr)
+		}
+		srv.ServerType = string(*in.ServerType)
+		srv.Version = resolved.Version
+		srv.Build = resolved.Build
+	} else if in.Version != nil {
+		resolved, verr := s.jars.Validate(ctx, jars.JarType(srv.ServerType), *in.Version, ptrStr(in.Build))
+		if verr != nil {
+			return Server{}, fmt.Errorf("validate jar: %w", verr)
+		}
+		srv.Version = resolved.Version
+		srv.Build = resolved.Build
+	} else if in.Build != nil {
+		resolved, verr := s.jars.Validate(ctx, jars.JarType(srv.ServerType), srv.Version, *in.Build)
+		if verr != nil {
+			return Server{}, fmt.Errorf("validate jar: %w", verr)
+		}
+		srv.Build = resolved.Build
+	}
+	if in.RAMMB != nil {
+		srv.RAMMB = *in.RAMMB
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, updated_at=? WHERE id=?`,
+		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, now, id)
+	if err != nil {
+		return Server{}, fmt.Errorf("update server: %w", err)
+	}
+	return s.Get(ctx, id)
+}
+
+// Delete removes a server record and its container if one exists.
+func (s *Store) Delete(ctx context.Context, id string) error {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if srv.ContainerID != "" {
+		_ = s.docker.Remove(ctx, srv.ContainerID)
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM servers WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete server: %w", err)
+	}
+	return nil
+}
+
+// Start ensures a container exists then starts it.
+func (s *Store) Start(ctx context.Context, id string) (Server, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+	srv, err = s.ensureContainer(ctx, srv)
+	if err != nil {
+		return Server{}, err
+	}
+	if err := s.setState(ctx, id, StateStarting); err != nil {
+		return Server{}, err
+	}
+	if err := s.docker.Start(ctx, srv.ContainerID); err != nil {
+		_ = s.setState(ctx, id, StateError)
+		return Server{}, err
+	}
+	if err := s.setState(ctx, id, StateRunning); err != nil {
+		return Server{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+// Stop stops a running container if one exists.
+func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+	if err := s.setState(ctx, id, StateStopping); err != nil {
+		return Server{}, err
+	}
+	if srv.ContainerID != "" {
+		if err := s.docker.Stop(ctx, srv.ContainerID, 30*time.Second); err != nil {
+			_ = s.setState(ctx, id, StateError)
+			return Server{}, err
+		}
+	}
+	if err := s.setState(ctx, id, StateStopped); err != nil {
+		return Server{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+// Restart restarts a running container, starting it if it is stopped.
+func (s *Store) Restart(ctx context.Context, id string) (Server, error) {
+	if _, err := s.Stop(ctx, id); err != nil {
+		return Server{}, err
+	}
+	return s.Start(ctx, id)
+}
+
+// Status returns the current server state, reconciling from docker when a
+// container exists.
+func (s *Store) Status(ctx context.Context, id string) (Server, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+	if srv.ContainerID == "" {
+		return srv, nil
+	}
+	status, err := s.docker.Status(ctx, srv.ContainerID)
+	if err != nil {
+		return srv, nil
+	}
+	mapped := mapDockerState(status)
+	if mapped != srv.State {
+		_ = s.setState(ctx, id, mapped)
+		srv.State = mapped
+	}
+	return srv, nil
+}
+
+// Console streams container logs for a server.
+func (s *Store) Console(ctx context.Context, id string, follow bool) (io.ReadCloser, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if srv.ContainerID == "" {
+		return nil, errors.New("server has no container")
+	}
+	return s.docker.Logs(ctx, srv.ContainerID, follow)
+}
+
+// Install resolves and (for POST) provisions the server's container. GET returns
+// the resolution without creating anything.
+func (s *Store) Install(ctx context.Context, id string, provision bool) (InstallResult, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	resolved, err := s.jars.Validate(ctx, jars.JarType(srv.ServerType), srv.Version, srv.Build)
+	if err != nil {
+		return InstallResult{}, fmt.Errorf("validate jar: %w", err)
+	}
+	if provision {
+		srv, err = s.ensureContainer(ctx, srv)
+		if err != nil {
+			return InstallResult{}, err
+		}
+	}
+	return InstallResult{Server: srv, Resolved: resolved, DataDir: s.dataPath(srv.ID)}, nil
+}
+
+func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error) {
+	if srv.ContainerID != "" {
+		return srv, nil
+	}
+	cid, err := s.docker.Create(ctx, docker.CreateOpts{
+		ID:         srv.ID,
+		HostPort:   srv.HostPort,
+		DataDir:    s.dataPath(srv.ID),
+		ServerType: srv.ServerType,
+		Version:    srv.Version,
+		Build:      srv.Build,
+		RAMMB:      srv.RAMMB,
+	})
+	if err != nil {
+		return Server{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id=?, updated_at=? WHERE id=?`, cid, time.Now().UTC().Format(time.RFC3339), srv.ID)
+	if err != nil {
+		return Server{}, err
+	}
+	srv.ContainerID = cid
+	return srv, nil
+}
+
+func (s *Store) dataPath(id string) string {
+	return filepath.Join(s.dataDir, "servers", id)
+}
+
+func (s *Store) setState(ctx context.Context, id, state string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET state=?, updated_at=? WHERE id=?`, state, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+func ptrStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func mapDockerState(state string) string {
+	switch state {
+	case "running":
+		return StateRunning
+	case "stopped", "exited", "created", "dead":
+		return StateStopped
+	case "restarting":
+		return StateStarting
+	case "paused":
+		return StateRunning
+	default:
+		return StateError
+	}
+}

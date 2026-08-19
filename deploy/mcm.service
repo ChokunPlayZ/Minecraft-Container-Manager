@@ -1,0 +1,16 @@
+[Unit]
+Description=MCM - Minecraft Container Manager
+After=docker.service
+Requires=docker.service
+
+[Service]
+User=mcm
+Group=mcm
+ExecStart=/usr/local/bin/mcm
+EnvironmentFile=/etc/mcm/mcm.env
+Restart=always
+RestartSec=5
+WorkingDirectory=/var/lib/mcm
+
+[Install]
+WantedBy=multi-user.target
