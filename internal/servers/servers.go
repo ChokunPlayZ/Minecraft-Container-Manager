@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/ports"
@@ -82,6 +83,8 @@ type Store struct {
 	jars    *jars.Resolver
 	ports   *ports.Pool
 	dataDir string
+	// dns optionally publishes/removes SRV records as servers start and stop.
+	dns dns.Publisher
 }
 
 // NewStore wires the server store together.
@@ -93,6 +96,11 @@ func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, en
 		ports:   ports.NewPool(handle.DB, start, end),
 		dataDir: dataDir,
 	}
+}
+
+// SetDNS wires a DNS publisher so Start/Stop publish and remove SRV records.
+func (s *Store) SetDNS(d dns.Publisher) {
+	s.dns = d
 }
 
 // Pool exposes the underlying port pool for the available-ports endpoint.
@@ -222,6 +230,9 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("delete server: %w", err)
 	}
+	if s.dns != nil {
+		_ = s.dns.Remove(ctx, id)
+	}
 	return nil
 }
 
@@ -245,6 +256,9 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	if err := s.setState(ctx, id, StateRunning); err != nil {
 		return Server{}, err
 	}
+	if s.dns != nil {
+		_ = s.dns.Upsert(ctx, id, "", srv.HostPort)
+	}
 	return s.Get(ctx, id)
 }
 
@@ -265,6 +279,9 @@ func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 	}
 	if err := s.setState(ctx, id, StateStopped); err != nil {
 		return Server{}, err
+	}
+	if s.dns != nil {
+		_ = s.dns.Remove(ctx, id)
 	}
 	return s.Get(ctx, id)
 }

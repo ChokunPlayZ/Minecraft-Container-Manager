@@ -15,6 +15,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/backups"
 	"github.com/mcm-panel/mcm/internal/config"
 	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/servers"
 	"github.com/mcm-panel/mcm/internal/web"
@@ -29,6 +30,7 @@ type Server struct {
 	users    *auth.Users
 	sessions *auth.Manager
 	jars     *jars.Resolver
+	dns      *dns.Service
 	logger   *log.Logger
 	mux      *http.ServeMux
 }
@@ -42,6 +44,7 @@ type Options struct {
 	Users    *auth.Users
 	Sessions *auth.Manager
 	Jars     *jars.Resolver
+	DNS      *dns.Service
 	Logger   *log.Logger
 }
 
@@ -64,6 +67,7 @@ func New(opts Options) http.Handler {
 		users:    opts.Users,
 		sessions: opts.Sessions,
 		jars:     opts.Jars,
+		dns:      opts.DNS,
 		logger:   opts.Logger,
 		mux:      http.NewServeMux(),
 	}
@@ -106,6 +110,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/ports/available", s.requireAuth(s.wrapJSON(s.handleAvailablePorts)))
 	s.mux.HandleFunc("GET /api/settings", s.requireAuth(s.wrapJSON(s.handleGetSettings)))
 	s.mux.HandleFunc("PUT /api/settings", s.requireAuth(s.wrapJSON(s.handlePutSettings)))
+
+	// DNS publishing.
+	s.mux.HandleFunc("GET /api/dns", s.requireAuth(s.wrapJSON(s.handleListDNS)))
+	s.mux.HandleFunc("POST /api/servers/{id}/dns", s.requireAuth(s.wrapJSON(s.handlePublishDNS)))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/dns", s.requireAuth(s.wrapJSON(s.handleRemoveDNS)))
 
 	// Static frontend.
 	s.mux.HandleFunc("/", s.handleStatic)

@@ -11,6 +11,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/backups"
 	"github.com/mcm-panel/mcm/internal/config"
 	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -43,6 +44,8 @@ func main() {
 
 	jarResolver := jars.NewResolver()
 	serverStore := servers.NewStore(handle, dockerMgr, jarResolver, cfg.PortRange.Start, cfg.PortRange.End, cfg.DataDir)
+	dnsService := dns.New(handle.DB)
+	serverStore.SetDNS(dnsService)
 	backupStore := backups.New(handle.DB, backups.S3Config{
 		Endpoint:  cfg.S3.Endpoint,
 		AccessKey: cfg.S3.AccessKey,
@@ -62,6 +65,7 @@ func main() {
 		Users:    users,
 		Sessions: sessions,
 		Jars:     jarResolver,
+		DNS:      dnsService,
 		Logger:   logger,
 	})
 
