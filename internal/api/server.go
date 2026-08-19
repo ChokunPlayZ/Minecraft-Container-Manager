@@ -39,6 +39,7 @@ type Server struct {
 	spin       *spindown.Service
 	logger     *log.Logger
 	mux        *http.ServeMux
+	loginLimit *loginLimiter
 }
 
 // Config holds the dependencies required to build the API server.
@@ -83,12 +84,17 @@ func New(opts Options) http.Handler {
 		spin:       opts.Spin,
 		logger:     opts.Logger,
 		mux:        http.NewServeMux(),
+		loginLimit: newLoginLimiter(loginDefaults(opts.Cfg)),
 	}
 	s.routes()
 	return s.withMiddleware(s.mux)
 }
 
 func (s *Server) routes() {
+	// Health and readiness (unauthenticated).
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
+
 	// Auth and onboarding.
 	s.mux.HandleFunc("GET /api/auth/csrf", s.wrapJSON(s.handleCSRF))
 	s.mux.HandleFunc("POST /api/onboarding", s.wrapJSON(s.handleOnboarding))
@@ -166,7 +172,7 @@ func (s *Server) routes() {
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if !csrfExempt(r) && !csrfTokenValid(r) {
 			writeError(w, http.StatusForbidden, "csrf_missing", "missing or invalid CSRF token")
@@ -174,6 +180,8 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+	h = s.rateLimit(h)
+	return s.logRequests(h)
 }
 
 // csrfExempt reports whether a request is allowed to skip CSRF validation.

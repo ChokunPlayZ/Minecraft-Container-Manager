@@ -28,6 +28,15 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "name, version, and ram_mb are required")
 		return
 	}
+	// Apply configured defaults for resource limits when not explicitly set.
+	if s.cfg != nil {
+		if in.CPULimit == 0 {
+			in.CPULimit = s.cfg.DefaultCPULimit
+		}
+		if in.MemoryLimitMB == 0 {
+			in.MemoryLimitMB = s.cfg.DefaultMemoryMB
+		}
+	}
 	srv, err := s.servers.Create(r.Context(), in)
 	if err != nil {
 		if errors.Is(err, ports.ErrPortPoolFull) {

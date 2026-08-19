@@ -88,6 +88,27 @@ func main() {
 		Logger:   logger,
 	})
 
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		if cfg.TLSRedirect {
+			redirect := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				u := *r.URL
+				u.Scheme = "https"
+				u.Host = r.Host
+				http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+			})
+			go func() {
+				logger.Printf("redirecting HTTP %s to HTTPS %s", cfg.TLSRedirectAddr, cfg.Addr)
+				if err := http.ListenAndServe(cfg.TLSRedirectAddr, redirect); err != nil && err != http.ErrServerClosed {
+					logger.Fatalf("http redirect server exited: %v", err)
+				}
+			}()
+		}
+		logger.Printf("listening on https://%s (data dir %s)", cfg.Addr, cfg.DataDir)
+		if err := http.ListenAndServeTLS(cfg.Addr, cfg.TLSCert, cfg.TLSKey, handler); err != nil && err != http.ErrServerClosed {
+			logger.Fatalf("server exited: %v", err)
+		}
+		return
+	}
 	logger.Printf("listening on %s (data dir %s)", cfg.Addr, cfg.DataDir)
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server exited: %v", err)

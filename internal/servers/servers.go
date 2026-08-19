@@ -32,15 +32,19 @@ var ErrNotFound = errors.New("server not found")
 
 // Server is the public representation of a server record.
 type Server struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	ServerType  string `json:"server_type"`
-	Version     string `json:"version"`
-	Build       string `json:"build,omitempty"`
-	RAMMB       int    `json:"ram_mb"`
-	HostPort    int    `json:"host_port"`
-	ContainerID string `json:"container_id,omitempty"`
-	State       string `json:"state"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ServerType string `json:"server_type"`
+	Version    string `json:"version"`
+	Build      string `json:"build,omitempty"`
+	RAMMB      int    `json:"ram_mb"`
+	// CPULimit is the CPU quota in cores (0 = no limit). MemoryLimitMB is an
+	// explicit memory cap in MB; 0 falls back to the RAM-derived default.
+	CPULimit      float64 `json:"cpu_limit"`
+	MemoryLimitMB int     `json:"memory_limit_mb"`
+	HostPort      int     `json:"host_port"`
+	ContainerID   string  `json:"container_id,omitempty"`
+	State         string  `json:"state"`
 	// Backup settings. BackupEnabled defaults to true; BackupIntervalMinutes
 	// is the minutes between automatic backups (default 720).
 	BackupEnabled         bool   `json:"backup_enabled"`
@@ -51,11 +55,13 @@ type Server struct {
 
 // CreateInput is the payload for creating a server.
 type CreateInput struct {
-	Name       string       `json:"name"`
-	ServerType jars.JarType `json:"server_type"`
-	Version    string       `json:"version"`
-	Build      string       `json:"build,omitempty"`
-	RAMMB      int          `json:"ram_mb"`
+	Name          string       `json:"name"`
+	ServerType    jars.JarType `json:"server_type"`
+	Version       string       `json:"version"`
+	Build         string       `json:"build,omitempty"`
+	RAMMB         int          `json:"ram_mb"`
+	CPULimit      float64      `json:"cpu_limit"`
+	MemoryLimitMB int          `json:"memory_limit_mb"`
 }
 
 // UpdateInput is the payload for updating a server.
@@ -65,6 +71,8 @@ type UpdateInput struct {
 	Version               *string       `json:"version"`
 	Build                 *string       `json:"build"`
 	RAMMB                 *int          `json:"ram_mb"`
+	CPULimit              *float64      `json:"cpu_limit"`
+	MemoryLimitMB         *int          `json:"memory_limit_mb"`
 	BackupEnabled         *bool         `json:"backup_enabled"`
 	BackupIntervalMinutes *int          `json:"backup_interval_minutes"`
 }
@@ -103,6 +111,12 @@ func (s *Store) SetDNS(d dns.Publisher) {
 	s.dns = d
 }
 
+// Reachable reports whether the underlying Docker daemon is responsive. It is
+// used by the readiness probe.
+func (s *Store) Reachable(ctx context.Context) error {
+	return s.docker.Ping(ctx)
+}
+
 // Pool exposes the underlying port pool for the available-ports endpoint.
 func (s *Store) Pool() *ports.Pool {
 	return s.ports
@@ -111,7 +125,7 @@ func (s *Store) Pool() *ports.Pool {
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +134,7 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 	var out []Server
 	for rows.Next() {
 		var srv Server
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, srv)
@@ -132,8 +146,8 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var srv Server
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}
@@ -146,6 +160,9 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 // Create validates the requested jar, allocates a host port, and persists a new
 // stopped server. The container itself is created lazily on install/start.
 func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
+	if err := validateLimits(in.CPULimit, in.MemoryLimitMB); err != nil {
+		return Server{}, err
+	}
 	resolved, err := s.jars.Validate(ctx, in.ServerType, in.Version, in.Build)
 	if err != nil {
 		return Server{}, fmt.Errorf("validate jar: %w", err)
@@ -158,8 +175,8 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, host_port, container_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
-		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, port, StateStopped, now, now)
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, container_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
+		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, StateStopped, now, now)
 	if err != nil {
 		return Server{}, fmt.Errorf("insert server: %w", err)
 	}
@@ -200,6 +217,18 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 	if in.RAMMB != nil {
 		srv.RAMMB = *in.RAMMB
 	}
+	if in.CPULimit != nil {
+		if *in.CPULimit < 0 {
+			return Server{}, fmt.Errorf("cpu_limit must be non-negative")
+		}
+		srv.CPULimit = *in.CPULimit
+	}
+	if in.MemoryLimitMB != nil {
+		if *in.MemoryLimitMB < 0 {
+			return Server{}, fmt.Errorf("memory_limit_mb must be non-negative")
+		}
+		srv.MemoryLimitMB = *in.MemoryLimitMB
+	}
 	if in.BackupEnabled != nil {
 		srv.BackupEnabled = *in.BackupEnabled
 	}
@@ -209,8 +238,8 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, backup_enabled=?, backup_interval_minutes=?, updated_at=? WHERE id=?`,
-		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.BackupEnabled, srv.BackupIntervalMinutes, now, id)
+		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, updated_at=? WHERE id=?`,
+		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, now, id)
 	if err != nil {
 		return Server{}, fmt.Errorf("update server: %w", err)
 	}
@@ -353,13 +382,15 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 		return srv, nil
 	}
 	cid, err := s.docker.Create(ctx, docker.CreateOpts{
-		ID:         srv.ID,
-		HostPort:   srv.HostPort,
-		DataDir:    s.dataPath(srv.ID),
-		ServerType: srv.ServerType,
-		Version:    srv.Version,
-		Build:      srv.Build,
-		RAMMB:      srv.RAMMB,
+		ID:            srv.ID,
+		HostPort:      srv.HostPort,
+		DataDir:       s.dataPath(srv.ID),
+		ServerType:    srv.ServerType,
+		Version:       srv.Version,
+		Build:         srv.Build,
+		RAMMB:         srv.RAMMB,
+		CPULimit:      srv.CPULimit,
+		MemoryLimitMB: srv.MemoryLimitMB,
 	})
 	if err != nil {
 		return Server{}, err
@@ -387,6 +418,18 @@ func ptrStr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// validateLimits rejects negative CPU or memory limits. A zero value means "no
+// explicit limit" and is allowed.
+func validateLimits(cpu float64, memoryMB int) error {
+	if cpu < 0 {
+		return fmt.Errorf("cpu_limit must be non-negative")
+	}
+	if memoryMB < 0 {
+		return fmt.Errorf("memory_limit_mb must be non-negative")
+	}
+	return nil
 }
 
 func mapDockerState(state string) string {

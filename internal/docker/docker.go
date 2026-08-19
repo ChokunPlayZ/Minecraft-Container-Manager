@@ -39,6 +39,16 @@ func New(host string) (*Manager, error) {
 	return &Manager{client: cli, host: host}, nil
 }
 
+// Ping verifies the Docker daemon is reachable and responds. It is used by the
+// readiness probe.
+func (m *Manager) Ping(ctx context.Context) error {
+	_, err := m.client.Ping(ctx)
+	if err != nil {
+		return fmt.Errorf("docker ping: %w", err)
+	}
+	return nil
+}
+
 // HostAddress returns the network address on which the Docker daemon is
 // reachable, suitable for reaching a container's published host port. It maps
 // unix/local sockets to localhost and strips any transport scheme or path.
@@ -61,13 +71,15 @@ func (m *Manager) HostAddress() string {
 
 // CreateOpts describes a server container to create.
 type CreateOpts struct {
-	ID         string
-	HostPort   int
-	DataDir    string
-	ServerType string
-	Version    string
-	Build      string
-	RAMMB      int
+	ID            string
+	HostPort      int
+	DataDir       string
+	ServerType    string
+	Version       string
+	Build         string
+	RAMMB         int
+	CPULimit      float64
+	MemoryLimitMB int
 }
 
 // Name returns the container name for a server ID.
@@ -94,9 +106,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		RestartPolicy: container.RestartPolicy{
 			Name: container.RestartPolicyUnlessStopped,
 		},
-		Resources: container.Resources{
-			Memory: int64((opts.RAMMB + 512) * 1024 * 1024),
-		},
+		Resources: containerResources(opts),
 	}
 
 	resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
@@ -104,6 +114,22 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		return "", fmt.Errorf("create container: %w", err)
 	}
 	return resp.ID, nil
+}
+
+// containerResources builds the container resource limits. The memory limit
+// defaults to RAM + 512MB unless an explicit memory_limit_mb is set. A positive
+// cpu_limit (cores) is translated to NanoCPUs.
+func containerResources(opts CreateOpts) container.Resources {
+	res := container.Resources{
+		Memory: int64((opts.RAMMB + 512) * 1024 * 1024),
+	}
+	if opts.MemoryLimitMB > 0 {
+		res.Memory = int64(opts.MemoryLimitMB) * 1024 * 1024
+	}
+	if opts.CPULimit > 0 {
+		res.NanoCPUs = int64(opts.CPULimit * 1e9)
+	}
+	return res
 }
 
 // Start starts a stopped or created container.

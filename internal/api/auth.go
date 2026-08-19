@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -60,6 +61,14 @@ type loginRequest struct {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	ipKey := s.clientIP(r)
+	now := time.Now()
+	if ok, retryAfter := s.loginLimit.allow(ipKey, now); !ok {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())))
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts, try again later")
+		return
+	}
+
 	var req loginRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -67,6 +76,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := s.users.GetByEmail(r.Context(), req.Email)
 	if errors.Is(err, sql.ErrNoRows) {
+		s.loginLimit.record(ipKey, true, now)
+		s.loginLimit.record(req.Email, true, now)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
@@ -75,6 +86,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := auth.VerifyPassword(req.Password, user.PasswordHash); err != nil {
+		s.loginLimit.record(ipKey, true, now)
+		s.loginLimit.record(req.Email, true, now)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
@@ -84,10 +97,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !auth.VerifyTOTP(user.TOTPSecret, req.TOTPCode, 1) {
+			s.loginLimit.record(ipKey, true, now)
+			s.loginLimit.record(req.Email, true, now)
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid or missing totp code")
 			return
 		}
 	}
+	s.loginLimit.record(ipKey, false, now)
+	s.loginLimit.record(req.Email, false, now)
 	s.issueSession(w, r, user.ID)
 	writeJSON(w, http.StatusOK, user)
 }

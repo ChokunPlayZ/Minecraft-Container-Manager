@@ -90,6 +90,16 @@ so the socket is available. Build the `mcm-server:latest` image with the
 | `MCM_DB_PATH` | `/data/mcm.db` | SQLite database file. |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon endpoint. |
 | `MCM_SESSION_SECRET` | *(required)* | Secret used to sign session cookies. |
+| `MCM_TLS_CERT` | *(empty)* | Path to the TLS certificate (PEM). Setting this (with `MCM_TLS_KEY`) enables HTTPS. |
+| `MCM_TLS_KEY` | *(empty)* | Path to the TLS private key (PEM). |
+| `MCM_TLS_REDIRECT` | `true` | When TLS is enabled, redirect plain HTTP to HTTPS with a 301. |
+| `MCM_TLS_REDIRECT_ADDR` | Derived (`:80`) | Listen address for the HTTP-to-HTTPS redirect listener. |
+| `MCM_LOGIN_MAX_ATTEMPTS` | `5` | Failed login attempts allowed per window before lockout. |
+| `MCM_LOGIN_LOCKOUT` | `15m` | Lockout duration after too many failed login attempts. |
+| `MCM_RATE_LIMIT_MAX` | `100` | Maximum state-changing requests per client per window. |
+| `MCM_RATE_LIMIT_WINDOW` | `1m` | Sliding window for the general rate limiter. |
+| `MCM_DEFAULT_CPU_LIMIT` | `0` | Default CPU cores limit for new servers (0 = unlimited). |
+| `MCM_DEFAULT_MEMORY_MB` | `0` | Default memory limit (MB) for new servers (0 = RAM-derived default). |
 | `MCM_S3_ENDPOINT` | *(empty)* | S3-compatible object store endpoint (e.g. `http://minio:9000`). Empty disables backups. |
 | `MCM_S3_ACCESS_KEY` | *(empty)* | Access key for the S3 store. |
 | `MCM_S3_SECRET_KEY` | *(empty)* | Secret key for the S3 store. |
@@ -120,6 +130,8 @@ backend, but the intended surface is:
 | `GET` | `/api/servers/:id/backups` | List backups for a server. |
 | `POST` | `/api/servers/:id/restore/:backupId` | Restore a backup. |
 | `DELETE` | `/api/backups/:backupId` | Delete a backup. |
+| `GET` | `/healthz` | Liveness probe, always returns `200`. |
+| `GET` | `/readyz` | Readiness probe, checks DB and Docker reachability. |
 
 ## Project structure
 

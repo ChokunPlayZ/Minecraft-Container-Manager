@@ -2,22 +2,34 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds the runtime configuration for MCM, populated from environment
 // variables with sane defaults.
 type Config struct {
-	Addr          string
-	PortRange     PortRange
-	DataDir       string
-	DBPath        string
-	DockerHost    string
-	SessionSecret []byte
-	WebAuthn      WebAuthnConfig
+	Addr             string
+	PortRange        PortRange
+	DataDir          string
+	DBPath           string
+	DockerHost       string
+	SessionSecret    []byte
+	WebAuthn         WebAuthnConfig
+	TLSCert          string
+	TLSKey           string
+	TLSRedirect      bool
+	TLSRedirectAddr  string
+	LoginMaxAttempts int
+	LoginLockout     time.Duration
+	RateLimitMax     int
+	RateLimitWindow  time.Duration
+	DefaultCPULimit  float64
+	DefaultMemoryMB  int
 	// S3 holds the object-storage configuration used for world backups. An
 	// empty Endpoint disables backups.
 	S3 S3Config
@@ -53,40 +65,61 @@ type PortRange struct {
 
 // EnvVar names, kept as constants so tests and docs can refer to them.
 const (
-	EnvAddr           = "MCM_ADDR"
-	EnvPortRange      = "MCM_PORT_RANGE"
-	EnvDataDir        = "MCM_DATA_DIR"
-	EnvDBPath         = "MCM_DB_PATH"
-	EnvDockerHost     = "DOCKER_HOST"
-	EnvSessionSecret  = "MCM_SESSION_SECRET"
-	EnvTLS            = "MCM_TLS"
-	EnvWebAuthnRPID   = "MCM_WEB_AUTHN_RPID"
-	EnvWebAuthnOrigin = "MCM_WEB_AUTHN_RP_ORIGIN"
-	EnvWebAuthnName   = "MCM_WEB_AUTHN_RP_NAME"
-	EnvS3Endpoint     = "MCM_S3_ENDPOINT"
-	EnvS3AccessKey    = "MCM_S3_ACCESS_KEY"
-	EnvS3SecretKey    = "MCM_S3_SECRET_KEY"
-	EnvS3Bucket       = "MCM_S3_BUCKET"
-	EnvS3Region       = "MCM_S3_REGION"
+	EnvAddr             = "MCM_ADDR"
+	EnvPortRange        = "MCM_PORT_RANGE"
+	EnvDataDir          = "MCM_DATA_DIR"
+	EnvDBPath           = "MCM_DB_PATH"
+	EnvDockerHost       = "DOCKER_HOST"
+	EnvSessionSecret    = "MCM_SESSION_SECRET"
+	EnvTLS              = "MCM_TLS"
+	EnvTLSCert          = "MCM_TLS_CERT"
+	EnvTLSKey           = "MCM_TLS_KEY"
+	EnvTLSRedirect      = "MCM_TLS_REDIRECT"
+	EnvTLSRedirectAddr  = "MCM_TLS_REDIRECT_ADDR"
+	EnvLoginMaxAttempts = "MCM_LOGIN_MAX_ATTEMPTS"
+	EnvLoginLockout     = "MCM_LOGIN_LOCKOUT"
+	EnvRateLimitMax     = "MCM_RATE_LIMIT_MAX"
+	EnvRateLimitWindow  = "MCM_RATE_LIMIT_WINDOW"
+	EnvDefaultCPULimit  = "MCM_DEFAULT_CPU_LIMIT"
+	EnvDefaultMemoryMB  = "MCM_DEFAULT_MEMORY_MB"
+	EnvWebAuthnRPID     = "MCM_WEB_AUTHN_RPID"
+	EnvWebAuthnOrigin   = "MCM_WEB_AUTHN_RP_ORIGIN"
+	EnvWebAuthnName     = "MCM_WEB_AUTHN_RP_NAME"
+	EnvS3Endpoint       = "MCM_S3_ENDPOINT"
+	EnvS3AccessKey      = "MCM_S3_ACCESS_KEY"
+	EnvS3SecretKey      = "MCM_S3_SECRET_KEY"
+	EnvS3Bucket         = "MCM_S3_BUCKET"
+	EnvS3Region         = "MCM_S3_REGION"
 )
 
 const (
-	defaultAddr          = ":8080"
-	defaultPortRange     = "25565-25665"
-	defaultDataDir       = "./data"
-	defaultDockerHost    = "unix:///var/run/docker.sock"
-	defaultSessionSecret = ""
-	defaultRPID          = "localhost"
-	defaultRPName        = "Minecraft Container Manager"
+	defaultAddr             = ":8080"
+	defaultPortRange        = "25565-25665"
+	defaultDataDir          = "./data"
+	defaultDockerHost       = "unix:///var/run/docker.sock"
+	defaultSessionSecret    = ""
+	defaultRPID             = "localhost"
+	defaultRPName           = "Minecraft Container Manager"
+	defaultLoginMaxAttempts = 5
+	defaultLoginLockout     = 15 * time.Minute
+	defaultRateLimitMax     = 100
+	defaultRateLimitWindow  = time.Minute
+	defaultCPULimit         = 0
+	defaultMemoryMB         = 0
 )
 
 // Load builds a Config from the environment. Missing variables fall back to
 // defaults. It returns an error only when the configured port range is invalid.
 func Load() (*Config, error) {
+	var err error
 	cfg := &Config{
-		Addr:       getenv(EnvAddr, defaultAddr),
-		DataDir:    getenv(EnvDataDir, defaultDataDir),
-		DockerHost: getenv(EnvDockerHost, defaultDockerHost),
+		Addr:            getenv(EnvAddr, defaultAddr),
+		DataDir:         getenv(EnvDataDir, defaultDataDir),
+		DockerHost:      getenv(EnvDockerHost, defaultDockerHost),
+		TLSCert:         getenv(EnvTLSCert, ""),
+		TLSKey:          getenv(EnvTLSKey, ""),
+		TLSRedirect:     parseBoolEnv(EnvTLSRedirect, true),
+		TLSRedirectAddr: getenv(EnvTLSRedirectAddr, redirectAddrFor(getenv(EnvAddr, defaultAddr))),
 		WebAuthn: WebAuthnConfig{
 			RPID:          getenv(EnvWebAuthnRPID, defaultRPID),
 			RPOrigins:     splitOrigins(getenv(EnvWebAuthnOrigin, "")),
@@ -99,6 +132,30 @@ func Load() (*Config, error) {
 			Bucket:    getenv(EnvS3Bucket, ""),
 			Region:    getenv(EnvS3Region, "us-east-1"),
 		},
+	}
+	cfg.LoginMaxAttempts, err = parseIntEnv(EnvLoginMaxAttempts, defaultLoginMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LoginLockout, err = parseDurationEnv(EnvLoginLockout, defaultLoginLockout)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RateLimitMax, err = parseIntEnv(EnvRateLimitMax, defaultRateLimitMax)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RateLimitWindow, err = parseDurationEnv(EnvRateLimitWindow, defaultRateLimitWindow)
+	if err != nil {
+		return nil, err
+	}
+	cfg.DefaultCPULimit, err = parseFloatEnv(EnvDefaultCPULimit, defaultCPULimit)
+	if err != nil {
+		return nil, err
+	}
+	cfg.DefaultMemoryMB, err = parseIntEnv(EnvDefaultMemoryMB, defaultMemoryMB)
+	if err != nil {
+		return nil, err
 	}
 
 	pr, err := ParsePortRange(getenv(EnvPortRange, defaultPortRange))
@@ -139,6 +196,54 @@ func getenv(key, def string) string {
 	return def
 }
 
+func parseBoolEnv(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
+
+func parseIntEnv(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", key, v, err)
+	}
+	return n, nil
+}
+
+func parseFloatEnv(key string, def float64) (float64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", key, v, err)
+	}
+	return f, nil
+}
+
+func parseDurationEnv(key string, def time.Duration) (time.Duration, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", key, v, err)
+	}
+	return d, nil
+}
+
 func splitOrigins(s string) []string {
 	if s == "" {
 		return nil
@@ -151,6 +256,16 @@ func splitOrigins(s string) []string {
 		}
 	}
 	return out
+}
+
+// redirectAddrFor derives the plain-HTTP redirect listen address from a
+// host:port by forcing the port to 80, preserving the host.
+func redirectAddrFor(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return ":80"
+	}
+	return net.JoinHostPort(host, "80")
 }
 
 func defaultOrigin(addr string) string {
