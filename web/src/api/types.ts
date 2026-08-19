@@ -13,6 +13,9 @@ export interface Server {
   state: ServerState;
   backup_enabled: boolean;
   backup_interval_minutes: number;
+  wake_message?: string;
+  last_motd?: string;
+  last_motd_updated?: string;
   created_at: string;
   updated_at: string;
 }
@@ -28,6 +31,15 @@ export interface ServerStatus {
   ram_mb: number;
   host_port: number;
   container_id: string | null;
+  last_motd?: string;
+  last_motd_updated?: string;
+}
+
+export interface GatewayInfo {
+  enabled: boolean;
+  wake_message: string;
+  last_motd: string;
+  last_motd_updated: string;
 }
 
 export interface ConsoleLine {

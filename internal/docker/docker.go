@@ -101,8 +101,10 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		ExposedPorts: containerExposedPorts(),
 	}
 	hostCfg := &container.HostConfig{
-		PortBindings: portBindings(opts.HostPort),
-		Binds:        []string{fmt.Sprintf("%s:%s", opts.DataDir, containerData)},
+		// The game port is exposed but NOT bound to the host. The gateway owns
+		// the public port and relays to the container's internal address, so
+		// nothing else may publish 25565 to the host.
+		Binds: []string{fmt.Sprintf("%s:%s", opts.DataDir, containerData)},
 		RestartPolicy: container.RestartPolicy{
 			Name: container.RestartPolicyUnlessStopped,
 		},
@@ -114,6 +116,27 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		return "", fmt.Errorf("create container: %w", err)
 	}
 	return resp.ID, nil
+}
+
+// ContainerAddr resolves the address the gateway should dial to reach a
+// server's game port. It prefers the container's internal IP on the exposed
+// 25565 port (Docker inspect), falling back to the daemon host's published-port
+// address for remote-daemon setups where the container IP is not reachable.
+func (m *Manager) ContainerAddr(ctx context.Context, containerID string, hostPort int) (string, error) {
+	insp, err := m.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return "", fmt.Errorf("inspect container %s: %w", containerID, err)
+	}
+	if insp.NetworkSettings != nil {
+		for _, network := range insp.NetworkSettings.Networks {
+			if network.IPAddress != "" {
+				return net.JoinHostPort(network.IPAddress, fmt.Sprintf("%d", mcPort)), nil
+			}
+		}
+	}
+	// Fall back to the daemon host's published port so cross-deployment setups
+	// (e.g. a remote daemon where the container IP is unreachable) still work.
+	return net.JoinHostPort(m.HostAddress(), fmt.Sprintf("%d", hostPort)), nil
 }
 
 // containerResources builds the container resource limits. The memory limit
@@ -183,13 +206,5 @@ func (m *Manager) Logs(ctx context.Context, containerID string, follow bool) (io
 func containerExposedPorts() nat.PortSet {
 	return nat.PortSet{
 		nat.Port(fmt.Sprintf("%d/%s", mcPort, mcProto)): struct{}{},
-	}
-}
-
-func portBindings(hostPort int) nat.PortMap {
-	return nat.PortMap{
-		nat.Port(fmt.Sprintf("%d/%s", mcPort, mcProto)): []nat.PortBinding{
-			{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", hostPort)},
-		},
 	}
 }

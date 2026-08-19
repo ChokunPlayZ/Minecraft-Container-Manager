@@ -18,6 +18,10 @@ image.
   S3-compatible object store.
 - Idle spin-down: automatically stop servers that have been idle for a
   configured period to save resources.
+- Gateway wake-on-rejoin: MCM owns each server's public game port and wakes a
+  sleeping server automatically when a player connects, holding the connection
+  until the server is ready and advertising the last-known-good MOTD in the
+  meantime.
 - Cloudflare SRV: optional SRV record registration for domain/port routing.
 - TOTP / passkey: multi-factor authentication for panel accounts.
 - Onboarding: guided first-run setup and account creation.
@@ -100,6 +104,7 @@ so the socket is available. Build the `mcm-server:latest` image with the
 | `MCM_RATE_LIMIT_WINDOW` | `1m` | Sliding window for the general rate limiter. |
 | `MCM_DEFAULT_CPU_LIMIT` | `0` | Default CPU cores limit for new servers (0 = unlimited). |
 | `MCM_DEFAULT_MEMORY_MB` | `0` | Default memory limit (MB) for new servers (0 = RAM-derived default). |
+| `MCM_GATEWAY` | `auto` | Gateway activation: `auto` (on when the gateway setting is enabled), `on`, or `off`. |
 | `MCM_S3_ENDPOINT` | *(empty)* | S3-compatible object store endpoint (e.g. `http://minio:9000`). Empty disables backups. |
 | `MCM_S3_ACCESS_KEY` | *(empty)* | Access key for the S3 store. |
 | `MCM_S3_SECRET_KEY` | *(empty)* | Secret key for the S3 store. |
@@ -122,6 +127,8 @@ backend, but the intended surface is:
 | `GET` | `/api/servers` | List managed Minecraft servers. |
 | `POST` | `/api/servers` | Create a server (type, version, build, RAM, ports). |
 | `GET` | `/api/servers/:id` | Server detail and status. |
+| `GET` | `/api/servers/:id/gateway` | Gateway config, per-server wait message, and last-known-good MOTD. |
+| `PUT` | `/api/servers/:id/gateway` | Set the per-server wait message. |
 | `POST` | `/api/servers/:id/start` | Start a server. |
 | `POST` | `/api/servers/:id/stop` | Stop a server. |
 | `POST` | `/api/servers/:id/restart` | Restart a server. |

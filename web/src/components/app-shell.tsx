@@ -24,6 +24,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               Servers
             </Link>
+            <Link
+              to="/settings"
+              className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              activeProps={{ className: 'bg-accent text-accent-foreground' }}
+            >
+              Settings
+            </Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">
             {user && (

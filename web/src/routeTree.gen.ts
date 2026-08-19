@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServersIdRouteImport } from './routes/servers.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +36,11 @@ const OnboardingRoute = OnboardingRouteImport.update({
   path: '/onboarding',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ServersIdRoute = ServersIdRouteImport.update({
   id: '/servers/$id',
   path: '/servers/$id',
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
+  '/settings': typeof SettingsRoute
   '/servers/$id': typeof ServersIdRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
+  '/settings': typeof SettingsRoute
   '/servers/$id': typeof ServersIdRoute
 }
 export interface FileRoutesById {
@@ -61,15 +69,24 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/onboarding': typeof OnboardingRoute
+  '/settings': typeof SettingsRoute
   '/servers/$id': typeof ServersIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard' | '/login' | '/onboarding' | '/servers/$id'
+  fullPaths:
+    '/' | '/dashboard' | '/login' | '/onboarding' | '/settings' | '/servers/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/login' | '/onboarding' | '/servers/$id'
+  to:
+    '/' | '/dashboard' | '/login' | '/onboarding' | '/settings' | '/servers/$id'
   id:
-    '__root__' | '/' | '/dashboard' | '/login' | '/onboarding' | '/servers/$id'
+    | '__root__'
+    | '/'
+    | '/dashboard'
+    | '/login'
+    | '/onboarding'
+    | '/settings'
+    | '/servers/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,6 +94,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
   OnboardingRoute: typeof OnboardingRoute
+  SettingsRoute: typeof SettingsRoute
   ServersIdRoute: typeof ServersIdRoute
 }
 
@@ -110,6 +128,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OnboardingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/servers/$id': {
       id: '/servers/$id'
       path: '/servers/$id'
@@ -125,6 +150,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
   OnboardingRoute: OnboardingRoute,
+  SettingsRoute: SettingsRoute,
   ServersIdRoute: ServersIdRoute,
 }
 export const routeTree = rootRouteImport
