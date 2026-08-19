@@ -4,6 +4,7 @@ package servers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,17 +41,28 @@ type Server struct {
 	RAMMB      int    `json:"ram_mb"`
 	// CPULimit is the CPU quota in cores (0 = no limit). MemoryLimitMB is an
 	// explicit memory cap in MB; 0 falls back to the RAM-derived default.
-	CPULimit      float64 `json:"cpu_limit"`
-	MemoryLimitMB int     `json:"memory_limit_mb"`
-	HostPort      int     `json:"host_port"`
-	ContainerID   string  `json:"container_id,omitempty"`
-	State         string  `json:"state"`
+	CPULimit      float64     `json:"cpu_limit"`
+	MemoryLimitMB int         `json:"memory_limit_mb"`
+	HostPort      int         `json:"host_port"`
+	ExtraPorts    []ExtraPort `json:"extra_ports"`
+	ContainerID   string      `json:"container_id,omitempty"`
+	State         string      `json:"state"`
 	// Backup settings. BackupEnabled defaults to true; BackupIntervalMinutes
 	// is the minutes between automatic backups (default 720).
 	BackupEnabled         bool   `json:"backup_enabled"`
 	BackupIntervalMinutes int    `json:"backup_interval_minutes"`
 	CreatedAt             string `json:"created_at"`
 	UpdatedAt             string `json:"updated_at"`
+}
+
+// ExtraPort describes an additional port published for a server beyond the
+// primary game port (e.g. a WebUI or Bedrock/Geyser adapter).
+type ExtraPort struct {
+	ID            string `json:"id"`
+	Description   string `json:"description"`
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol"` // tcp or udp
 }
 
 // CreateInput is the payload for creating a server.
@@ -62,6 +74,7 @@ type CreateInput struct {
 	RAMMB         int          `json:"ram_mb"`
 	CPULimit      float64      `json:"cpu_limit"`
 	MemoryLimitMB int          `json:"memory_limit_mb"`
+	ExtraPorts    []ExtraPort  `json:"extra_ports"`
 }
 
 // UpdateInput is the payload for updating a server.
@@ -75,6 +88,33 @@ type UpdateInput struct {
 	MemoryLimitMB         *int          `json:"memory_limit_mb"`
 	BackupEnabled         *bool         `json:"backup_enabled"`
 	BackupIntervalMinutes *int          `json:"backup_interval_minutes"`
+	ExtraPorts            *[]ExtraPort  `json:"extra_ports"`
+}
+
+// encodeExtraPorts serializes an extra-ports slice for storage. Nil or empty
+// slices produce "[]" so the DB column stays a valid empty JSON array.
+func encodeExtraPorts(ports []ExtraPort) string {
+	if len(ports) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(ports)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// decodeExtraPorts parses stored JSON back into an extra-ports slice. It always
+// returns a non-nil slice so the API serializes as [] when empty.
+func decodeExtraPorts(data string) []ExtraPort {
+	out := make([]ExtraPort, 0)
+	if data == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(data), &out); err != nil {
+		return make([]ExtraPort, 0)
+	}
+	return out
 }
 
 // InstallResult describes a server's resolved install configuration.
@@ -125,7 +165,7 @@ func (s *Store) Pool() *ports.Pool {
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +176,11 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 	out := make([]Server, 0)
 	for rows.Next() {
 		var srv Server
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+		var extra string
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
 			return nil, err
 		}
+		srv.ExtraPorts = decodeExtraPorts(extra)
 		out = append(out, srv)
 	}
 	return out, rows.Err()
@@ -147,15 +189,17 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 // Get returns a single server by id.
 func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var srv Server
+	var extra string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}
 	if err != nil {
 		return Server{}, err
 	}
+	srv.ExtraPorts = decodeExtraPorts(extra)
 	return srv, nil
 }
 
@@ -177,8 +221,8 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, container_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
-		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, StateStopped, now, now)
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
+		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, encodeExtraPorts(in.ExtraPorts), StateStopped, now, now)
 	if err != nil {
 		return Server{}, fmt.Errorf("insert server: %w", err)
 	}
@@ -237,11 +281,14 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 	if in.BackupIntervalMinutes != nil {
 		srv.BackupIntervalMinutes = *in.BackupIntervalMinutes
 	}
+	if in.ExtraPorts != nil {
+		srv.ExtraPorts = *in.ExtraPorts
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, updated_at=? WHERE id=?`,
-		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, now, id)
+		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, updated_at=? WHERE id=?`,
+		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), now, id)
 	if err != nil {
 		return Server{}, fmt.Errorf("update server: %w", err)
 	}
@@ -386,6 +433,7 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 	cid, err := s.docker.Create(ctx, docker.CreateOpts{
 		ID:            srv.ID,
 		HostPort:      srv.HostPort,
+		ExtraPorts:    toDockerExtras(srv.ExtraPorts),
 		DataDir:       s.dataPath(srv.ID),
 		ServerType:    srv.ServerType,
 		Version:       srv.Version,
@@ -403,6 +451,20 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 	}
 	srv.ContainerID = cid
 	return srv, nil
+}
+
+func toDockerExtras(ports []ExtraPort) []docker.ExtraPort {
+	out := make([]docker.ExtraPort, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, docker.ExtraPort{
+			ID:            p.ID,
+			Description:   p.Description,
+			HostPort:      p.HostPort,
+			ContainerPort: p.ContainerPort,
+			Protocol:      p.Protocol,
+		})
+	}
+	return out
 }
 
 func (s *Store) dataPath(id string) string {

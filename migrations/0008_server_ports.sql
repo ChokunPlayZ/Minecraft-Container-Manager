@@ -1,0 +1,1 @@
+ALTER TABLE servers ADD COLUMN extra_ports TEXT NOT NULL DEFAULT '[]';

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +74,7 @@ func (m *Manager) HostAddress() string {
 type CreateOpts struct {
 	ID            string
 	HostPort      int
+	ExtraPorts    []ExtraPort
 	DataDir       string
 	ServerType    string
 	Version       string
@@ -80,6 +82,16 @@ type CreateOpts struct {
 	RAMMB         int
 	CPULimit      float64
 	MemoryLimitMB int
+}
+
+// ExtraPort describes an additional port to publish beyond the primary game
+// port, e.g. a WebUI (tcp) or a Bedrock/Geyser adapter (udp).
+type ExtraPort struct {
+	ID            string
+	Description   string
+	HostPort      int
+	ContainerPort int
+	Protocol      string // tcp or udp
 }
 
 // Name returns the container name for a server ID.
@@ -98,14 +110,15 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 			"BUILD=" + opts.Build,
 			"RAM_MB=" + fmt.Sprintf("%d", opts.RAMMB),
 		},
-		ExposedPorts: containerExposedPorts(),
+		ExposedPorts: exposedPorts(opts.ExtraPorts),
 	}
 	hostCfg := &container.HostConfig{
 		Binds: []string{fmt.Sprintf("%s:%s", opts.DataDir, containerData)},
 		RestartPolicy: container.RestartPolicy{
 			Name: container.RestartPolicyUnlessStopped,
 		},
-		Resources: containerResources(opts),
+		Resources:    containerResources(opts),
+		PortBindings: portBindings(opts),
 	}
 
 	resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
@@ -179,8 +192,39 @@ func (m *Manager) Logs(ctx context.Context, containerID string, follow bool) (io
 	return rc, nil
 }
 
-func containerExposedPorts() nat.PortSet {
-	return nat.PortSet{
+// exposedPorts returns the set of container ports to mark exposed. It always
+// includes the primary game port plus each extra port with its protocol.
+func exposedPorts(extras []ExtraPort) nat.PortSet {
+	ports := nat.PortSet{
 		nat.Port(fmt.Sprintf("%d/%s", mcPort, mcProto)): struct{}{},
 	}
+	for _, e := range extras {
+		ports[nat.Port(fmt.Sprintf("%d/%s", e.ContainerPort, normalizeProto(e.Protocol)))] = struct{}{}
+	}
+	return ports
+}
+
+// portBindings builds the host-to-container port bindings. The primary game
+// port binds srv HostPort -> container 25565/tcp. Each extra port binds its
+// host port to its container port/protocol. All bind on 0.0.0.0.
+func portBindings(opts CreateOpts) nat.PortMap {
+	bindings := nat.PortMap{
+		nat.Port(fmt.Sprintf("%d/%s", mcPort, mcProto)): []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: strconv.Itoa(opts.HostPort)},
+		},
+	}
+	for _, e := range opts.ExtraPorts {
+		key := nat.Port(fmt.Sprintf("%d/%s", e.ContainerPort, normalizeProto(e.Protocol)))
+		bindings[key] = []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: strconv.Itoa(e.HostPort)},
+		}
+	}
+	return bindings
+}
+
+func normalizeProto(proto string) string {
+	if proto != "udp" {
+		return "tcp"
+	}
+	return "udp"
 }

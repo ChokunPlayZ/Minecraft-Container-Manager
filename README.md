@@ -62,7 +62,9 @@ configured by `MCM_PORT_RANGE` (default `25565-25665`).
 MCM is a control panel, so each server container owns and publishes its own
 game port. The panel allocates a `host_port` from the `MCM_PORT_RANGE` pool
 (default `25565-25665`) and the server container binds it directly to the host.
-The panel itself does not proxy player traffic.
+The server container publishes its own game port (`25565/tcp`), and additional
+ports can be opened per-server from the settings UI (e.g. a WebUI over TCP or a
+Bedrock/Geyser adapter over UDP). The panel itself does not proxy player traffic.
 
 - **Host firewall:** open the `host_port` range/individual ports inbound so
   players can reach the server containers directly.

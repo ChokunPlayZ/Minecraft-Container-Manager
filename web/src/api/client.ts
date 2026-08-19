@@ -1,5 +1,6 @@
 import type {
   ConsoleLine,
+  ExtraPort,
   InstallInfo,
   Me,
   Server,
@@ -190,6 +191,7 @@ export interface CreateServerInput {
   version: string;
   build: string;
   ram_mb: number;
+  extra_ports?: ExtraPort[];
 }
 
 export interface UpdateServerInput {
@@ -197,6 +199,7 @@ export interface UpdateServerInput {
   ram_mb: number;
   backup_enabled?: boolean;
   backup_interval_minutes?: number;
+  extra_ports?: ExtraPort[];
 }
 
 export interface InstallInput {

@@ -1,6 +1,14 @@
 export type ServerType = 'paper' | 'fabric';
 export type ServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
 
+export interface ExtraPort {
+  id: string;
+  description: string;
+  host_port: number;
+  container_port: number;
+  protocol: 'tcp' | 'udp';
+}
+
 export interface Server {
   id: string;
   name: string;
@@ -9,6 +17,7 @@ export interface Server {
   build: string;
   ram_mb: number;
   host_port: number;
+  extra_ports: ExtraPort[];
   container_id: string | null;
   state: ServerState;
   backup_enabled: boolean;
