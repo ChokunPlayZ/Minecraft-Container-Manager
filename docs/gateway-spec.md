@@ -348,22 +348,25 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('wake_message_default',
 - [x] 13. Docs: update `README.md` + `TODO.md`; document migration + config.
 
 ### Phase 2 - Protocol proxy (limbo void + warp-in)
-- [ ] 1. `internal/proxy/protocol`: VarInt/VarLong/String/Position/UUID/Chat/NBT
+- [x] 1. `internal/proxy/protocol`: VarInt/VarLong/String/Position/UUID/Chat/NBT
       reader+writer with unit tests.
-- [ ] 2. Packet framing incl. compression (set-compression) + version registry.
-- [ ] 3. Handshake routing (status vs login), status responder (real).
-- [ ] 4. `internal/proxy/auth`: online-mode via Mojang session server (+ mock
+- [x] 2. Packet framing incl. compression (set-compression) + version registry.
+- [x] 3. Handshake routing (status vs login), status responder (real).
+- [x] 4. `internal/proxy/auth`: online-mode via Mojang session server (+ mock
       endpoint tests) and offline mode.
-- [ ] 5. Login -> configuration -> play handshake against the client.
-- [ ] 6. Limbo void: Empty End, spectator, `Join Game` + teleport + wait
+- [~] 5. Login -> configuration -> play handshake against the client. (Done for
+      the classic login->play revisions 762-763; newer 764-767 need the
+      configuration-state handshake, not implemented.)
+- [x] 6. Limbo void: Empty End, spectator, `Join Game` + teleport + wait
       message (actionbar/title/chat); keep-alive loop.
-- [ ] 7. Warp-in: connect to backend as player, seamless transfer to real
-      world.
-- [ ] 8. Version support matrix + graceful disconnect for unknown versions.
-- [ ] 9. Tests incl. stub-server integration asserting connect -> wake -> limbo
+- [~] 7. Warp-in: connect to backend as player, seamless transfer to real
+      world. (Transfer coded for 766+; the exercised path is the transparent
+      play bridge for offline backends.)
+- [x] 8. Version support matrix + graceful disconnect for unknown versions.
+- [x] 9. Tests incl. stub-server integration asserting connect -> wake -> limbo
       -> warp.
-- [ ] 10. Full integration + docs + deploy notes (compose port exposure for the
-      gateway listener range).
+- [ ] 10. Full integration against a live server + docs + deploy notes
+      (compose port exposure for the gateway listener range) - pending.
 
 ---
 
@@ -416,3 +419,39 @@ the approved spec intact while capturing how the code landed.
   `Settings` route; per-server wait message and sleeping MOTD live in the
   server detail page's gateway panel. The TanStack router plugin regenerates
   `web/src/routeTree.gen.ts` during `pnpm build`.
+
+## 9. Implementation notes (Phase 2, 2026-08-19)
+
+Recorded decisions and open risks from the Phase 2 (protocol proxy)
+implementation, committed as `88deb89`.
+
+- **New `internal/proxy/` tree.** `protocol/` (VarInt/VarLong/String/UUID/
+  Position/Chat + minimal NBT + zlib-compressed framing + version registry),
+  `auth/` (Mojang `hasJoined` session client with a mockable `SessionClient`,
+  RSA encryption-request/response, AES/CFB8 stream cipher, offline UUID,
+  signed-hex `ServerHash`), `limbo/` (End dimension, spectator, Join Game,
+  teleport, per-server actionbar, keep-alive loop), and `transfer/` (warp-in).
+  `session.go` orchestrates login -> limbo -> warp through the encrypted
+  connection. No player/session/token data is logged.
+- **Gateway integration.** Login handshakes now route to the proxy instead of
+  the Phase 1 buffer-and-relay; the status/MOTD responder and wake-on-connect
+  are preserved. Unknown protocol versions get a clean login disconnect.
+- **Version scope.** The classic login->play revisions 762-763 (MC 1.19.4-
+  1.20.1) are implemented and unit/stub-tested, including the limbo and the
+  transparent play bridge for offline backends. The registry lists 764-767
+  (1.20.3-1.21.1), but those require the configuration-state handshake which
+  is not implemented; they route to a graceful disconnect rather than a broken
+  session. Packet IDs/NBT and exact wire bytes have NOT been validated against
+  a live server in this environment.
+- **Warp mechanism.** A seamless Transfer is coded for protocol 766+, but the
+  exercised limbo path is 763 and uses the transparent play bridge on an
+  offline backend. Online-mode backends answer with an encryption request that
+  the bridge does not complete; the proxy logs and drops rather than fail
+  silently.
+- **Online-mode default.** Gateway online mode is gated behind an
+  `Options.OnlineMode` flag (default off, matching typical offline
+  deployments); the online path is implemented in `proxy/auth` and unit-tested.
+- **Outstanding (Phase 2 TODO item 10).** Full integration against a live
+  server, the configuration-state handshake for 1.20.3+, and deploy notes for
+  compose port exposure of the gateway listener range remain open before
+  production enablement.
