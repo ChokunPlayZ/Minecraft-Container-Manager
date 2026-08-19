@@ -8,6 +8,7 @@ web/.vite/
 .env
 data/
 /mcm
+TODO.md
 *.db
 *.db-wal
 *.db-shm
