@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"io"
+	"net"
 )
 
 // RSAPair holds a generated RSA keypair used for the login encryption request.
@@ -88,6 +89,57 @@ func NewEncryptor(secret []byte) (*Encryptor, error) {
 		return nil, err
 	}
 	return &Encryptor{block: block}, nil
+}
+
+// WrapConn wraps a net.Conn so bytes read from it are decrypted and bytes
+// written to it are encrypted with the given AES/CFB8 cipher. Deadlines and
+// close semantics forward to the underlying connection. It is the shared
+// wrapper used for both the client connection (proxy acting as server) and the
+// backend connection (proxy acting as client).
+func WrapConn(conn net.Conn, enc *Encryptor) net.Conn {
+	return &encryptedConn{Conn: conn, enc: enc}
+}
+
+// encryptedConn adapts a net.Conn to transparently decrypt reads and encrypt
+// writes with an AES/CFB8 stream cipher. AES/CFB8 is a streaming cipher whose
+// keystream depends on the running ciphertext, so a single persistent reader
+// and writer are retained across Read/Write calls; recreating them per call
+// would zero the feedback IV and corrupt any stream longer than one packet.
+type encryptedConn struct {
+	net.Conn
+	enc *Encryptor
+
+	r *cfb8Reader
+	w *cfb8Writer
+}
+
+func (e *encryptedConn) Read(p []byte) (int, error) {
+	if e.r == nil {
+		e.r = &cfb8Reader{src: e.Conn, block: e.enc.block, ivec: make([]byte, aes.BlockSize)}
+	}
+	return e.r.Read(p)
+}
+
+func (e *encryptedConn) Write(p []byte) (int, error) {
+	if e.w == nil {
+		e.w = &cfb8Writer{dst: e.Conn, block: e.enc.block, ivec: make([]byte, aes.BlockSize)}
+	}
+	return e.w.Write(p)
+}
+
+// EncryptWithPublicKey RSA-encrypts data with a DER-encoded PKIX public key,
+// the operation a login client performs on the shared secret and verify token
+// when building a Login Encryption Response.
+func EncryptWithPublicKey(pubDER, data []byte) ([]byte, error) {
+	pub, err := x509.ParsePKIXPublicKey(pubDER)
+	if err != nil {
+		return nil, err
+	}
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return nil, errors.New("encryption request did not carry an RSA public key")
+	}
+	return rsa.EncryptPKCS1v15(rand.Reader, rsaPub, data)
 }
 
 // Reader returns r wrapped so that bytes read from it are decrypted with

@@ -11,6 +11,7 @@ package transfer
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"strconv"
@@ -92,9 +93,12 @@ func bridge(ctx context.Context, client net.Conn, _ *protocol.WriterState, backe
 
 // backendLogin speaks the client side of the protocol to the backend: a
 // Handshake (next state login) followed by Login Start, acting as the player.
-// Only the offline backend path is supported; an online backend that answers
-// with an encryption request is rejected with a clear error rather than a
-// broken session.
+// Offline backends answer directly with Login Success and complete
+// immediately. Online backends answer with a Login Encryption Request, which
+// we complete by generating a shared AES secret, replying with the encrypted
+// Login Encryption Response, and switching the backend connection to the
+// cipher before continuing the login so the proxy actually authenticates and
+// reaches Login Success rather than silently dropping.
 func backendLogin(backend net.Conn, profile auth.Profile, v protocol.Version, logger *log.Logger) error {
 	var hs []byte
 	hw := protocol.NewWriter()
@@ -128,23 +132,72 @@ func backendLogin(backend net.Conn, profile auth.Profile, v protocol.Version, lo
 		return err
 	}
 
-	// Read the backend's first login reply. With a connection deadline set, we
-	// bail if the backend answers with an encryption request (online mode).
+	// Read the backend's first login reply, bounding the wait with a deadline
+	// so we never hang here.
 	_ = backend.SetDeadline(time.Now().Add(10 * time.Second))
 	rs := protocol.NewReaderState(backend)
 	pkt, err := rs.ReadPacket()
+	_ = backend.SetDeadline(time.Time{})
 	if err != nil {
 		return err
 	}
-	_ = backend.SetDeadline(time.Time{})
 	if pkt.ID == 0x01 {
-		// Login Encryption Request: the backend is online mode, which this
-		// bridge does not complete. Notify the operator and drop.
-		logger.Printf("transfer: backend requires online mode encryption (unsupported bridge path)")
-		return nil
+		return completeOnlineLogin(backend, pkt.Payload, profile, logger)
 	}
 	// Any other packet (e.g. Login Success/Disconnect) is left for the play
 	// relay to pass through; nothing further to do here.
+	return nil
+}
+
+// completeOnlineLogin finishes an online-mode backend login after the backend
+// has sent a Login Encryption Request (0x01) with the given payload. It
+// negotiates the shared secret, switches the connection to AES/CFB8
+// encryption, and reads the encrypted Login Success to confirm the player was
+// authenticated.
+func completeOnlineLogin(backend net.Conn, reqPayload []byte, profile auth.Profile, logger *log.Logger) error {
+	req, err := auth.ParseEncryptionRequest(reqPayload)
+	if err != nil {
+		return fmt.Errorf("parse backend encryption request: %w", err)
+	}
+	sharedSecret, payload, err := auth.BuildEncryptionResponse(req)
+	if err != nil {
+		return fmt.Errorf("build encryption response: %w", err)
+	}
+
+	// Send the Login Encryption Response (serverbound 0x01) on the ciphertext-
+	// free stream.
+	ws := protocol.NewWriterState()
+	respFrame, err := ws.WritePacket(0x01, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := backend.Write(respFrame); err != nil {
+		return err
+	}
+
+	enc, err := auth.NewEncryptor(sharedSecret)
+	if err != nil {
+		return fmt.Errorf("init backend cipher: %w", err)
+	}
+	encBackend := auth.WrapConn(backend, enc)
+
+	// The backend switches to encryption immediately after the encryption
+	// response, so all later frames use the cipher. Rebuild fresh frame state
+	// over the encrypted connection; the reader state used before encryption
+	// must not be reused once cipher turns on.
+	rs := protocol.NewReaderState(encBackend)
+	_ = encBackend.SetReadDeadline(time.Now().Add(10 * time.Second))
+	pkt, err := rs.ReadPacket()
+	_ = encBackend.SetReadDeadline(time.Time{})
+	if err != nil {
+		return fmt.Errorf("reading backend Login Success: %w", err)
+	}
+	if pkt.ID != 0x02 {
+		// Login Success is the only acceptable outcome; anything else means
+		// the online backend rejected or disconnected the player.
+		return fmt.Errorf("backend login did not succeed, got packet id 0x%02x", pkt.ID)
+	}
+	logger.Printf("transfer: authenticated to online-mode backend as %q", profile.Name)
 	return nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mcm-panel/mcm/internal/proxy/auth"
+	"github.com/mcm-panel/mcm/internal/proxy/confstate"
 	"github.com/mcm-panel/mcm/internal/proxy/limbo"
 	"github.com/mcm-panel/mcm/internal/proxy/protocol"
 	"github.com/mcm-panel/mcm/internal/proxy/transfer"
@@ -50,7 +51,32 @@ func HandleClient(ctx context.Context, conn net.Conn, opts SessionOptions) error
 		return err
 	}
 
+	// Phase 1.5: for protocol 764+ (1.20.2+) the client enters the
+	// Configuration state after login; drive the config handshake before the
+	// play-state limbo. The classic 762-763 login->play flow is unchanged and
+	// skips this step because HasConfigurationPhase is false.
+	if opts.Protocol.HasConfigurationPhase {
+		if err := confstate.RunConfig(ctx, state.conn, state.rs, state.ws, confstate.Options{
+			Logger:  opts.Logger,
+			Version: opts.Protocol,
+		}); err != nil {
+			return err
+		}
+	}
+
 	// Phase 2: limbo play state (End void + per-server message).
+	//
+	// Known limitation: the limbo currently serves play-state packets using the
+	// protocol 763 packet-ID table (internal/proxy/limbo/packets763.go). For
+	// the classic login->play revisions (762-763) those IDs are correct. For
+	// the configuration-phase revisions (764+) the play packet IDs may have
+	// shifted and have NOT been validated against a live server, so the limbo
+	// assumes the 763 table applies. This must be confirmed before production
+	// use; it is flagged prominently here and in the gateway spec.
+	if opts.Protocol.HasConfigurationPhase {
+		opts.Logger.Printf("WARNING: entering play-state limbo for protocol %d (%s) using the protocol 763 play packet-ID table; play IDs for this configuration-phase revision are unvalidated/assumed and must be verified against a live server before production use",
+			opts.Protocol.Protocol, opts.Protocol.Name)
+	}
 	limboSession := limbo.NewSession(state.conn, state.rs, state.ws, limbo.Options{
 		Logger:         opts.Logger,
 		Profile:        state.Profile,
@@ -180,7 +206,7 @@ func onlineAuth(ctx context.Context, conn net.Conn, rs *protocol.ReaderState, ws
 	if err != nil {
 		return nil, auth.Profile{}, err
 	}
-	encConn := wrapConnEncrypted(conn, enc)
+	encConn := auth.WrapConn(conn, enc)
 	if err := writeLoginSuccess(encConn, ws, profile); err != nil {
 		return nil, auth.Profile{}, err
 	}

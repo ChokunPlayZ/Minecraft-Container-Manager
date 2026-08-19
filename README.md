@@ -60,6 +60,24 @@ The panel container mounts `/var/run/docker.sock` so it can manage Minecraft
 server containers on the host. Minecraft servers bind the host port range
 configured by `MCM_PORT_RANGE` (default `25565-25665`).
 
+### Gateway port exposure (Docker Compose / firewall)
+
+When the gateway is enabled, the panel owns each server's public game port and
+no longer publishes `25565` directly to the host from the server containers.
+The gateway binds every server's public `host_port` itself, so the deployment
+must publish those ports to the network the players use:
+
+- **Docker Compose:** the `mcm` service must publish the configured `host_port`
+  pool (e.g. open the `MCM_PORT_RANGE` range such as `25565-25665` on the panel
+  container) so inbound player connections reach the gateway. If a server is
+  reachable by players, its `host_port` must be exposed on the panel container
+  (and forwarded by the host).
+- **Host firewall:** open the same `host_port` range/individual ports inbound so
+  players can connect through the gateway.
+- **Port pool:** the `host_port` values come from the `MCM_PORT_RANGE`
+  allocation pool (default `25565-25665`). Only expose the ports actually
+  allocated to servers to avoid publishing unused ranges.
+
 ## Bare metal / LXC
 
 For hosts that cannot or should not run the panel itself in Docker:

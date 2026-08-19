@@ -354,14 +354,17 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('wake_message_default',
 - [x] 3. Handshake routing (status vs login), status responder (real).
 - [x] 4. `internal/proxy/auth`: online-mode via Mojang session server (+ mock
       endpoint tests) and offline mode.
-- [~] 5. Login -> configuration -> play handshake against the client. (Done for
-      the classic login->play revisions 762-763; newer 764-767 need the
-      configuration-state handshake, not implemented.)
+- [x] 5. Login -> configuration -> play handshake against the client.
+      (Implemented for the modern configuration-phase revisions 764+ via the
+      `internal/proxy/confstate` handshake; the classic login->play revisions
+      762-763 keep the original flow. Play packet IDs for 764+ limbo are still
+      unvalidated - see section 9.)
 - [x] 6. Limbo void: Empty End, spectator, `Join Game` + teleport + wait
       message (actionbar/title/chat); keep-alive loop.
 - [~] 7. Warp-in: connect to backend as player, seamless transfer to real
-      world. (Transfer coded for 766+; the exercised path is the transparent
-      play bridge for offline backends.)
+      world. (Proxy now authenticates to an online-mode backend and reaches
+      Login Success; the seamless play-state mediation/warp for online
+      backends remains a documented limitation - see section 9.)
 - [x] 8. Version support matrix + graceful disconnect for unknown versions.
 - [x] 9. Tests incl. stub-server integration asserting connect -> wake -> limbo
       -> warp.
@@ -436,22 +439,41 @@ implementation, committed as `88deb89`.
 - **Gateway integration.** Login handshakes now route to the proxy instead of
   the Phase 1 buffer-and-relay; the status/MOTD responder and wake-on-connect
   are preserved. Unknown protocol versions get a clean login disconnect.
-- **Version scope.** The classic login->play revisions 762-763 (MC 1.19.4-
-  1.20.1) are implemented and unit/stub-tested, including the limbo and the
-  transparent play bridge for offline backends. The registry lists 764-767
-  (1.20.3-1.21.1), but those require the configuration-state handshake which
-  is not implemented; they route to a graceful disconnect rather than a broken
-  session. Packet IDs/NBT and exact wire bytes have NOT been validated against
-  a live server in this environment.
+- **Version scope.** The version registry now covers through protocol 776 =
+  MC "26.2" (the newest entries use the year-based naming, e.g. 774/775/776 =
+  26.0/26.1/26.2). The classic login->play revisions 762-763 (MC 1.19.4-1.20.1)
+  are implemented and unit/stub-tested, including the limbo and the transparent
+  play bridge for offline backends.
+- **AES/CFB8 stream-state fix.** The encrypted connection wrapper
+  (`auth/encrypt.go`) now retains a single persistent CFB8 reader and writer
+  across framing calls instead of recreating them per read/write. AES/CFB8 is a
+  streaming cipher whose keystream depends on prior ciphertext, so a per-call
+  reset corrupted any stream longer than one packet; this is fixed.
+- **Configuration-state handshake.** The config handshake for 764+ landed in
+  `internal/proxy/confstate` and is wired into `session.go` before the
+  play-state limbo. Serverbound/clientbound configuration packet IDs are
+  bucketed by revision (764-765, 766-768, 769+). These IDs, and the
+  play-state limbo packet IDs for 764+ (which still use the protocol 763
+  table), have NOT been validated against a live server and must be confirmed
+  before production use.
 - **Warp mechanism.** A seamless Transfer is coded for protocol 766+, but the
   exercised limbo path is 763 and uses the transparent play bridge on an
-  offline backend. Online-mode backends answer with an encryption request that
-  the bridge does not complete; the proxy logs and drops rather than fail
-  silently.
+  offline backend. The proxy now completes online-mode backend login: it
+  answers the backend's Login Encryption Request, negotiates a shared AES
+  secret, switches the backend connection to the cipher, and reaches Login
+  Success rather than logging and dropping. The seamless play-state
+  mediation/warp for online backends is still a documented limitation.
 - **Online-mode default.** Gateway online mode is gated behind an
   `Options.OnlineMode` flag (default off, matching typical offline
   deployments); the online path is implemented in `proxy/auth` and unit-tested.
+- **Play-state limbo IDs for 764+ (known limitation).** The config-phase
+  revisions reach the play-state limbo, but the limbo still serves play packets
+  using the protocol 763 table (Join Game 0x28, Player Position 0x3C, etc.).
+  These IDs may have shifted in 764+ and are unvalidated/assumed; the proxy
+  logs a prominent warning before entering limbo for a config-phase version.
+  They must be verified against a live server before production use rather
+  than guessing corrected IDs without a reliable source.
 - **Outstanding (Phase 2 TODO item 10).** Full integration against a live
-  server, the configuration-state handshake for 1.20.3+, and deploy notes for
-  compose port exposure of the gateway listener range remain open before
-  production enablement.
+  server, live validation of the config-phase and 764+ play packet IDs, the
+  seamless online-backend warp, and deploy notes for compose port exposure of
+  the gateway listener range remain open before production enablement.
