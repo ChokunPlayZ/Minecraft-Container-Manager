@@ -113,9 +113,19 @@ export const api = {
 
   serverStatus: (id: string) => request<ServerStatus>(`/api/servers/${id}/status`),
 
-  consoleTail: (id: string, opts?: { since?: string }) => {
-    const q = opts?.since ? `?since=${encodeURIComponent(opts.since)}` : '';
-    return request<ConsoleLine[]>(`/api/servers/${id}/console${q}`);
+  openConsoleStream: (id: string, onLine: (line: ConsoleLine) => void): (() => void) => {
+    const source = new EventSource(`/api/servers/${id}/console`, { withCredentials: true });
+    source.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data) as ConsoleLine;
+        if (parsed && typeof parsed.message === 'string') {
+          onLine(parsed);
+        }
+      } catch {
+        /* ignore malformed events */
+      }
+    };
+    return () => source.close();
   },
 
   installInfo: (id: string) => request<InstallInfo>(`/api/servers/${id}/install`),

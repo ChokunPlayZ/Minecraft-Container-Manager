@@ -1,44 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError } from '../api/client';
+import { useEffect, useRef, useState } from 'react';
+import { api } from '../api/client';
 import type { ConsoleLine } from '../api/types';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 
 export function ConsoleViewer({ serverId }: { serverId: string }) {
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const lastTimestamp = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const poll = useCallback(async () => {
-    try {
-      const since = lastTimestamp.current ?? undefined;
-      const newLines = await api.consoleTail(serverId, since ? { since } : undefined);
-      if (newLines.length === 0) return;
-      setLines((prev) => {
-        const key = (l: ConsoleLine) => `${l.timestamp ?? ''}|${l.message}`;
-        const seen = new Set(prev.map(key));
-        const merged = [...prev];
-        for (const line of newLines) {
-          const k = key(line);
-          if (!seen.has(k)) {
-            merged.push(line);
-            seen.add(k);
-          }
-        }
-        return merged.slice(-500);
-      });
-      lastTimestamp.current = newLines[newLines.length - 1].timestamp;
-      setError(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Console unavailable');
-    }
-  }, [serverId]);
-
   useEffect(() => {
-    void poll();
-    const id = setInterval(() => void poll(), 2000);
-    return () => clearInterval(id);
-  }, [poll]);
+    const seen = new Set<string>();
+    const close = api.openConsoleStream(serverId, (line) => {
+      const key = `${line.timestamp ?? ''}|${line.message}`;
+      if (seen.size > 5000) seen.clear();
+      if (seen.has(key)) return;
+      seen.add(key);
+      setLines((prev) => {
+        const next = [...prev, line];
+        return next.slice(-500);
+      });
+      setError(null);
+    });
+    return close;
+  }, [serverId]);
 
   useEffect(() => {
     if (scrollRef.current) {

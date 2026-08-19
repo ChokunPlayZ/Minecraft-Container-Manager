@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/mcm-panel/mcm/internal/ports"
 	"github.com/mcm-panel/mcm/internal/servers"
 )
@@ -121,20 +120,14 @@ func (s *Server) handleAvailablePorts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
-	follow := false
-	if q := r.URL.Query().Get("follow"); q == "1" || q == "true" {
-		follow = true
-	}
-	rc, err := s.servers.Console(r.Context(), r.PathValue("id"), follow)
+	rc, err := s.servers.Console(r.Context(), r.PathValue("id"), true)
 	if err != nil {
 		s.writeServerErr(w, err)
 		return
 	}
 	defer rc.Close()
 	rc = s.configureConsoleJoinWatcher(r.Context(), r.PathValue("id"), rc)
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	_, _ = stdcopy.StdCopy(w, w, rc)
+	s.streamConsole(r.Context(), w, rc)
 }
 
 func (s *Server) handleInstall(provision bool) http.HandlerFunc {
