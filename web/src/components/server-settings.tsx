@@ -9,6 +9,8 @@ import { Label } from './ui/label';
 export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (s: Server) => void }) {
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
+  const [backupEnabled, setBackupEnabled] = useState(server.backup_enabled ?? true);
+  const [backupInterval, setBackupInterval] = useState(server.backup_interval_minutes ?? 720);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -17,7 +19,12 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
     setBusy(true);
     setError(null);
     try {
-      const updated = await api.updateServer(server.id, { name: name.trim(), ram_mb: ramMb });
+      const updated = await api.updateServer(server.id, {
+        name: name.trim(),
+        ram_mb: ramMb,
+        backup_enabled: backupEnabled,
+        backup_interval_minutes: backupInterval,
+      });
       onSaved(updated);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to save settings');
@@ -49,6 +56,26 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
               onChange={(e) => setRamMb(Number(e.target.value))}
             />
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-backup-interval">Automatic backup interval (minutes)</Label>
+            <Input
+              id="edit-backup-interval"
+              type="number"
+              min={5}
+              step={5}
+              value={backupInterval}
+              disabled={!backupEnabled}
+              onChange={(e) => setBackupInterval(Number(e.target.value))}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={backupEnabled}
+              onChange={(e) => setBackupEnabled(e.target.checked)}
+            />
+            Enable automatic backups
+          </label>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" disabled={busy}>
             {busy ? 'Saving...' : 'Save'}

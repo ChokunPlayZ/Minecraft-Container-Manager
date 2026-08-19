@@ -4,9 +4,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/mcm-panel/mcm/internal/api"
 	"github.com/mcm-panel/mcm/internal/auth"
+	"github.com/mcm-panel/mcm/internal/backups"
 	"github.com/mcm-panel/mcm/internal/config"
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/docker"
@@ -41,11 +43,22 @@ func main() {
 
 	jarResolver := jars.NewResolver()
 	serverStore := servers.NewStore(handle, dockerMgr, jarResolver, cfg.PortRange.Start, cfg.PortRange.End, cfg.DataDir)
+	backupStore := backups.New(handle.DB, backups.S3Config{
+		Endpoint:  cfg.S3.Endpoint,
+		AccessKey: cfg.S3.AccessKey,
+		SecretKey: cfg.S3.SecretKey,
+		Bucket:    cfg.S3.Bucket,
+		Region:    cfg.S3.Region,
+	}, cfg.DataDir)
+	backupScheduler := backups.NewScheduler(backupStore, handle.DB, logger, 1*time.Minute)
+	backupScheduler.Start()
+	defer backupScheduler.Stop()
 
 	handler := api.New(api.Options{
 		Cfg:      cfg,
 		DB:       handle,
 		Servers:  serverStore,
+		Backups:  backupStore,
 		Users:    users,
 		Sessions: sessions,
 		Jars:     jarResolver,

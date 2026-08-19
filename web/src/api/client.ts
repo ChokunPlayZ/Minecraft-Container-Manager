@@ -6,6 +6,7 @@ import type {
   ServerStatus,
   ServerType,
   Settings,
+  BackupRecord,
   VersionInfo,
   VersionMeta,
 } from './types';
@@ -94,6 +95,21 @@ export const api = {
 
   putSettings: (settings: Settings) =>
     request<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+
+  listBackups: (serverId: string) =>
+    request<{ backups: BackupRecord[] }>(`/api/servers/${serverId}/backups`),
+
+  createBackup: (serverId: string, name?: string) =>
+    request<BackupRecord>(`/api/servers/${serverId}/backup`, {
+      method: 'POST',
+      body: JSON.stringify({ name: name ?? '' }),
+    }),
+
+  restoreBackup: (serverId: string, backupId: string) =>
+    request<{ ok: boolean }>(`/api/servers/${serverId}/restore/${backupId}`, { method: 'POST' }),
+
+  deleteBackup: (backupId: string) =>
+    request<{ ok: boolean }>(`/api/backups/${backupId}`, { method: 'DELETE' }),
 };
 
 export interface CreateServerInput {
@@ -107,6 +123,8 @@ export interface CreateServerInput {
 export interface UpdateServerInput {
   name: string;
   ram_mb: number;
+  backup_enabled?: boolean;
+  backup_interval_minutes?: number;
 }
 
 export interface InstallInput {

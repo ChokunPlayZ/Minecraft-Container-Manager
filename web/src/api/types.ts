@@ -11,6 +11,8 @@ export interface Server {
   host_port: number;
   container_id: string | null;
   state: ServerState;
+  backup_enabled: boolean;
+  backup_interval_minutes: number;
   created_at: string;
   updated_at: string;
 }
@@ -54,4 +56,16 @@ export interface VersionMeta {
 
 export interface Settings {
   [key: string]: unknown;
+}
+
+export type BackupStatus = 'pending' | 'completed' | 'failed';
+
+export interface BackupRecord {
+  id: string;
+  server_id: string;
+  name: string;
+  size_bytes: number;
+  location: string;
+  status: BackupStatus;
+  created_at: string;
 }

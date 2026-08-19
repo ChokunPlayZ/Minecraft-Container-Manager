@@ -17,9 +17,21 @@ type Config struct {
 	DBPath        string
 	DockerHost    string
 	SessionSecret []byte
+	// S3 holds the object-storage configuration used for world backups. An
+	// empty Endpoint disables backups.
+	S3 S3Config
 	// SecureCookies forces Secure on session cookies. It is controlled by
 	// MCM_TLS and defaults to false.
 	SecureCookies bool
+}
+
+// S3Config describes a path-style S3-compatible object store endpoint.
+type S3Config struct {
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+	Bucket    string
+	Region    string
 }
 
 // PortRange is an inclusive range of host ports available for server containers.
@@ -37,6 +49,11 @@ const (
 	EnvDockerHost    = "DOCKER_HOST"
 	EnvSessionSecret = "MCM_SESSION_SECRET"
 	EnvTLS           = "MCM_TLS"
+	EnvS3Endpoint    = "MCM_S3_ENDPOINT"
+	EnvS3AccessKey   = "MCM_S3_ACCESS_KEY"
+	EnvS3SecretKey   = "MCM_S3_SECRET_KEY"
+	EnvS3Bucket      = "MCM_S3_BUCKET"
+	EnvS3Region      = "MCM_S3_REGION"
 )
 
 const (
@@ -54,6 +71,13 @@ func Load() (*Config, error) {
 		Addr:       getenv(EnvAddr, defaultAddr),
 		DataDir:    getenv(EnvDataDir, defaultDataDir),
 		DockerHost: getenv(EnvDockerHost, defaultDockerHost),
+		S3: S3Config{
+			Endpoint:  getenv(EnvS3Endpoint, ""),
+			AccessKey: getenv(EnvS3AccessKey, ""),
+			SecretKey: getenv(EnvS3SecretKey, ""),
+			Bucket:    getenv(EnvS3Bucket, ""),
+			Region:    getenv(EnvS3Region, "us-east-1"),
+		},
 	}
 
 	pr, err := ParsePortRange(getenv(EnvPortRange, defaultPortRange))

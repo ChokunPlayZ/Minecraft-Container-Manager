@@ -90,11 +90,15 @@ so the socket is available. Build the `mcm-server:latest` image with the
 | `MCM_DB_PATH` | `/data/mcm.db` | SQLite database file. |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon endpoint. |
 | `MCM_SESSION_SECRET` | *(required)* | Secret used to sign session cookies. |
+| `MCM_S3_ENDPOINT` | *(empty)* | S3-compatible object store endpoint (e.g. `http://minio:9000`). Empty disables backups. |
+| `MCM_S3_ACCESS_KEY` | *(empty)* | Access key for the S3 store. |
+| `MCM_S3_SECRET_KEY` | *(empty)* | Secret key for the S3 store. |
+| `MCM_S3_BUCKET` | *(empty)* | Bucket used to store world backup archives. |
+| `MCM_S3_REGION` | `us-east-1` | Region reported during S3 signing. |
 | `TZ` | `UTC` | Container/system timezone. |
 
-The MySQL/SQLite choice, backup credentials, idle timeout, and Cloudflare
-credentials for the stubbed features are intended to be added to this table as
-those features are implemented.
+The idle timeout and Cloudflare credentials for the remaining stubbed features
+are intended to be added to this table as those features are implemented.
 
 ## API summary
 
@@ -113,6 +117,9 @@ backend, but the intended surface is:
 | `POST` | `/api/servers/:id/restart` | Restart a server. |
 | `DELETE` | `/api/servers/:id` | Remove a server. |
 | `POST` | `/api/servers/:id/backup` | Trigger a backup. |
+| `GET` | `/api/servers/:id/backups` | List backups for a server. |
+| `POST` | `/api/servers/:id/restore/:backupId` | Restore a backup. |
+| `DELETE` | `/api/backups/:backupId` | Delete a backup. |
 
 ## Project structure
 
@@ -168,9 +175,18 @@ Environment variables for the server container:
 | `RAM_MB` | `2048` | Max heap in MB (min heap is 512M). |
 | `EULA` | `TRUE` | Set `EULA=TRUE` to accept the Minecraft EULA. |
 
+## Backups
+
+World backups archive each server's data directory to a tar.gz and upload it to
+any S3-compatible object store (MinIO, AWS S3, DigitalOcean Spaces, etc) using
+path-style requests signed with AWS Signature Version 4. Retained backups are
+limited per server via the `backup_retention` setting (default 10). Scheduling
+is configured per server: enable/disable automatic backups and set the interval
+in minutes from the server settings.
+
 ## Stubbed features
 
 The following are not yet implemented end-to-end and are reserved in the data
-model and configuration only: S3-compatible backups, idle spin-down, Cloudflare
-SRV registration, and TOTP/passkey authentication. Onboarding is implemented,
-and server lifecycle (create/start/stop/restart/remove) is functional.
+model and configuration only: idle spin-down, Cloudflare SRV registration, and
+TOTP/passkey authentication. Onboarding, server lifecycle
+(create/start/stop/restart/remove), and S3-compatible backups are functional.

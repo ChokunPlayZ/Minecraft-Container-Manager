@@ -4,6 +4,7 @@ import { ArrowLeft, Play, RefreshCw, Square, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server, ServerState } from '../api/types';
 import { AppShell } from '../components/app-shell';
+import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
 import { InstallPanel } from '../components/install-panel';
 import { RequireAuth } from '../components/require-auth';
@@ -166,6 +167,7 @@ function ServerDetailRoute() {
               serverType={server.server_type}
               onInstalled={loadServer}
             />
+            <BackupsPanel server={server} />
           </div>
         </div>
 

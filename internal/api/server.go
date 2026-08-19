@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/mcm-panel/mcm/internal/auth"
+	"github.com/mcm-panel/mcm/internal/backups"
 	"github.com/mcm-panel/mcm/internal/config"
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/jars"
@@ -24,6 +25,7 @@ type Server struct {
 	cfg      *config.Config
 	db       *db.Store
 	servers  *servers.Store
+	backups  *backups.Store
 	users    *auth.Users
 	sessions *auth.Manager
 	jars     *jars.Resolver
@@ -36,6 +38,7 @@ type Options struct {
 	Cfg      *config.Config
 	DB       *db.Store
 	Servers  *servers.Store
+	Backups  *backups.Store
 	Users    *auth.Users
 	Sessions *auth.Manager
 	Jars     *jars.Resolver
@@ -57,6 +60,7 @@ func New(opts Options) http.Handler {
 		cfg:      opts.Cfg,
 		db:       opts.DB,
 		servers:  opts.Servers,
+		backups:  opts.Backups,
 		users:    opts.Users,
 		sessions: opts.Sessions,
 		jars:     opts.Jars,
@@ -87,6 +91,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/console", s.requireAuth(s.handleServerConsole))
 	s.mux.HandleFunc("GET /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(false))))
 	s.mux.HandleFunc("POST /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(true))))
+
+	// Backups.
+	s.mux.HandleFunc("POST /api/servers/{id}/backup", s.requireAuth(s.wrapJSON(s.handleBackupServer)))
+	s.mux.HandleFunc("GET /api/servers/{id}/backups", s.requireAuth(s.wrapJSON(s.handleListBackups)))
+	s.mux.HandleFunc("POST /api/servers/{id}/restore/{backupId}", s.requireAuth(s.wrapJSON(s.handleRestoreBackup)))
+	s.mux.HandleFunc("DELETE /api/backups/{backupId}", s.requireAuth(s.wrapJSON(s.handleDeleteBackup)))
 
 	// Jars.
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions", s.requireAuth(s.wrapJSON(s.handleJarVersions)))
