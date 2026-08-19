@@ -8,6 +8,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -250,7 +251,13 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		path = "index.html"
 	}
 	if _, err := fs.Stat(sub, path); err != nil {
-		// SPA fallback: serve index.html for client-side routes.
+		// SPA fallback: serve index.html for client-side navigation routes.
+		// Resource-looking paths (with a file extension) that are missing are
+		// genuine 404s, not navigation routes; do not soft-404 them.
+		if isAssetPath(r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
 		path = "index.html"
 	}
 	data, err := fs.ReadFile(sub, path)
@@ -262,6 +269,14 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", ct)
 	}
 	_, _ = w.Write(data)
+}
+
+// isAssetPath reports whether a request path looks like a static resource (a
+// path whose base name has a file extension) as opposed to a client-side
+// navigation route. Navigation routes are the only ones that should receive
+// the SPA index.html fallback.
+func isAssetPath(p string) bool {
+	return strings.Contains(path.Base(p), ".")
 }
 
 type apiError struct {
