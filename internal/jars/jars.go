@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -16,15 +17,18 @@ import (
 type JarType string
 
 const (
-	TypePaper   JarType = "paper"
-	TypeFabric  JarType = "fabric"
-	TypeVanilla JarType = "vanilla"
+	TypePaper    JarType = "paper"
+	TypeFabric   JarType = "fabric"
+	TypeVanilla  JarType = "vanilla"
+	TypeForge    JarType = "forge"
+	TypeNeoForge JarType = "neoforge"
+	TypeSpigot   JarType = "spigot"
 )
 
 // ParseJarType validates a platform string.
 func ParseJarType(s string) (JarType, error) {
 	switch JarType(s) {
-	case TypePaper, TypeFabric, TypeVanilla:
+	case TypePaper, TypeFabric, TypeVanilla, TypeForge, TypeNeoForge, TypeSpigot:
 		return JarType(s), nil
 	default:
 		return "", fmt.Errorf("unsupported jar type %q", s)
@@ -32,10 +36,13 @@ func ParseJarType(s string) (JarType, error) {
 }
 
 const (
-	defaultPaperBase  = "https://api.papermc.io/v2"
-	defaultFabricBase = "https://meta.fabricmc.net/v2"
-	defaultMojangManf = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-	requestTimeout    = 20 * time.Second
+	defaultPaperBase    = "https://api.papermc.io/v2"
+	defaultFabricBase   = "https://meta.fabricmc.net/v2"
+	defaultMojangManf   = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+	defaultForgeBase    = "https://files.minecraftforge.net/net/minecraftforge/forge"
+	defaultNeoForgeBase = "https://api.neoforged.net/neoforges"
+	defaultSpigotBase   = "https://hub.spigotmc.org/versions"
+	requestTimeout      = 20 * time.Second
 )
 
 // Resolver queries upstream metadata APIs. The base URLs are overridable so unit
@@ -45,6 +52,9 @@ type Resolver struct {
 	PaperBase      string
 	FabricBase     string
 	MojangManifest string
+	ForgeBase      string
+	NeoForgeBase   string
+	SpigotBase     string
 }
 
 // NewResolver returns a Resolver using production endpoints.
@@ -58,7 +68,15 @@ func NewResolverWithBases(client *http.Client, paperBase, fabricBase, mojangMani
 	if client == nil {
 		client = &http.Client{Timeout: requestTimeout}
 	}
-	return &Resolver{Client: client, PaperBase: paperBase, FabricBase: fabricBase, MojangManifest: mojangManifest}
+	return &Resolver{
+		Client:         client,
+		PaperBase:      paperBase,
+		FabricBase:     fabricBase,
+		MojangManifest: mojangManifest,
+		ForgeBase:      defaultForgeBase,
+		NeoForgeBase:   defaultNeoForgeBase,
+		SpigotBase:     defaultSpigotBase,
+	}
 }
 
 // Resolved describes a validated server image configuration.
@@ -216,6 +234,41 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 			return Resolved{}, fmt.Errorf("vanilla version %q not found", version)
 		}
 		return Resolved{Type: TypeVanilla, Version: version}, nil
+	case TypeForge:
+		builds, err := r.ForgeBuilds(ctx, version)
+		if err != nil {
+			return Resolved{}, err
+		}
+		if len(builds) == 0 {
+			return Resolved{}, fmt.Errorf("no forge builds found for version %q", version)
+		}
+		fv, err := selectString(builds, build)
+		if err != nil {
+			return Resolved{}, err
+		}
+		return Resolved{Type: TypeForge, Version: version, Build: fv}, nil
+	case TypeNeoForge:
+		builds, err := r.NeoForgeBuilds(ctx, version)
+		if err != nil {
+			return Resolved{}, err
+		}
+		if len(builds) == 0 {
+			return Resolved{}, fmt.Errorf("no neoforge builds found for version %q", version)
+		}
+		nv, err := selectString(builds, build)
+		if err != nil {
+			return Resolved{}, err
+		}
+		return Resolved{Type: TypeNeoForge, Version: version, Build: nv}, nil
+	case TypeSpigot:
+		versions, err := r.SpigotGameVersions(ctx)
+		if err != nil {
+			return Resolved{}, err
+		}
+		if !containsString(versions, version) {
+			return Resolved{}, fmt.Errorf("spigot version %q not found", version)
+		}
+		return Resolved{Type: TypeSpigot, Version: version}, nil
 	default:
 		return Resolved{}, fmt.Errorf("unsupported jar type %q", jt)
 	}
@@ -257,6 +310,20 @@ func containsStringVersion(entries []ManifestEntry, v string) bool {
 		}
 	}
 	return false
+}
+
+func containsString(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedStrings(xs []string) []string {
+	sort.Strings(xs)
+	return xs
 }
 
 func (r *Resolver) getJSON(ctx context.Context, url string, out any) error {

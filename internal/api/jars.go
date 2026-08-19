@@ -32,6 +32,12 @@ func (s *Server) handleJarVersions(w http.ResponseWriter, r *http.Request) {
 		versions, err = s.jars.PaperVersions(r.Context())
 	case "fabric":
 		versions, err = s.jars.FabricGameVersions(r.Context())
+	case "forge":
+		versions, err = s.jars.ForgeGameVersions(r.Context())
+	case "neoforge":
+		versions, err = s.jars.NeoForgeGameVersions(r.Context())
+	case "spigot":
+		versions, err = s.jars.SpigotGameVersions(r.Context())
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_request", "unsupported jar type")
 		return
@@ -59,6 +65,12 @@ func (s *Server) handleJarBuilds(w http.ResponseWriter, r *http.Request) {
 		}
 	case "fabric":
 		builds, err = s.jars.FabricLoaders(r.Context(), version)
+	case "forge":
+		builds, err = s.jars.ForgeBuilds(r.Context(), version)
+	case "neoforge":
+		builds, err = s.jars.NeoForgeBuilds(r.Context(), version)
+	case "spigot":
+		builds, err = s.jars.SpigotBuilds(r.Context(), version)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_request", "unsupported jar type")
 		return

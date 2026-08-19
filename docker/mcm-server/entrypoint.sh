@@ -7,6 +7,7 @@ BUILD="${BUILD:-}"
 RAM_MB="${RAM_MB:-2048}"
 
 SERVER_JAR=/data/server.jar
+LAUNCH=jar
 
 log() {
     echo "[mcm-server] $*"
@@ -82,18 +83,110 @@ resolve_vanilla() {
     download "$jar_url"
 }
 
-if [ ! -f "$SERVER_JAR" ]; then
+resolve_spigot() {
+    if [ "$VERSION" = "latest" ]; then
+        mc=$(curl -fsSL "https://hub.spigotmc.org/versions/" \
+            | jq -r 'keys | .[-1]')
+        [ -n "$mc" ] && [ "$mc" != "null" ] || { log "Could not resolve latest Spigot version" >&2; exit 1; }
+    else
+        mc="$VERSION"
+    fi
+
+    log "Resolved Spigot version: $mc"
+    download "https://download.getbukkit.org/spigot/spigot-${mc}.jar"
+}
+
+resolve_forge() {
+    if [ "$VERSION" = "latest" ]; then
+        mc=$(curl -fsSL "https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json" \
+            | jq -r 'keys | .[-1]')
+        [ -n "$mc" ] && [ "$mc" != "null" ] || { log "Could not resolve latest Forge version" >&2; exit 1; }
+    else
+        mc="$VERSION"
+    fi
+
+    if [ -n "$BUILD" ]; then
+        forge="$BUILD"
+    else
+        forge=$(curl -fsSL "https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json" \
+            | jq -r --arg mc "$mc" '.[$mc][-1].version // empty' 2>/dev/null)
+        [ -n "$forge" ] || { log "Could not resolve Forge build for $mc" >&2; exit 1; }
+    fi
+
+    log "Resolved Forge: $forge (MC: $mc)"
+    install_forge_installer "$forge"
+}
+
+resolve_neoforge() {
+    if [ "$VERSION" = "latest" ]; then
+        mc=$(curl -fsSL "https://api.neoforged.net/neoforges/releases" \
+            | jq -r '[.versions[] | split("-")[0]] | unique | .[-1]')
+        [ -n "$mc" ] && [ "$mc" != "null" ] || { log "Could not resolve latest NeoForge version" >&2; exit 1; }
+    else
+        mc="$VERSION"
+    fi
+
+    if [ -n "$BUILD" ]; then
+        nf="$BUILD"
+    else
+        nf=$(curl -fsSL "https://api.neoforged.net/neoforges/releases" \
+            | jq -r --arg pre "$mc-" '[.versions[] | select(startswith($pre))][-1] // empty' 2>/dev/null)
+        [ -n "$nf" ] || { log "Could not resolve NeoForge build for $mc" >&2; exit 1; }
+    fi
+
+    log "Resolved NeoForge: $nf"
+    install_forge_installer "$nf" neoforge
+}
+
+install_forge_installer() {
+    ver="$1"
+    case "$2" in
+        neoforge)
+            base="https://maven.neoforged.net/releases/net/neoforged/neoforge"
+            base_url="$base/${ver}/neoforge-${ver}-installer.jar"
+            ;;
+        *)
+            base="https://maven.minecraftforge.net/net/minecraftforge/forge"
+            base_url="$base/${ver}/forge-${ver}-server.jar"
+            ;;
+    esac
+
+    log "Downloading installer from $base_url"
+    curl -fsSL --retry 3 --retry-delay 2 -o /data/installer.jar "$base_url"
+    ( cd /data && java -jar installer.jar --installServer )
+    rm -f /data/installer.jar
+    if [ -f /data/run.sh ]; then
+        chmod +x /data/run.sh
+        LAUNCH=forge
+        log "Installed $ver; will launch via run.sh"
+    else
+        log "Installer completed but no run.sh found; falling back to direct jar run" >&2
+        LAUNCH=jar
+    fi
+}
+
+server_installed() {
+    case "$SERVER_TYPE" in
+        forge|neoforge) [ -f /data/run.sh ] ;;
+        *) [ -f "$SERVER_JAR" ] ;;
+    esac
+}
+
+if server_installed; then
+    log "Server already installed; skipping download"
+else
     case "$SERVER_TYPE" in
         paper)   resolve_paper ;;
         fabric)  resolve_fabric ;;
         vanilla) resolve_vanilla ;;
+        spigot)  resolve_spigot ;;
+        forge)   resolve_forge ;;
+        neoforge) resolve_neoforge ;;
         *)
-            log "Unknown SERVER_TYPE '$SERVER_TYPE'; expected paper|fabric|vanilla" >&2
+            log "Unknown SERVER_TYPE '$SERVER_TYPE'; expected paper|fabric|vanilla|spigot|forge|neoforge" >&2
             exit 1
             ;;
     esac
-else
-    log "server.jar already present; skipping download"
 fi
 
 # Accept the Minecraft EULA when not already accepted.
@@ -103,4 +196,7 @@ if [ ! -f /data/eula.txt ] || ! grep -qi '^eula=true' /data/eula.txt; then
 fi
 
 log "Starting server: type=$SERVER_TYPE ram=${RAM_MB}M"
+if [ "$LAUNCH" = "forge" ] && [ -f /data/run.sh ]; then
+    exec sh /data/run.sh nogui
+fi
 exec java -Xms512M -Xmx"${RAM_MB}"M -jar "$SERVER_JAR" nogui
