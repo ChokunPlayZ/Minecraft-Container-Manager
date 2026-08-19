@@ -10,6 +10,7 @@ package gateway
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net"
@@ -17,8 +18,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mcm-panel/mcm/internal/proxy"
+	"github.com/mcm-panel/mcm/internal/proxy/protocol"
 	"github.com/mcm-panel/mcm/internal/servers"
 )
+
+// defaultWaitMessage is the fallback wait/void message shown to a player while
+// a server is waking up, used when neither a per-server nor global default is
+// configured.
+const defaultWaitMessage = "Server is starting up, please wait..."
 
 // Store is the subset of *servers.Store the gateway needs.
 type Store interface {
@@ -27,6 +35,8 @@ type Store interface {
 	Status(ctx context.Context, id string) (servers.Server, error)
 	GatewayInfo(ctx context.Context, id string, enabled bool) (servers.GatewayInfo, error)
 	SetLastMotd(ctx context.Context, id, motd string) error
+	WakeMessage(ctx context.Context, id string) (string, error)
+	WakeMessageDefault(ctx context.Context, def string) (string, error)
 }
 
 // Docker is the subset of *docker.Manager the gateway needs.
@@ -46,11 +56,15 @@ type EnabledFunc func(ctx context.Context) (bool, error)
 
 // Options configures a Manager.
 type Options struct {
-	Logger              *log.Logger
-	Store               Store
-	Docker              Docker
-	Waker               Waker
-	Enabled             EnabledFunc
+	Logger  *log.Logger
+	Store   Store
+	Docker  Docker
+	Waker   Waker
+	Enabled EnabledFunc
+	// OnlineMode enables Mojang session-server authentication for login
+	// connections. When false, offline-mode auth is used. Callers that need
+	// online mode should set this; most MCM deployments default to offline.
+	OnlineMode          bool
 	ReconcileInterval   time.Duration
 	DialInterval        time.Duration
 	HoldTimeout         time.Duration
@@ -73,6 +87,7 @@ type Manager struct {
 	docker  Docker
 	waker   Waker
 	enabled EnabledFunc
+	online  bool
 
 	reconcileInterval   time.Duration
 	dialInterval        time.Duration
@@ -125,6 +140,7 @@ func New(opts Options) *Manager {
 		docker:              opts.Docker,
 		waker:               opts.Waker,
 		enabled:             opts.Enabled,
+		online:              opts.OnlineMode,
 		reconcileInterval:   opts.ReconcileInterval,
 		dialInterval:        opts.DialInterval,
 		holdTimeout:         opts.HoldTimeout,
@@ -340,6 +356,12 @@ func (m *Manager) handleClient(ctx context.Context, client net.Conn, srv servers
 			m.respondStatus(ctx, client, br, srv)
 			return
 		}
+		if herr == nil && hs.nextState == 2 {
+			// Login handshake: run the protocol proxy (Phase 2), which wakes
+			// the server, holds the player in the End void, and warps them in.
+			m.handleLogin(ctx, client, br, srv, hs)
+			return
+		}
 	}
 
 	// Rebuild the full first frame (length + packet ID + payload) so we can
@@ -364,6 +386,113 @@ func (m *Manager) handleClient(ctx context.Context, client net.Conn, srv servers
 	defer backend.Close()
 	m.log.Printf("gateway: backend for %s accepting; relaying", srv.ID)
 	m.relay(backend, client, first)
+}
+
+// handleLogin runs the Phase 2 protocol proxy for a login handshake. It wakes
+// a sleeping server, resolves the per-server wait message, and hands the
+// connection to the proxy, which terminates the login, holds the player in the
+// End void, and warps them into the backend once it accepts.
+func (m *Manager) handleLogin(ctx context.Context, client net.Conn, br *bufio.Reader, srv servers.Server, hs *handshake) {
+	ver, err := protocol.Lookup(int32(hs.protocol))
+	if err != nil {
+		// Unsupported client protocol: send a clear disconnect rather than
+		// holding the player or crashing the accept loop.
+		m.log.Printf("gateway: unsupported protocol %d from %s", hs.protocol, srv.ID)
+		m.sendLoginDisconnect(client, protocol.DisconnectReason(int32(hs.protocol)))
+		return
+	}
+
+	current, serr := m.store.Status(ctx, srv.ID)
+	if serr == nil && m.isSleeping(current) {
+		m.log.Printf("gateway: waking sleeping server %s on login", srv.ID)
+		if _, werr := m.waker.Wake(ctx, srv.ID); werr != nil {
+			m.log.Printf("gateway: wake %s: %v", srv.ID, werr)
+		}
+	}
+
+	msg := m.wakeMessage(ctx, srv.ID)
+	wrapped := &bufferedConn{Conn: client, r: br}
+	perr := proxy.HandleClient(ctx, wrapped, proxy.SessionOptions{
+		Logger:       m.log,
+		Protocol:     ver,
+		OnlineMode:   m.online,
+		Message:      msg,
+		BackendConn:  func(ctx context.Context) (net.Conn, error) { return m.dialBackendConn(ctx, srv) },
+		HoldTimeout:  m.holdTimeout,
+		IdleDeadline: m.idleDeadline,
+	})
+	if perr != nil && !errors.Is(perr, context.Canceled) && !errors.Is(perr, context.DeadlineExceeded) {
+		m.log.Printf("gateway: proxy session for %s closed: %v", srv.ID, perr)
+	}
+}
+
+// sendLoginDisconnect writes a login-state disconnect with the given reason to
+// the client so it shows a readable message instead of timing out.
+func (m *Manager) sendLoginDisconnect(client net.Conn, reason string) {
+	raw, err := json.Marshal(map[string]string{"text": reason})
+	if err != nil {
+		return
+	}
+	var payload []byte
+	pw := newByteWriter(&payload)
+	_ = writeVarInt(pw, len(raw))
+	payload = append(payload, raw...)
+	if err := writeFrame(client, 0x00, payload); err != nil {
+		m.log.Printf("gateway: login disconnect to %s: %v", client.RemoteAddr(), err)
+	}
+}
+
+// wakeMessage resolves the effective wait message for a server: the per-server
+// override, falling back to the global default.
+func (m *Manager) wakeMessage(ctx context.Context, id string) string {
+	if msg, err := m.store.WakeMessage(ctx, id); err == nil && msg != "" {
+		return msg
+	}
+	if def, err := m.store.WakeMessageDefault(ctx, defaultWaitMessage); err == nil && def != "" {
+		return def
+	}
+	return defaultWaitMessage
+}
+
+// dialBackendConn polls the backend address until a dial succeeds (bounded by
+// holdTimeout) and returns the raw connection without writing anything. The
+// proxy performs its own backend handshake.
+func (m *Manager) dialBackendConn(ctx context.Context, srv servers.Server) (net.Conn, error) {
+	deadline := time.Now().Add(m.holdTimeout)
+	var lastErr error
+	for {
+		current, serr := m.store.Status(ctx, srv.ID)
+		if serr == nil {
+			srv = current
+		}
+		addr := m.backendAddr(srv)
+		conn, err := net.DialTimeout("tcp", addr, m.dialTimeout)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, lastErr
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(m.dialInterval):
+		}
+	}
+}
+
+// bufferedConn adapts a net.Conn that may already have a bufio.Reader holding
+// buffered bytes (the already-consumed handshake remnant) so the proxy can read
+// the Login Start packet without losing data. Reads go through the buffered
+// reader; all other operations delegate to the underlying connection.
+type bufferedConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (b *bufferedConn) Read(p []byte) (int, error) {
+	return b.r.Read(p)
 }
 
 func (m *Manager) isSleeping(srv servers.Server) bool {

@@ -15,10 +15,12 @@ import (
 )
 
 type fakeStore struct {
-	mu      sync.Mutex
-	servers map[int]servers.Server
-	states  map[string]string
-	motds   map[string]string
+	mu          sync.Mutex
+	servers     map[int]servers.Server
+	states      map[string]string
+	motds       map[string]string
+	waits       map[string]string
+	defaultWait string
 }
 
 func newFakeStore() *fakeStore {
@@ -26,6 +28,7 @@ func newFakeStore() *fakeStore {
 		servers: map[int]servers.Server{},
 		states:  map[string]string{},
 		motds:   map[string]string{},
+		waits:   map[string]string{},
 	}
 }
 
@@ -74,6 +77,21 @@ func (f *fakeStore) SetLastMotd(_ context.Context, id, motd string) error {
 	defer f.mu.Unlock()
 	f.motds[id] = motd
 	return nil
+}
+
+func (f *fakeStore) WakeMessage(_ context.Context, id string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.waits[id], nil
+}
+
+func (f *fakeStore) WakeMessageDefault(_ context.Context, def string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.defaultWait != "" {
+		return f.defaultWait, nil
+	}
+	return def, nil
 }
 
 func (f *fakeStore) add(srv servers.Server) {
@@ -149,9 +167,10 @@ func newTestManager(t *testing.T, store *fakeStore, docker *fakeDocker) (*Manage
 	return m, waker
 }
 
-func TestWakeOnConnectAndReplay(t *testing.T) {
+func TestLoginWakesAndProxiesBackend(t *testing.T) {
 	port := freePort(t)
-	// Stub backend that reads the replayed first frame.
+	// Stub backend that receives the proxy's client-side login (handshake +
+	// Login Start) and replies with a Login Success so the warp proceeds.
 	backend, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatalf("backend listen: %v", err)
@@ -159,7 +178,7 @@ func TestWakeOnConnectAndReplay(t *testing.T) {
 	defer backend.Close()
 	backendPort := backend.Addr().(*net.TCPAddr).Port
 
-	backendRecv := make(chan []byte, 1)
+	gotName := make(chan string, 1)
 	go func() {
 		c, err := backend.Accept()
 		if err != nil {
@@ -167,10 +186,24 @@ func TestWakeOnConnectAndReplay(t *testing.T) {
 		}
 		defer c.Close()
 		br := bufio.NewReader(c)
-		_, body, err := readFrame(br)
-		if err == nil {
-			backendRecv <- body
+		// Handshake frame.
+		if _, _, err := readFrame(br); err != nil {
+			return
 		}
+		// Login Start frame.
+		_, body, err := readFrame(br)
+		if err != nil {
+			return
+		}
+		name, _ := readMCString(newByteReader(body))
+		gotName <- name
+		// Reply Login Success (clientbound login 0x02): uuid + name + props.
+		var ls []byte
+		lw := newByteWriter(&ls)
+		_ = writeMCString(lw, "00000000-0000-0000-0000-000000000000")
+		_ = writeMCString(lw, name)
+		_ = writeVarInt(lw, 0)
+		_ = writeFrame(c, 0x02, ls)
 		io.Copy(io.Discard, c)
 	}()
 
@@ -178,32 +211,41 @@ func TestWakeOnConnectAndReplay(t *testing.T) {
 	store.add(servers.Server{ID: "srv1", Name: "Srv", Version: "1.21.1", HostPort: port, ContainerID: "abc", State: servers.StateStopped})
 	docker := &fakeDocker{addr: net.JoinHostPort("127.0.0.1", strconv.Itoa(backendPort)), host: "127.0.0.1"}
 	m, waker := newTestManager(t, store, docker)
-	_ = m
+	m.holdTimeout = 5 * time.Second
 
 	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatalf("dial gateway: %v", err)
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 
-	// Send a login handshake (next state 2).
-	var payload []byte
-	pw := newByteWriter(&payload)
-	_ = writeVarInt(pw, 763)
-	_ = writeMCString(pw, "localhost")
-	_ = writeUShort(pw, 25565)
-	_ = writeVarInt(pw, 2)
-	if err := writeFrame(conn, 0x00, payload); err != nil {
+	// Login handshake (next state 2).
+	var hs []byte
+	hw := newByteWriter(&hs)
+	_ = writeVarInt(hw, 763)
+	_ = writeMCString(hw, "localhost")
+	_ = writeUShort(hw, 25565)
+	_ = writeVarInt(hw, 2)
+	if err := writeFrame(conn, 0x00, hs); err != nil {
 		t.Fatalf("send handshake: %v", err)
+	}
+	// Login Start (0x00): name + "holds signature" byte (false).
+	var ls []byte
+	lw := newByteWriter(&ls)
+	_ = writeMCString(lw, "Steve")
+	_, _ = lw.Write([]byte{0})
+	if err := writeFrame(conn, 0x00, ls); err != nil {
+		t.Fatalf("send login start: %v", err)
 	}
 
 	select {
-	case body := <-backendRecv:
-		if len(body) == 0 {
-			t.Fatal("backend received empty frame")
+	case name := <-gotName:
+		if name != "Steve" {
+			t.Errorf("backend login name = %q, want Steve", name)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("backend did not receive the replayed handshake")
+	case <-time.After(8 * time.Second):
+		t.Fatal("backend did not receive the proxy login")
 	}
 	if got := waker.wakeCount("srv1"); got != 1 {
 		t.Errorf("wake count = %d, want 1", got)
