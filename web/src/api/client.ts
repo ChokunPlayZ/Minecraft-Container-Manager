@@ -14,6 +14,7 @@ import type {
   PlayerList,
   Mod,
   ModList,
+  ServerProperties,
 } from './types';
 
 export class ApiError extends Error {
@@ -180,6 +181,15 @@ export const api = {
   deleteMod: (serverId: string, name: string) =>
     request<{ ok: boolean }>(`/api/servers/${serverId}/mods/${encodeURIComponent(name)}`, {
       method: 'DELETE',
+    }),
+
+  getProperties: (serverId: string) =>
+    request<ServerProperties>(`/api/servers/${serverId}/properties`),
+
+  saveProperties: (serverId: string, content: string) =>
+    request<ServerProperties>(`/api/servers/${serverId}/properties`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
     }),
 
   createBackup: (serverId: string, name?: string) =>

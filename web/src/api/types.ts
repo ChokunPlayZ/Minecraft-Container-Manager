@@ -105,3 +105,8 @@ export interface ModList {
   type: 'mods' | 'plugins';
   items: Mod[];
 }
+
+export interface ServerProperties {
+  content: string;
+  exists: boolean;
+}

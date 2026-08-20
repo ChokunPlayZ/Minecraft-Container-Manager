@@ -57,3 +57,44 @@ func (s *Store) readRCONConfig(id string) (rconConfig, error) {
 	}
 	return cfg, nil
 }
+
+// ServerProperties is the result of reading a server's server.properties file.
+// Content holds the raw file text (preserving comments and formatting) and
+// Exists reports whether the file is present on disk yet.
+type ServerProperties struct {
+	Content string `json:"content"`
+	Exists  bool   `json:"exists"`
+}
+
+// propertiesPath returns the on-disk path of a server's server.properties file.
+func (s *Store) propertiesPath(id string) string {
+	return filepath.Join(s.dataPath(id), "server.properties")
+}
+
+// GetProperties returns the raw server.properties content for a server. If the
+// file has not been generated yet (a stopped or never-started server), Exists
+// is false and Content is empty so the UI can still render an editor.
+func (s *Store) GetProperties(id string) (ServerProperties, error) {
+	path := s.propertiesPath(id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ServerProperties{Content: "", Exists: false}, nil
+		}
+		return ServerProperties{}, err
+	}
+	return ServerProperties{Content: string(data), Exists: true}, nil
+}
+
+// SaveProperties writes the full server.properties content for a server,
+// creating the data directory and file if they do not exist yet.
+func (s *Store) SaveProperties(id, content string) (ServerProperties, error) {
+	if err := os.MkdirAll(s.dataPath(id), 0o755); err != nil {
+		return ServerProperties{}, err
+	}
+	path := s.propertiesPath(id)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return ServerProperties{}, err
+	}
+	return ServerProperties{Content: content, Exists: true}, nil
+}

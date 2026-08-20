@@ -10,6 +10,7 @@ import { InstallPanel } from '../components/install-panel';
 import { ModsPanel } from '../components/mods-panel';
 import { OpsPanel } from '../components/ops-panel';
 import { PlayersPanel } from '../components/players-panel';
+import { PropertiesEditor } from '../components/properties-editor';
 import { RequireAuth } from '../components/require-auth';
 import { ServerSettings } from '../components/server-settings';
 import { StatusBadge } from '../components/status-badge';
@@ -175,6 +176,7 @@ function ServerDetailRoute() {
             />
             <OpsPanel server={server} refreshKey={state} />
             <ModsPanel server={server} />
+            <PropertiesEditor server={server} />
             <BackupsPanel server={server} />
           </div>
         </div>
