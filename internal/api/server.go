@@ -250,6 +250,22 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// logUpstream records the underlying upstream-provider failure before it is
+// flattened into a generic 502 response. This keeps the specific provider URL
+// and reason (status code, network error, parse failure) in the backend logs
+// for diagnostics. It no-ops when no logger is configured (tests construct
+// Server directly).
+func (s *Server) logUpstream(err error, r *http.Request) {
+	if s.logger == nil {
+		return
+	}
+	if r != nil {
+		s.logger.Printf("upstream provider failure method=%s path=%s err=%v", r.Method, r.URL.Path, err)
+		return
+	}
+	s.logger.Printf("upstream provider failure err=%v", err)
+}
+
 func (s *Server) currentUserID(r *http.Request) string {
 	if v, ok := r.Context().Value(ctxUserID).(string); ok {
 		return v

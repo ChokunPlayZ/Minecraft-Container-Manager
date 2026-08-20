@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mcm-panel/mcm/internal/jars"
@@ -140,6 +142,42 @@ func TestJarUnsupportedTypeFriendly(t *testing.T) {
 	}
 	if bytes.Contains(body, []byte("unsupported jar type")) {
 		t.Fatalf("error body leaked raw data: %s", body)
+	}
+}
+
+// TestJarVersionsLogsUpstreamFailure verifies that an upstream-provider fetch
+// failure is written to the backend log (with the underlying error) before the
+// generic 502 is returned, so the failing provider is diagnosable.
+func TestJarVersionsLogsUpstreamFailure(t *testing.T) {
+	failMux := http.NewServeMux()
+	failMux.HandleFunc("/projects/paper", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "backend exploded", http.StatusBadGateway)
+	})
+	fail := httptest.NewServer(failMux)
+	t.Cleanup(fail.Close)
+
+	r := jars.NewResolverWithBases(nil, fail.URL, "http://invalid.invalid/v2", "http://invalid.invalid/mc/game/version_manifest_v2.json")
+
+	var buf bytes.Buffer
+	s := &Server{jars: r, logger: log.New(&buf, "", 0)}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jars/paper/versions", nil)
+	req.SetPathValue("kind", "paper")
+	rr := httptest.NewRecorder()
+	s.handleJarVersions(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d want 502", rr.Code)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "upstream provider failure") {
+		t.Fatalf("expected upstream failure log, got: %q", out)
+	}
+	if !strings.Contains(out, fail.URL) {
+		t.Fatalf("expected provider URL in log, got: %q", out)
+	}
+	if !strings.Contains(out, "502") {
+		t.Fatalf("expected HTTP status in log, got: %q", out)
 	}
 }
 

@@ -43,6 +43,9 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
 			return
 		}
+		if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
+			s.logUpstream(err, r)
+		}
 		status, code, message := friendlyCreateErr(err)
 		writeError(w, status, code, message)
 		return
@@ -157,6 +160,7 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
+		s.logUpstream(err, nil)
 		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't reach the upstream provider right now.")
 		return
 	}

@@ -51,6 +51,7 @@ func (s *Server) handleJarVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		s.logUpstream(err, r)
 		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't fetch versions from the upstream provider")
 		return
 	}
@@ -90,6 +91,7 @@ func (s *Server) handleJarBuilds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		s.logUpstream(err, r)
 		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't fetch builds from the upstream provider")
 		return
 	}
