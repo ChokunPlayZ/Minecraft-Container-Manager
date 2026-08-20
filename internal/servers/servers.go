@@ -389,6 +389,31 @@ func (s *Store) Restart(ctx context.Context, id string) (Server, error) {
 	return s.Start(ctx, id)
 }
 
+// Recreate tears down an existing server container and clears its
+// container_id so the next Start provisions a fresh container. This is used to
+// rebind an existing server onto a new runtime image (e.g. the switch to
+// itzg/minecraft-server) without losing its data directory or settings.
+func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+	if srv.ContainerID != "" {
+		// Best-effort: the container may already be gone; we still clear the
+		// recorded id so ensureContainer rebuilds it on next start.
+		_ = s.docker.Remove(ctx, srv.ContainerID)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id='', state=?, updated_at=? WHERE id=?`,
+		StateStopped, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return Server{}, err
+	}
+	if s.dns != nil {
+		_ = s.dns.Remove(ctx, id)
+	}
+	return s.Get(ctx, id)
+}
+
 // Status returns the current server state, reconciling from docker when a
 // container exists.
 func (s *Store) Status(ctx context.Context, id string) (Server, error) {

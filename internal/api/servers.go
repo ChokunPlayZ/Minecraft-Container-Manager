@@ -115,6 +115,15 @@ func (s *Server) handleServerStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, srv)
 }
 
+func (s *Server) handleRecreateServer(w http.ResponseWriter, r *http.Request) {
+	srv, err := s.servers.Recreate(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, srv)
+}
+
 func (s *Server) handleAvailablePorts(w http.ResponseWriter, r *http.Request) {
 	free, err := s.servers.Pool().Available(r.Context())
 	if err != nil {

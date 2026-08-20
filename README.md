@@ -153,6 +153,7 @@ backend, but the intended surface is:
 | `POST` | `/api/servers/:id/start` | Start a server. |
 | `POST` | `/api/servers/:id/stop` | Stop a server. |
 | `POST` | `/api/servers/:id/restart` | Restart a server. |
+| `POST` | `/api/servers/:id/recreate` | Detach and rebuild a server's container on next start (used for runtime migrations). |
 | `DELETE` | `/api/servers/:id` | Remove a server. |
 | `POST` | `/api/servers/:id/backup` | Trigger a backup. |
 | `GET` | `/api/servers/:id/backups` | List backups for a server. |
