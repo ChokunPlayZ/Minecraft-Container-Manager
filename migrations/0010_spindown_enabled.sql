@@ -1,0 +1,1 @@
+ALTER TABLE servers ADD COLUMN spin_down_enabled INTEGER NOT NULL DEFAULT 0;

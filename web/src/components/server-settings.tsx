@@ -8,6 +8,8 @@ import { Label } from './ui/label';
 import { Select } from './ui/select';
 import { Plus, Trash2 } from 'lucide-react';
 
+type SettingsTab = 'general' | 'advanced';
+
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -27,6 +29,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
   const [backupInterval, setBackupInterval] = useState(server.backup_interval_minutes ?? 720);
   const [spinDownDisabled, setSpinDownDisabled] = useState(server.spin_down_disabled ?? false);
   const [extraPorts, setExtraPorts] = useState<ExtraPort[]>(server.extra_ports ?? []);
+  const [tab, setTab] = useState<SettingsTab>('general');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -80,161 +83,196 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-name">Name</Label>
-            <Input id="edit-name" required value={name} onChange={(e) => setName(e.target.value)} />
+          <div className="flex items-center gap-1 border-b">
+            <button
+              type="button"
+              onClick={() => setTab('general')}
+              className={
+                tab === 'general'
+                  ? 'inline-flex items-center border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
+                  : 'inline-flex items-center border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+              }
+            >
+              General
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('advanced')}
+              className={
+                tab === 'advanced'
+                  ? 'inline-flex items-center border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
+                  : 'inline-flex items-center border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+              }
+            >
+              Advanced
+            </button>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-ram">RAM (MB)</Label>
-            <Input
-              id="edit-ram"
-              type="number"
-              min={512}
-              step={256}
-              value={ramMb}
-              onChange={(e) => setRamMb(Number(e.target.value))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-port">Game port (host)</Label>
-            <Input
-              id="edit-port"
-              type="number"
-              min={1}
-              max={65535}
-              value={hostPort}
-              onChange={(e) => setHostPort(Number(e.target.value))}
-            />
-            <p className="text-xs text-muted-foreground">
-              Changes take effect on the next container rebuild or start.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-cpu-limit">CPU limit (cores)</Label>
-            <Input
-              id="edit-cpu-limit"
-              type="number"
-              min={0}
-              step={0.5}
-              value={cpuLimit}
-              onChange={(e) => setCpuLimit(Number(e.target.value))}
-            />
-            <p className="text-xs text-muted-foreground">0 means no CPU quota.</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-memory-limit">Memory limit (MB)</Label>
-            <Input
-              id="edit-memory-limit"
-              type="number"
-              min={0}
-              step={64}
-              value={memoryLimitMb}
-              onChange={(e) => setMemoryLimitMb(Number(e.target.value))}
-            />
-            <p className="text-xs text-muted-foreground">0 falls back to the RAM-derived default.</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-backup-interval">Automatic backup interval (minutes)</Label>
-            <Input
-              id="edit-backup-interval"
-              type="number"
-              min={5}
-              step={5}
-              value={backupInterval}
-              disabled={!backupEnabled}
-              onChange={(e) => setBackupInterval(Number(e.target.value))}
-            />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={backupEnabled}
-              onChange={(e) => setBackupEnabled(e.target.checked)}
-            />
-            Enable automatic backups
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={spinDownDisabled}
-              onChange={(e) => setSpinDownDisabled(e.target.checked)}
-            />
-            Pause idle spin-down
-          </label>
-          <p className="text-xs text-muted-foreground">
-            When enabled, this server is never stopped automatically for being idle.
-          </p>
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium">Additional ports</legend>
-            <p className="text-xs text-muted-foreground">
-              Publish extra container ports to the host (e.g. a WebUI over TCP or
-              a Bedrock/Geyser adapter over UDP).
-            </p>
-            {extraPorts.length === 0 && (
-              <p className="text-sm text-muted-foreground">No additional ports configured.</p>
-            )}
-            {extraPorts.map((p) => (
-              <div key={p.id} className="grid grid-cols-2 gap-2 rounded-md border p-2 sm:grid-cols-[1fr_auto_auto_auto_auto] sm:items-center">
-                <div className="col-span-2 space-y-1 sm:col-span-1">
-                  <Label className="text-xs" htmlFor={`ep-desc-${p.id}`}>Description</Label>
-                  <Input
-                    id={`ep-desc-${p.id}`}
-                    placeholder="e.g. WebUI"
-                    value={p.description}
-                    onChange={(e) => updatePort(p.id, { description: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs" htmlFor={`ep-host-${p.id}`}>Host port</Label>
-                  <Input
-                    id={`ep-host-${p.id}`}
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={p.host_port || ''}
-                    onChange={(e) => updatePort(p.id, { host_port: Number(e.target.value) })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs" htmlFor={`ep-cont-${p.id}`}>Container port</Label>
-                  <Input
-                    id={`ep-cont-${p.id}`}
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={p.container_port || ''}
-                    onChange={(e) => updatePort(p.id, { container_port: Number(e.target.value) })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs" htmlFor={`ep-proto-${p.id}`}>Protocol</Label>
-                  <Select
-                    id={`ep-proto-${p.id}`}
-                    value={p.protocol}
-                    onChange={(e) => updatePort(p.id, { protocol: e.target.value as 'tcp' | 'udp' })}
-                  >
-                    <option value="tcp">TCP</option>
-                    <option value="udp">UDP</option>
-                  </Select>
-                </div>
-                <div className="col-span-2 flex items-end justify-end sm:col-span-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Remove ${p.description || 'extra port'}`}
-                    onClick={() => removePort(p.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
+
+          {tab === 'general' ? (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-name">Name</Label>
+                <Input id="edit-name" required value={name} onChange={(e) => setName(e.target.value)} />
               </div>
-            ))}
-            <Button type="button" variant="outline" onClick={() => setExtraPorts((cur) => [...cur, newPort()])}>
-              <Plus className="h-4 w-4" />
-              Add port
-            </Button>
-          </fieldset>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-ram">RAM (MB)</Label>
+                <Input
+                  id="edit-ram"
+                  type="number"
+                  min={512}
+                  step={256}
+                  value={ramMb}
+                  onChange={(e) => setRamMb(Number(e.target.value))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-port">Game port (host)</Label>
+                <Input
+                  id="edit-port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={hostPort}
+                  onChange={(e) => setHostPort(Number(e.target.value))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Changes take effect on the next container rebuild or start.
+                </p>
+              </div>
+              <fieldset className="space-y-3">
+                <legend className="text-sm font-medium">Additional ports</legend>
+                <p className="text-xs text-muted-foreground">
+                  Publish extra container ports to the host (e.g. a WebUI over TCP or
+                  a Bedrock/Geyser adapter over UDP).
+                </p>
+                {extraPorts.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No additional ports configured.</p>
+                )}
+                {extraPorts.map((p) => (
+                  <div key={p.id} className="space-y-3 rounded-md border p-3">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 space-y-1">
+                        <Label className="text-xs" htmlFor={`ep-desc-${p.id}`}>Description</Label>
+                        <Input
+                          id={`ep-desc-${p.id}`}
+                          placeholder="e.g. WebUI"
+                          value={p.description}
+                          onChange={(e) => updatePort(p.id, { description: e.target.value })}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="mt-6 shrink-0"
+                        aria-label={`Remove ${p.description || 'extra port'}`}
+                        onClick={() => removePort(p.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs" htmlFor={`ep-host-${p.id}`}>Host port</Label>
+                        <Input
+                          id={`ep-host-${p.id}`}
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={p.host_port || ''}
+                          onChange={(e) => updatePort(p.id, { host_port: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs" htmlFor={`ep-cont-${p.id}`}>Container port</Label>
+                        <Input
+                          id={`ep-cont-${p.id}`}
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={p.container_port || ''}
+                          onChange={(e) => updatePort(p.id, { container_port: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs" htmlFor={`ep-proto-${p.id}`}>Protocol</Label>
+                        <Select
+                          id={`ep-proto-${p.id}`}
+                          value={p.protocol}
+                          onChange={(e) => updatePort(p.id, { protocol: e.target.value as 'tcp' | 'udp' })}
+                        >
+                          <option value="tcp">TCP</option>
+                          <option value="udp">UDP</option>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <Button type="button" variant="outline" onClick={() => setExtraPorts((cur) => [...cur, newPort()])}>
+                  <Plus className="h-4 w-4" />
+                  Add port
+                </Button>
+              </fieldset>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-cpu-limit">CPU limit (cores)</Label>
+                <Input
+                  id="edit-cpu-limit"
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={cpuLimit}
+                  onChange={(e) => setCpuLimit(Number(e.target.value))}
+                />
+                <p className="text-xs text-muted-foreground">0 means no CPU quota.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-memory-limit">Memory limit (MB)</Label>
+                <Input
+                  id="edit-memory-limit"
+                  type="number"
+                  min={0}
+                  step={64}
+                  value={memoryLimitMb}
+                  onChange={(e) => setMemoryLimitMb(Number(e.target.value))}
+                />
+                <p className="text-xs text-muted-foreground">0 falls back to the RAM-derived default.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-backup-interval">Automatic backup interval (minutes)</Label>
+                <Input
+                  id="edit-backup-interval"
+                  type="number"
+                  min={5}
+                  step={5}
+                  value={backupInterval}
+                  disabled={!backupEnabled}
+                  onChange={(e) => setBackupInterval(Number(e.target.value))}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={backupEnabled}
+                  onChange={(e) => setBackupEnabled(e.target.checked)}
+                />
+                Enable automatic backups
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={spinDownDisabled}
+                  onChange={(e) => setSpinDownDisabled(e.target.checked)}
+                />
+                Pause idle spin-down
+              </label>
+              <p className="text-xs text-muted-foreground">
+                When enabled, this server is never stopped automatically for being idle.
+              </p>
+            </div>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" disabled={busy}>
             {busy ? 'Saving...' : 'Save'}
