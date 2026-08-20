@@ -5,8 +5,9 @@ SERVER_TYPE="${SERVER_TYPE:-paper}"
 VERSION="${VERSION:-latest}"
 BUILD="${BUILD:-}"
 RAM_MB="${RAM_MB:-2048}"
+DATA_DIR="${MCM_DATA_DIR:-/data}"
 
-SERVER_JAR=/data/server.jar
+SERVER_JAR="${DATA_DIR}/server.jar"
 LAUNCH=jar
 
 log() {
@@ -159,11 +160,11 @@ install_forge_installer() {
     esac
 
     log "Downloading installer from $base_url"
-    curl -fsSL --retry 3 --retry-delay 2 -o /data/installer.jar "$base_url"
-    ( cd /data && java -jar installer.jar --installServer )
-    rm -f /data/installer.jar
-    if [ -f /data/run.sh ]; then
-        chmod +x /data/run.sh
+    curl -fsSL --retry 3 --retry-delay 2 -o "${DATA_DIR}/installer.jar" "$base_url"
+    ( cd "$DATA_DIR" && java -jar installer.jar --installServer )
+    rm -f "${DATA_DIR}/installer.jar"
+    if [ -f "${DATA_DIR}/run.sh" ]; then
+        chmod +x "${DATA_DIR}/run.sh"
         LAUNCH=forge
         log "Installed $ver; will launch via run.sh"
     else
@@ -174,7 +175,7 @@ install_forge_installer() {
 
 server_installed() {
     case "$SERVER_TYPE" in
-        forge|neoforge) [ -f /data/run.sh ] ;;
+        forge|neoforge) [ -f "${DATA_DIR}/run.sh" ] ;;
         *) [ -f "$SERVER_JAR" ] ;;
     esac
 }
@@ -197,13 +198,13 @@ else
 fi
 
 # Accept the Minecraft EULA when not already accepted.
-if [ ! -f /data/eula.txt ] || ! grep -qi '^eula=true' /data/eula.txt; then
-    printf 'eula=true\n' > /data/eula.txt
-    log "Accepted EULA in /data/eula.txt"
+if [ ! -f "${DATA_DIR}/eula.txt" ] || ! grep -qi '^eula=true' "${DATA_DIR}/eula.txt"; then
+    printf 'eula=true\n' > "${DATA_DIR}/eula.txt"
+    log "Accepted EULA in ${DATA_DIR}/eula.txt"
 fi
 
 log "Starting server: type=$SERVER_TYPE ram=${RAM_MB}M"
-if [ "$LAUNCH" = "forge" ] && [ -f /data/run.sh ]; then
-    exec sh /data/run.sh nogui
+if [ "$LAUNCH" = "forge" ] && [ -f "${DATA_DIR}/run.sh" ]; then
+    exec sh "${DATA_DIR}/run.sh" nogui
 fi
 exec java -Xms512M -Xmx"${RAM_MB}"M -jar "$SERVER_JAR" nogui

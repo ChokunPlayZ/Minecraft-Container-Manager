@@ -57,6 +57,14 @@ The panel container mounts `/var/run/docker.sock` so it can manage Minecraft
 server containers on the host. Minecraft servers bind the host port range
 configured by `MCM_PORT_RANGE` (default `25565-25665`).
 
+Persistence and permissions are wired through the compose file: `MCM_DATA_DIR`
+is a host directory (default `./data`, next to `docker-compose.yml`) mounted
+into the container at `/data` and used for the SQLite database and server data.
+Set `PUID`/`PGID` to match your host user so the bind-mounted files stay owned
+by you, or specify a `user:` on the service to run the panel as a fixed
+UID/GID. The image entrypoint fixes up data-directory ownership before the
+panel starts.
+
 ### Server port exposure (Docker / firewall)
 
 MCM is a control panel, so each server container owns and publishes its own
@@ -102,8 +110,9 @@ so the socket is available. Build the `mcm-server:latest` image with the
 | --- | --- | --- |
 | `MCM_ADDR` | `:8080` | Listen address for the web/API server. |
 | `MCM_PORT_RANGE` | `25565-25665` | Host port range allocated to Minecraft servers. |
-| `MCM_DATA_DIR` | `/data` | Root directory for persistent data. |
-| `MCM_DB_PATH` | `/data/mcm.db` | SQLite database file. |
+| `MCM_DATA_DIR` | `./data` | Docker: host directory bind-mounted into the container at `/data`. Bare metal: process data directory. |
+| `MCM_DB_PATH` | `$MCM_DATA_DIR/mcm.db` | SQLite database file (container path for Docker, process path for bare metal). |
+| `PUID` / `PGID` | `1000` / `1000` | Docker only: UID/GID the panel runs as and that own the data directory. |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon endpoint. |
 | `MCM_SESSION_SECRET` | *(required)* | Secret used to sign session cookies. |
 | `MCM_TLS_CERT` | *(empty)* | Path to the TLS certificate (PEM). Setting this (with `MCM_TLS_KEY`) enables HTTPS. |
@@ -191,12 +200,14 @@ during the multi-stage build, replacing the committed placeholder
 Temurin 21 JRE image with `curl` and `jq`. On first boot the entrypoint
 downloads a server jar (Paper by default, or Fabric/vanilla), writes
 `eula.txt`, and execs Java with the configured RAM. Server files persist in the
-`/data` volume.
+data directory selected by `MCM_DATA_DIR` (default `/data`), which the panel
+binds from each server's host data folder; no anonymous volume is created.
 
 Environment variables for the server container:
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `MCM_DATA_DIR` | `/data` | Directory (inside the container) where server files, EULA, and `run.sh` live. The panel sets this to match the bind mount target. |
 | `SERVER_TYPE` | `paper` | `paper`, `fabric`, or `vanilla`. |
 | `VERSION` | `latest` | Minecraft version to resolve. |
 | `BUILD` | *(empty)* | Specific Paper build or Fabric loader version. |

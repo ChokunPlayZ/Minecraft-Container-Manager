@@ -48,18 +48,16 @@ RUN go mod download && \
 ###############################################################################
 FROM alpine:3.20 AS runtime
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata su-exec
 
 COPY --from=go /out/mcm /usr/local/bin/mcm
+COPY docker/entrypoint.sh /entrypoint.sh
 
-RUN mkdir -p /data && chown nobody:nobody /data
+RUN chmod +x /entrypoint.sh && mkdir -p /data
 
 ENV MCM_ADDR=:8080 \
     MCM_DATA_DIR=/data
 
 EXPOSE 8080
-VOLUME /data
 
-USER nobody
-
-CMD ["mcm"]
+ENTRYPOINT ["/entrypoint.sh"]

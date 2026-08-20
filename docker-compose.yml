@@ -8,18 +8,21 @@ services:
     environment:
       MCM_ADDR: ${MCM_ADDR:-:8080}
       MCM_PORT_RANGE: ${MCM_PORT_RANGE:-25565-25665}
-      MCM_DATA_DIR: ${MCM_DATA_DIR:-/data}
+      # Container-side data paths. The host bind mount below maps whatever you
+      # set MCM_DATA_DIR to (host path, default ./data) onto /data so the app
+      # and the mounted volume always agree.
+      MCM_DATA_DIR: /data
       MCM_DB_PATH: ${MCM_DB_PATH:-/data/mcm.db}
       DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
       MCM_SESSION_SECRET: ${MCM_SESSION_SECRET:-}
+      # UID/GID the MCM process drops to (and that own the data dir). Override
+      # to match your host user, e.g. PUID=$(id -u) PGID=$(id -g).
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       TZ: ${TZ:-UTC}
     volumes:
-      - mcm-data:/data
+      # Host bind mount; resolves relative to this file, so ./data is a real
+      # directory next to docker-compose.yml instead of an anonymous volume.
+      - ${MCM_DATA_DIR:-./data}:/data
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
-    networks:
-      - default
-
-volumes:
-  mcm-data:
-    name: mcm-data

@@ -142,6 +142,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	cfg := &container.Config{
 		Image: imageName,
 		Env: []string{
+			"MCM_DATA_DIR=" + containerData,
 			"SERVER_TYPE=" + opts.ServerType,
 			"VERSION=" + opts.Version,
 			"BUILD=" + opts.Build,

@@ -7,10 +7,10 @@ RUN apt-get update \
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-VOLUME /data
-WORKDIR /data
-
 EXPOSE 25565
-ENV EULA=TRUE
+ENV EULA=TRUE MCM_DATA_DIR=/data
+
+RUN mkdir -p /data && chmod 777 /data
+WORKDIR /data
 
 ENTRYPOINT ["/entrypoint.sh"]
