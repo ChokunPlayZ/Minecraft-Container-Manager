@@ -405,6 +405,7 @@ export interface UpdateServerInput {
   memory_limit_mb?: number;
   backup_enabled?: boolean;
   backup_interval_minutes?: number;
+  spin_down_disabled?: boolean;
   extra_ports?: ExtraPort[];
 }
 

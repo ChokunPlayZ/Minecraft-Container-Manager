@@ -53,8 +53,8 @@ type Service struct {
 
 	defaultTimeout time.Duration
 	every          time.Duration
-	now             func() time.Time
-	disabled        bool
+	now            func() time.Time
+	disabled       bool
 
 	mu       sync.Mutex
 	cooldown map[string]time.Time
@@ -204,11 +204,12 @@ func (s *Service) effectiveDefault(ctx context.Context) time.Duration {
 
 // ServerStatus describes the idle spin-down state of a single server.
 type ServerStatus struct {
-	ID              string    `json:"id"`
-	State           string    `json:"state"`
-	LastActivity    time.Time `json:"last_activity"`
-	IdleTimeoutMin  int       `json:"idle_timeout_minutes"`
-	IdleOverrideMin *int      `json:"idle_override_minutes,omitempty"`
+	ID               string    `json:"id"`
+	State            string    `json:"state"`
+	LastActivity     time.Time `json:"last_activity"`
+	IdleTimeoutMin   int       `json:"idle_timeout_minutes"`
+	IdleOverrideMin  *int      `json:"idle_override_minutes,omitempty"`
+	SpinDownDisabled bool      `json:"spin_down_disabled"`
 }
 
 // Status snapshots idle spin-down state for every server, re-reading the
@@ -220,6 +221,11 @@ func (s *Service) Status(ctx context.Context) ([]ServerStatus, error) {
 	}
 	out := make([]ServerStatus, 0, len(list))
 	for _, srv := range list {
+		status := ServerStatus{
+			ID:               srv.ID,
+			State:            srv.State,
+			SpinDownDisabled: srv.SpinDownDisabled,
+		}
 		override, ok, oerr := s.spin.IdleTimeoutOverride(ctx, srv.ID)
 		if oerr != nil {
 			return nil, oerr
@@ -232,13 +238,10 @@ func (s *Service) Status(ctx context.Context) ([]ServerStatus, error) {
 		if aerr != nil {
 			activity = time.Time{}
 		}
-		out = append(out, ServerStatus{
-			ID:              srv.ID,
-			State:           srv.State,
-			LastActivity:    activity,
-			IdleTimeoutMin:  int(s.effectiveTimeout(ctx, overrideMin) / time.Minute),
-			IdleOverrideMin: overrideMin,
-		})
+		status.LastActivity = activity
+		status.IdleTimeoutMin = int(s.effectiveTimeout(ctx, overrideMin) / time.Minute)
+		status.IdleOverrideMin = overrideMin
+		out = append(out, status)
 	}
 	return out, nil
 }

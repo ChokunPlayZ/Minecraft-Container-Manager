@@ -25,6 +25,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
   const [memoryLimitMb, setMemoryLimitMb] = useState(server.memory_limit_mb ?? 0);
   const [backupEnabled, setBackupEnabled] = useState(server.backup_enabled ?? true);
   const [backupInterval, setBackupInterval] = useState(server.backup_interval_minutes ?? 720);
+  const [spinDownDisabled, setSpinDownDisabled] = useState(server.spin_down_disabled ?? false);
   const [extraPorts, setExtraPorts] = useState<ExtraPort[]>(server.extra_ports ?? []);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +61,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
         memory_limit_mb: memoryLimitMb,
         backup_enabled: backupEnabled,
         backup_interval_minutes: backupInterval,
+        spin_down_disabled: spinDownDisabled,
         extra_ports: extraPorts,
       });
       onSaved(updated);
@@ -151,6 +153,17 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
             />
             Enable automatic backups
           </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={spinDownDisabled}
+              onChange={(e) => setSpinDownDisabled(e.target.checked)}
+            />
+            Pause idle spin-down
+          </label>
+          <p className="text-xs text-muted-foreground">
+            When enabled, this server is never stopped automatically for being idle.
+          </p>
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Additional ports</legend>
             <p className="text-xs text-muted-foreground">

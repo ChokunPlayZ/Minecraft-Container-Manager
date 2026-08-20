@@ -34,6 +34,9 @@ func (s *Service) tick(ctx context.Context) {
 		if srv.State != servers.StateRunning && srv.State != servers.StateStarting {
 			continue
 		}
+		if srv.SpinDownDisabled {
+			continue
+		}
 		s.evaluate(ctx, srv, now)
 	}
 }

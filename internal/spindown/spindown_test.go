@@ -56,8 +56,8 @@ func (c *fakeCtrl) Start(_ context.Context, id string) (servers.Server, error) {
 
 func newFakes(list []servers.Server) (*fakeSpin, *fakeCtrl) {
 	spin := &fakeSpin{
-		list:     list,
-		activity: map[string]time.Time{},
+		list:      list,
+		activity:  map[string]time.Time{},
 		overrides: map[string]int{},
 	}
 	return spin, &fakeCtrl{stops: map[string]int{}, starts: map[string]int{}}
@@ -126,6 +126,23 @@ func TestTickSeedsThenStops(t *testing.T) {
 	s.tick(context.TODO())
 	if got := ctrl.stops["srv1"]; got != 1 {
 		t.Fatalf("after idle timeout stops = %d, want 1", got)
+	}
+}
+
+func TestTickSkipsDisabledServer(t *testing.T) {
+	spin, ctrl := newFakes([]servers.Server{
+		{ID: "srv1", State: servers.StateRunning, SpinDownDisabled: true},
+	})
+	spin.activity["srv1"] = time.Unix(1_000_000, 0)
+	spin.defaultMin = 30
+	s := New(spin, ctrl, log.New(io.Discard, "", 0), 30*time.Minute)
+
+	// Advance well past the idle timeout. A disabled server must not be stopped
+	// even though it would otherwise be idle-spun-down.
+	s.SetClock(func() time.Time { return time.Unix(1_000_000, 0).Add(2 * time.Hour) })
+	s.tick(context.TODO())
+	if got := ctrl.stops["srv1"]; got != 0 {
+		t.Fatalf("disabled server was stopped %d times, want 0", got)
 	}
 }
 
