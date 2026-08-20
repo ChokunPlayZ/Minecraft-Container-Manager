@@ -2,15 +2,16 @@
 
 MCM is a self-hosted Minecraft hosting panel. It runs as a small Go service that
 talks to the host Docker daemon through a mounted socket and launches sibling
-containers for each Minecraft server, using the bundled `mcm-server:latest`
+containers for each Minecraft server, using the community
+[`itzg/minecraft-server`](https://github.com/itzg/docker-minecraft-server)
 image. MCM is a control panel: each server container owns and publishes its own
 game port directly, and the panel manages the servers themselves.
 
 ## Key features
 
-- Auto jar install: Paper, Fabric, and vanilla server jars are downloaded on
-  first boot by `docker/mcm-server`, so a fresh server starts without manual
-  setup steps.
+- Auto jar install: Paper, Fabric, and other server jars are resolved and
+  downloaded on first boot by the `itzg/minecraft-server` image, so a fresh
+  server starts without manual setup steps.
 - One-touch management: create, start, stop, restart, and remove servers from a
   single web UI backed by a JSON API.
 - Paper / Fabric support: pick a server type plus version (and build) when
@@ -168,7 +169,6 @@ backend, but the intended surface is:
 |-- internal/           # Go backend (web assets live in internal/web/dist)
 |-- migrations/         # Database migrations
 |-- web/                # Frontend (TanStack/Vite)
-|-- docker/mcm-server/  # Custom Minecraft server image (entrypoint + Dockerfile)
 |-- deploy/             # systemd unit for bare-metal/LXC
 |-- Dockerfile          # Multi-stage panel image (web -> go -> runtime)
 `-- docker-compose.yml  # Panel orchestration
@@ -195,26 +195,6 @@ pnpm build   # production build into web/dist
 The panel Docker image copies the frontend build into `internal/web/dist`
 during the multi-stage build, replacing the committed placeholder
 `internal/web/dist/index.html`.
-
-## mcm-server image
-
-`docker/mcm-server` provides the sibling Minecraft runtime. It is an Eclipse
-Temurin 21 JRE image with `curl` and `jq`. On first boot the entrypoint
-downloads a server jar (Paper by default, or Fabric/vanilla), writes
-`eula.txt`, and execs Java with the configured RAM. Server files persist in the
-data directory selected by `MCM_DATA_DIR` (default `/data`), which the panel
-binds from each server's host data folder; no anonymous volume is created.
-
-Environment variables for the server container:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `MCM_DATA_DIR` | `/data` | Directory (inside the container) where server files, EULA, and `run.sh` live. The panel sets this to match the bind mount target. |
-| `SERVER_TYPE` | `paper` | `paper`, `fabric`, or `vanilla`. |
-| `VERSION` | `latest` | Minecraft version to resolve. |
-| `BUILD` | *(empty)* | Specific Paper build or Fabric loader version. |
-| `RAM_MB` | `2048` | Max heap in MB (min heap is 512M). |
-| `EULA` | `TRUE` | Set `EULA=TRUE` to accept the Minecraft EULA. |
 
 ## Backups
 
