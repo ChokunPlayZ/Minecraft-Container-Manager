@@ -145,6 +145,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleGetProperties)))
 	s.mux.HandleFunc("PUT /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleSaveProperties)))
 
+	// File manager.
+	s.mux.HandleFunc("GET /api/servers/{id}/files", s.requireAuth(s.wrapJSON(s.handleListFiles)))
+	s.mux.HandleFunc("GET /api/servers/{id}/files/download", s.requireAuth(s.handleDownloadFile))
+	s.mux.HandleFunc("POST /api/servers/{id}/files/upload", s.requireAuth(s.wrapJSON(s.handleUploadFile)))
+	s.mux.HandleFunc("POST /api/servers/{id}/files/archive", s.requireAuth(s.wrapJSON(s.handleArchiveFile)))
+	s.mux.HandleFunc("POST /api/servers/{id}/files/unzip", s.requireAuth(s.wrapJSON(s.handleUnzipFile)))
+	s.mux.HandleFunc("POST /api/servers/{id}/files/from_url", s.requireAuth(s.wrapJSON(s.handleDownloadFromURL)))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/files", s.requireAuth(s.wrapJSON(s.handleDeleteFile)))
+	s.mux.HandleFunc("POST /api/servers/{id}/files/mkdir", s.requireAuth(s.wrapJSON(s.handleMkdir)))
+	s.mux.HandleFunc("POST /api/servers/{id}/files/rename", s.requireAuth(s.wrapJSON(s.handleRenameFile)))
+
 	// Idle spin-down.
 	s.mux.HandleFunc("GET /api/spindown", s.requireAuth(s.wrapJSON(s.handleListSpindown)))
 	s.mux.HandleFunc("POST /api/servers/{id}/wake", s.requireAuth(s.wrapJSON(s.handleWakeServer)))

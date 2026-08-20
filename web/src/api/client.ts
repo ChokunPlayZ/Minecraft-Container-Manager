@@ -17,6 +17,9 @@ import type {
   ServerProperties,
   PlayerCommandAction,
   PlayerCommandArgs,
+  FileEntry,
+  FileList,
+  UnzipResult,
 } from './types';
 
 export class ApiError extends Error {
@@ -219,6 +222,74 @@ export const api = {
 
   deleteBackup: (backupId: string) =>
     request<{ ok: boolean }>(`/api/backups/${backupId}`, { method: 'DELETE' }),
+
+  listFiles: (serverId: string, path: string) => {
+    const q = path ? `?path=${encodeURIComponent(path)}` : '';
+    return request<FileList>(`/api/servers/${serverId}/files${q}`);
+  },
+
+  downloadFile: async (serverId: string, path: string): Promise<Blob> => {
+    const res = await fetch(`/api/servers/${serverId}/files/download?path=${encodeURIComponent(path)}`, {
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      let detail = `Download failed (${res.status})`;
+      try {
+        const body = await res.json();
+        detail = body?.error?.message ?? detail;
+      } catch {
+        /* non-JSON body */
+      }
+      throw new ApiError(res.status, detail, detail);
+    }
+    return res.blob();
+  },
+
+  uploadFile: (serverId: string, file: File, dir: string) => {
+    const body = new FormData();
+    body.append('file', file);
+    const q = dir ? `?dir=${encodeURIComponent(dir)}` : '';
+    return request<FileEntry>(`/api/servers/${serverId}/files/upload${q}`, {
+      method: 'POST',
+      body,
+    });
+  },
+
+  archiveFile: (serverId: string, source: string, name?: string) =>
+    request<FileEntry>(`/api/servers/${serverId}/files/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ source, name: name ?? '' }),
+    }),
+
+  unzipFile: (serverId: string, archive: string, dest?: string) =>
+    request<UnzipResult>(`/api/servers/${serverId}/files/unzip`, {
+      method: 'POST',
+      body: JSON.stringify({ archive, dest: dest ?? '' }),
+    }),
+
+  downloadFromUrl: (serverId: string, url: string, dir: string, name?: string) =>
+    request<FileEntry>(`/api/servers/${serverId}/files/from_url`, {
+      method: 'POST',
+      body: JSON.stringify({ url, dir, name: name ?? '' }),
+    }),
+
+  deleteFile: (serverId: string, path: string) =>
+    request<{ ok: boolean }>(
+      `/api/servers/${serverId}/files?path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' },
+    ),
+
+  mkdir: (serverId: string, path: string) =>
+    request<FileEntry>(`/api/servers/${serverId}/files/mkdir`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+
+  renameFile: (serverId: string, path: string, name: string) =>
+    request<FileEntry>(`/api/servers/${serverId}/files/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ path, name }),
+    }),
 };
 
 export interface CreateServerInput {

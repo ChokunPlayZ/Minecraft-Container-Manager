@@ -6,6 +6,7 @@ import type { Server, ServerState } from '../api/types';
 import { AppShell } from '../components/app-shell';
 import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
+import { FilesPanel } from '../components/files-panel';
 import { InstallPanel } from '../components/install-panel';
 import { ModsPanel } from '../components/mods-panel';
 import { OpsPanel } from '../components/ops-panel';
@@ -177,6 +178,7 @@ function ServerDetailRoute() {
             <OpsPanel server={server} refreshKey={state} />
             <ModsPanel server={server} />
             <PropertiesEditor server={server} />
+            <FilesPanel server={server} />
             <BackupsPanel server={server} />
           </div>
         </div>

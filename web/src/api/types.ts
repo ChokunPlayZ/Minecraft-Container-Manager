@@ -131,3 +131,20 @@ export interface ServerProperties {
   content: string;
   exists: boolean;
 }
+
+export interface FileEntry {
+  name: string;
+  is_directory: boolean;
+  size_bytes: number;
+  modified_at: string;
+}
+
+export interface FileList {
+  path: string;
+  entries: FileEntry[];
+}
+
+export interface UnzipResult {
+  ok: boolean;
+  count: number;
+}
