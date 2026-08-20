@@ -18,7 +18,7 @@ func openIntegrationManager(t *testing.T) *Manager {
 	if host == "" {
 		host = "unix:///var/run/docker.sock"
 	}
-	mgr, err := New(host)
+	mgr, err := New(host, "itzg/minecraft-server")
 	if err != nil {
 		t.Skipf("docker client unavailable: %v", err)
 	}

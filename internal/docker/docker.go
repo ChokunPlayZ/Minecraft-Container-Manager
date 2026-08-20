@@ -145,14 +145,8 @@ func Name(id string) string {
 func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	name := Name(opts.ID)
 	cfg := &container.Config{
-		Image: m.image,
-		Env: []string{
-			"MCM_DATA_DIR=" + containerData,
-			"SERVER_TYPE=" + opts.ServerType,
-			"VERSION=" + opts.Version,
-			"BUILD=" + opts.Build,
-			"RAM_MB=" + fmt.Sprintf("%d", opts.RAMMB),
-		},
+		Image:        m.image,
+		Env:          itzgEnv(opts),
 		ExposedPorts: exposedPorts(opts.ExtraPorts),
 	}
 	hostCfg := &container.HostConfig{
@@ -169,6 +163,31 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		return "", fmt.Errorf("create container: %w", err)
 	}
 	return resp.ID, nil
+}
+
+// itzgEnv maps MCM's create options onto the environment variables expected by
+// the itzg/minecraft-server image. The image resolves and downloads the server
+// jar itself, so MCM only needs to pass the platform, version, memory, EULA,
+// and any platform-specific build/loader selector.
+func itzgEnv(opts CreateOpts) []string {
+	env := []string{
+		"MCM_DATA_DIR=" + containerData,
+		"TYPE=" + strings.ToUpper(opts.ServerType),
+		"VERSION=" + opts.Version,
+		"MEMORY=" + fmt.Sprintf("%dM", opts.RAMMB),
+		"EULA=TRUE",
+	}
+	switch strings.ToLower(opts.ServerType) {
+	case "paper":
+		env = append(env, "BUILD_NUMBER="+opts.Build)
+	case "fabric":
+		env = append(env, "FABRIC_LOADER="+opts.Build)
+	case "forge":
+		env = append(env, "FORGE_VERSION="+opts.Build)
+	case "neoforge":
+		env = append(env, "NEOFORGE_VERSION="+opts.Build)
+	}
+	return env
 }
 
 // containerResources builds the container resource limits. The memory limit

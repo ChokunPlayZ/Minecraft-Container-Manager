@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/docker/go-connections/nat"
@@ -66,4 +67,70 @@ func TestPortBindings(t *testing.T) {
 	check("25565/tcp", "25601")
 	check("8080/tcp", "8081")
 	check("19132/udp", "19133")
+}
+
+func TestItzgEnv(t *testing.T) {
+	cases := []struct {
+		name    string
+		opts    CreateOpts
+		wantEnv map[string]string
+	}{
+		{
+			name: "paper",
+			opts: CreateOpts{ServerType: "paper", Version: "1.21.1", Build: "120", RAMMB: 2048},
+			wantEnv: map[string]string{
+				"TYPE":          "PAPER",
+				"VERSION":       "1.21.1",
+				"MEMORY":        "2048M",
+				"EULA":          "TRUE",
+				"BUILD_NUMBER":  "120",
+				"MCM_DATA_DIR":  "/data",
+			},
+		},
+		{
+			name: "fabric",
+			opts: CreateOpts{ServerType: "fabric", Version: "1.21.1", Build: "0.16.9", RAMMB: 4096},
+			wantEnv: map[string]string{
+				"TYPE":          "FABRIC",
+				"VERSION":       "1.21.1",
+				"MEMORY":        "4096M",
+				"EULA":          "TRUE",
+				"FABRIC_LOADER": "0.16.9",
+				"MCM_DATA_DIR":  "/data",
+			},
+		},
+		{
+			name: "vanilla has no build var",
+			opts: CreateOpts{ServerType: "vanilla", Version: "1.21.1", Build: "", RAMMB: 1024},
+			wantEnv: map[string]string{
+				"TYPE":         "VANILLA",
+				"VERSION":      "1.21.1",
+				"MEMORY":       "1024M",
+				"EULA":         "TRUE",
+				"MCM_DATA_DIR": "/data",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := itzgEnv(tc.opts)
+			got := make(map[string]string)
+			for _, kv := range env {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok {
+					t.Fatalf("malformed env entry %q", kv)
+				}
+				got[k] = v
+			}
+			if len(got) != len(tc.wantEnv) {
+				t.Fatalf("env count = %d (want %d): %v", len(got), len(tc.wantEnv), got)
+			}
+			for k, wantV := range tc.wantEnv {
+				if got[k] != wantV {
+					t.Errorf("env %s = %q, want %q", k, got[k], wantV)
+				}
+			}
+		})
+	}
 }

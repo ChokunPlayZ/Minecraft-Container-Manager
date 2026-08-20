@@ -36,14 +36,15 @@ game port directly, and the panel manages the servers themselves.
    # edit MCM_SESSION_SECRET in .env
    ```
 
-2. Build the Minecraft server image that the panel launches:
+2. Ensure the Minecraft server runtime image the panel launches is available:
 
    ```sh
-   docker build -t mcm-server:latest docker/mcm-server
+   docker pull itzg/minecraft-server
    ```
 
-   This image is used by the panel to run sibling Minecraft server containers.
-   It is intentionally built separately from the panel image.
+   The `itzg/minecraft-server` image runs each server container. It is pulled
+   automatically on first use; the image name is configurable via
+   `MCM_SERVER_IMAGE`.
 
 3. Build and start the panel:
 
@@ -101,8 +102,8 @@ sudo systemctl enable --now mcm
 
 The unit runs the binary as the `mcm` user with `WorkingDirectory=/var/lib/mcm`
 and reads configuration from `/etc/mcm/mcm.env`. It requires `docker.service`
-so the socket is available. Build the `mcm-server:latest` image with the
-`docker build -t mcm-server:latest docker/mcm-server` command above.
+so the socket is available. Ensure the `itzg/minecraft-server` runtime image is
+pulled on the host before starting servers.
 
 ## Configuration
 
