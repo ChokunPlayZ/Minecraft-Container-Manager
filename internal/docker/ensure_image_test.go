@@ -130,6 +130,7 @@ func TestCreateSkipsPullWhenImagePresent(t *testing.T) {
 func TestCreateRetriesAfterStaleCreateFailure(t *testing.T) {
 	d := &fakeDaemon{}
 	d.failFirstCreate.Store(true)
+	d.haveImage.Store(true) // image present locally, but the create still races
 	m := newFakeManager(d)
 	ctx := context.Background()
 
