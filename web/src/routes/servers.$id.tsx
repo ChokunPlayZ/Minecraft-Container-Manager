@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, FolderOpen, LayoutGrid, Play, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react';
+import { ArrowLeft, FolderOpen, LayoutGrid, Play, RefreshCw, RotateCcw, Square, Trash2, Zap } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server, ServerState } from '../api/types';
 import { AppShell } from '../components/app-shell';
@@ -113,6 +113,25 @@ function ServerDetailRoute() {
     }
   }
 
+  async function handleKill() {
+    if (!server) return;
+    const confirmed = window.confirm(
+      `Force-kill "${server.name}"? This stops the container immediately without a graceful shutdown, which may skip saving worlds. Use this only if the server is unresponsive.`,
+    );
+    if (!confirmed) return;
+    try {
+      setBusy(true);
+      setError(null);
+      const updated = await api.killServer(server.id);
+      setServer(updated);
+      setStatusState(updated.state);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : 'Failed to kill server');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!server) {
     return (
       <RequireAuth>
@@ -157,6 +176,14 @@ function ServerDetailRoute() {
               onClick={() => void run(() => api.stopServer(server.id))}
             >
               <Square className="h-4 w-4" /> Stop
+            </Button>
+            <Button
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              disabled={busy || state === 'stopped' || state === 'stopping'}
+              onClick={() => void handleKill()}
+            >
+              <Zap className="h-4 w-4" /> Kill
             </Button>
             <Button
               variant="outline"

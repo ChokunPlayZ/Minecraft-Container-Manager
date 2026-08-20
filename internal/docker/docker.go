@@ -305,6 +305,17 @@ func (m *Manager) Stop(ctx context.Context, containerID string, timeout time.Dur
 	return nil
 }
 
+// Kill immediately stops a container without a graceful shutdown period. It
+// sends SIGKILL right away, unlike Stop which first triggers SIGTERM. This is
+// intended for unresponsive servers that will not exit cleanly.
+func (m *Manager) Kill(ctx context.Context, containerID string) error {
+	zero := 0
+	if err := m.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &zero}); err != nil {
+		return fmt.Errorf("kill container: %w", err)
+	}
+	return nil
+}
+
 // Remove deletes a container, killing it if necessary.
 func (m *Manager) Remove(ctx context.Context, containerID string) error {
 	if err := m.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {

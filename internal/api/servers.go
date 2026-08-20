@@ -96,6 +96,8 @@ func (s *Server) handleServerAction(action string) http.HandlerFunc {
 			srv, err = s.servers.Start(r.Context(), r.PathValue("id"))
 		case "stop":
 			srv, err = s.servers.Stop(r.Context(), r.PathValue("id"))
+		case "kill":
+			srv, err = s.servers.Kill(r.Context(), r.PathValue("id"))
 		case "restart":
 			srv, err = s.servers.Restart(r.Context(), r.PathValue("id"))
 		}

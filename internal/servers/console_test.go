@@ -35,6 +35,7 @@ func (f *fakeRuntime) Start(context.Context, string) error  { return nil }
 func (f *fakeRuntime) Stop(context.Context, string, time.Duration) error {
 	return nil
 }
+func (f *fakeRuntime) Kill(context.Context, string) error { return nil }
 func (f *fakeRuntime) Status(context.Context, string) (string, error) {
 	return "stopped", nil
 }

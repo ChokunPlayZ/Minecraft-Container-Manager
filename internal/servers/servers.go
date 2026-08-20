@@ -27,6 +27,7 @@ type dockerRuntime interface {
 	Remove(ctx context.Context, containerID string) error
 	Start(ctx context.Context, containerID string) error
 	Stop(ctx context.Context, containerID string, timeout time.Duration) error
+	Kill(ctx context.Context, containerID string) error
 	Status(ctx context.Context, containerID string) (string, error)
 	Exists(ctx context.Context, containerID string) (bool, error)
 	Logs(ctx context.Context, containerID string, follow bool) (io.ReadCloser, error)
@@ -391,6 +392,32 @@ func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 	}
 	if srv.ContainerID != "" {
 		if err := s.docker.Stop(ctx, srv.ContainerID, 30*time.Second); err != nil {
+			_ = s.setState(ctx, id, StateError)
+			return Server{}, err
+		}
+	}
+	if err := s.setState(ctx, id, StateStopped); err != nil {
+		return Server{}, err
+	}
+	if s.dns != nil {
+		_ = s.dns.Remove(ctx, id)
+	}
+	return s.Get(ctx, id)
+}
+
+// Kill force-stops a running container without waiting for a graceful
+// shutdown. It is the hard-stop counterpart to Stop and is useful when a
+// server is hung and will not stop cleanly.
+func (s *Store) Kill(ctx context.Context, id string) (Server, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+	if err := s.setState(ctx, id, StateStopping); err != nil {
+		return Server{}, err
+	}
+	if srv.ContainerID != "" {
+		if err := s.docker.Kill(ctx, srv.ContainerID); err != nil {
 			_ = s.setState(ctx, id, StateError)
 			return Server{}, err
 		}
