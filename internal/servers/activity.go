@@ -44,6 +44,15 @@ func (s *Store) SetActivity(ctx context.Context, id string, t time.Time) error {
 	return err
 }
 
+// HasPlayers reports whether any players are currently connected to a server.
+func (s *Store) HasPlayers(ctx context.Context, id string) (bool, error) {
+	res, err := s.PlayerList(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return len(res.Players) > 0, nil
+}
+
 // IdleTimeoutOverride returns the per-server idle timeout override in minutes
 // and whether one is configured. A cleared (NULL) value reports ok == false so
 // callers fall back to the global default.

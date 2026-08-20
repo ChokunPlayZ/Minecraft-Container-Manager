@@ -14,6 +14,7 @@ type fakeSpin struct {
 	list       []servers.Server
 	activity   map[string]time.Time
 	overrides  map[string]int
+	players    map[string]bool
 	defaultMin int
 }
 
@@ -39,6 +40,9 @@ func (f *fakeSpin) DefaultIdleTimeout(_ context.Context, fallback time.Duration)
 	}
 	return fallback, nil
 }
+func (f *fakeSpin) HasPlayers(_ context.Context, id string) (bool, error) {
+	return f.players[id], nil
+}
 
 type fakeCtrl struct {
 	stops  map[string]int
@@ -59,6 +63,7 @@ func newFakes(list []servers.Server) (*fakeSpin, *fakeCtrl) {
 		list:      list,
 		activity:  map[string]time.Time{},
 		overrides: map[string]int{},
+		players:   map[string]bool{},
 	}
 	return spin, &fakeCtrl{stops: map[string]int{}, starts: map[string]int{}}
 }
@@ -104,7 +109,7 @@ func TestShouldStopPerServerOverride(t *testing.T) {
 
 func TestTickSeedsThenStops(t *testing.T) {
 	spin, ctrl := newFakes([]servers.Server{
-		{ID: "srv1", State: servers.StateRunning},
+		{ID: "srv1", State: servers.StateRunning, SpinDownEnabled: true},
 	})
 	spin.defaultMin = 30
 	s := New(spin, ctrl, log.New(io.Discard, "", 0), 30*time.Minute)
@@ -131,18 +136,46 @@ func TestTickSeedsThenStops(t *testing.T) {
 
 func TestTickSkipsDisabledServer(t *testing.T) {
 	spin, ctrl := newFakes([]servers.Server{
-		{ID: "srv1", State: servers.StateRunning, SpinDownDisabled: true},
+		{ID: "srv1", State: servers.StateRunning, SpinDownEnabled: false},
 	})
 	spin.activity["srv1"] = time.Unix(1_000_000, 0)
 	spin.defaultMin = 30
 	s := New(spin, ctrl, log.New(io.Discard, "", 0), 30*time.Minute)
 
-	// Advance well past the idle timeout. A disabled server must not be stopped
-	// even though it would otherwise be idle-spun-down.
+	// Advance well past the idle timeout. A server that has not opted in to
+	// spin-down must not be stopped even though it would otherwise be idle.
 	s.SetClock(func() time.Time { return time.Unix(1_000_000, 0).Add(2 * time.Hour) })
 	s.tick(context.TODO())
 	if got := ctrl.stops["srv1"]; got != 0 {
-		t.Fatalf("disabled server was stopped %d times, want 0", got)
+		t.Fatalf("non-opted-in server was stopped %d times, want 0", got)
+	}
+}
+
+func TestTickSkipsServerWithPlayers(t *testing.T) {
+	spin, ctrl := newFakes([]servers.Server{
+		{ID: "srv1", State: servers.StateRunning, SpinDownEnabled: true},
+	})
+	spin.players["srv1"] = true
+	spin.defaultMin = 30
+	s := New(spin, ctrl, log.New(io.Discard, "", 0), 30*time.Minute)
+
+	clock := time.Unix(1_000_000, 0)
+	s.SetClock(func() time.Time { return clock })
+
+	// First tick seeds activity.
+	s.tick(context.TODO())
+
+	// Advance well past the idle timeout. A server with players online must not
+	// be stopped, and its idle clock is refreshed so it is not re-queried every
+	// tick.
+	clock = clock.Add(2 * time.Hour)
+	s.tick(context.TODO())
+
+	if got := ctrl.stops["srv1"]; got != 0 {
+		t.Fatalf("server with players was stopped %d times, want 0", got)
+	}
+	if got := spin.activity["srv1"]; !got.Equal(clock) {
+		t.Fatalf("activity not refreshed for occupied server: %v", got)
 	}
 }
 

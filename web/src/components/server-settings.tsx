@@ -27,7 +27,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
   const [memoryLimitMb, setMemoryLimitMb] = useState(server.memory_limit_mb ?? 0);
   const [backupEnabled, setBackupEnabled] = useState(server.backup_enabled ?? true);
   const [backupInterval, setBackupInterval] = useState(server.backup_interval_minutes ?? 720);
-  const [spinDownDisabled, setSpinDownDisabled] = useState(server.spin_down_disabled ?? false);
+  const [spinDownEnabled, setSpinDownEnabled] = useState(server.spin_down_enabled ?? false);
   const [extraPorts, setExtraPorts] = useState<ExtraPort[]>(server.extra_ports ?? []);
   const [tab, setTab] = useState<SettingsTab>('general');
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +64,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
         memory_limit_mb: memoryLimitMb,
         backup_enabled: backupEnabled,
         backup_interval_minutes: backupInterval,
-        spin_down_disabled: spinDownDisabled,
+        spin_down_enabled: spinDownEnabled,
         extra_ports: extraPorts,
       });
       onSaved(updated);
@@ -263,13 +263,13 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
-                  checked={spinDownDisabled}
-                  onChange={(e) => setSpinDownDisabled(e.target.checked)}
+                  checked={spinDownEnabled}
+                  onChange={(e) => setSpinDownEnabled(e.target.checked)}
                 />
-                Pause idle spin-down
+                Enable idle spin-down
               </label>
               <p className="text-xs text-muted-foreground">
-                When enabled, this server is never stopped automatically for being idle.
+                When enabled, an idle server with no players online is stopped automatically.
               </p>
             </div>
           )}

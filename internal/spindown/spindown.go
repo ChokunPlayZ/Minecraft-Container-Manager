@@ -29,6 +29,9 @@ type SpinStore interface {
 	SetActivity(ctx context.Context, id string, t time.Time) error
 	IdleTimeoutOverride(ctx context.Context, id string) (minutes int, ok bool, err error)
 	DefaultIdleTimeout(ctx context.Context, fallback time.Duration) (time.Duration, error)
+	// HasPlayers reports whether anyone is currently connected to a server. The
+	// scheduler treats lookup errors as a reason to defer shutdown.
+	HasPlayers(ctx context.Context, id string) (bool, error)
 }
 
 // Control starts and stops servers. *servers.Store satisfies it.
@@ -204,12 +207,12 @@ func (s *Service) effectiveDefault(ctx context.Context) time.Duration {
 
 // ServerStatus describes the idle spin-down state of a single server.
 type ServerStatus struct {
-	ID               string    `json:"id"`
-	State            string    `json:"state"`
-	LastActivity     time.Time `json:"last_activity"`
-	IdleTimeoutMin   int       `json:"idle_timeout_minutes"`
-	IdleOverrideMin  *int      `json:"idle_override_minutes,omitempty"`
-	SpinDownDisabled bool      `json:"spin_down_disabled"`
+	ID              string    `json:"id"`
+	State           string    `json:"state"`
+	LastActivity    time.Time `json:"last_activity"`
+	IdleTimeoutMin  int       `json:"idle_timeout_minutes"`
+	IdleOverrideMin *int      `json:"idle_override_minutes,omitempty"`
+	SpinDownEnabled bool      `json:"spin_down_enabled"`
 }
 
 // Status snapshots idle spin-down state for every server, re-reading the
@@ -222,9 +225,9 @@ func (s *Service) Status(ctx context.Context) ([]ServerStatus, error) {
 	out := make([]ServerStatus, 0, len(list))
 	for _, srv := range list {
 		status := ServerStatus{
-			ID:               srv.ID,
-			State:            srv.State,
-			SpinDownDisabled: srv.SpinDownDisabled,
+			ID:              srv.ID,
+			State:           srv.State,
+			SpinDownEnabled: srv.SpinDownEnabled,
 		}
 		override, ok, oerr := s.spin.IdleTimeoutOverride(ctx, srv.ID)
 		if oerr != nil {

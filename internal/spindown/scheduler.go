@@ -34,7 +34,9 @@ func (s *Service) tick(ctx context.Context) {
 		if srv.State != servers.StateRunning && srv.State != servers.StateStarting {
 			continue
 		}
-		if srv.SpinDownDisabled {
+		// Spin-down is opt-in: only servers that explicitly enabled it are
+		// ever considered for automatic shutdown.
+		if !srv.SpinDownEnabled {
 			continue
 		}
 		s.evaluate(ctx, srv, now)
@@ -63,7 +65,7 @@ func (s *Service) evaluate(ctx context.Context, srv servers.Server, now time.Tim
 	}
 
 	s.mu.Lock()
-	lastSeen, seen := s.lastSeen[srv.ID]
+	_, seen := s.lastSeen[srv.ID]
 	s.mu.Unlock()
 
 	// Seed the reference time so a freshly started server gets a grace period
@@ -80,12 +82,32 @@ func (s *Service) evaluate(ctx context.Context, srv servers.Server, now time.Tim
 		return
 	}
 
-	_ = lastSeen
 	idle := now.Sub(reference)
 	if idle < timeout {
 		return
 	}
+
+	// Never stop a server that still has people online. Refresh the activity
+	// clock so an occupied server is not re-evaluated (and re-queried) every
+	// tick, giving it a fresh grace period once it does go idle.
+	players, err := s.hasPlayers(ctx, srv.ID)
+	if err != nil {
+		s.log.Printf("spindown: players for %s: %v", srv.ID, err)
+		return
+	}
+	if players {
+		_ = s.spin.SetActivity(ctx, srv.ID, now)
+		s.mu.Lock()
+		s.lastSeen[srv.ID] = now
+		s.mu.Unlock()
+		return
+	}
+
 	s.spinDown(ctx, srv, timeout)
+}
+
+func (s *Service) hasPlayers(ctx context.Context, id string) (bool, error) {
+	return s.spin.HasPlayers(ctx, id)
 }
 
 // spinDown stops a server, guarding against repeated concurrent attempts via a
