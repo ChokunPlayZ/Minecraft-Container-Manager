@@ -4,6 +4,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +23,10 @@ const (
 	mcPort        = 25565
 	mcProto       = "tcp"
 	containerData = "/data"
+	// errNoSuchImage is the substring Docker returns when a create references an
+	// image that is not present locally. It is treated as a retry-after-pull
+	// condition rather than a hard failure.
+	errNoSuchImage = "No such image"
 )
 
 // Manager wraps a Docker client and owns the container lifecycle operations for
@@ -143,6 +148,12 @@ func Name(id string) string {
 
 // Create provisions a stopped container for a server.
 func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
+	// The runtime image is a hard prerequisite: pulling it here keeps server
+	// creation self-sufficient instead of failing with "No such image".
+	if err := m.EnsureImage(ctx); err != nil {
+		return "", fmt.Errorf("ensure image %s: %w", m.image, err)
+	}
+
 	name := Name(opts.ID)
 	cfg := &container.Config{
 		Image:        m.image,
@@ -160,9 +171,74 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 
 	resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
 	if err != nil {
+		// If the image vanished between the presence check and the create (or a
+		// concurrent pull is still converging), pull again and retry once.
+		if strings.Contains(err.Error(), errNoSuchImage) {
+			if perr := m.pullImage(ctx); perr != nil {
+				return "", fmt.Errorf("pull image after create failure: %w", perr)
+			}
+			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
+			if err != nil {
+				return "", fmt.Errorf("create container: %w", err)
+			}
+			return resp.ID, nil
+		}
 		return "", fmt.Errorf("create container: %w", err)
 	}
 	return resp.ID, nil
+}
+
+// EnsureImage makes sure the runtime image is present locally, pulling it from
+// the registry when it is not. It is idempotent: when the image is already
+// present, it returns without contacting the registry.
+func (m *Manager) EnsureImage(ctx context.Context) error {
+	has, err := m.imagePresent(ctx)
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	return m.pullImage(ctx)
+}
+
+// imagePresent reports whether the runtime image is available locally.
+func (m *Manager) imagePresent(ctx context.Context) (bool, error) {
+	f := filters.NewArgs()
+	f.Add("reference", m.image)
+	imgs, err := m.client.ImageList(ctx, image.ListOptions{Filters: f})
+	if err != nil {
+		return false, fmt.Errorf("list images: %w", err)
+	}
+	return len(imgs) > 0, nil
+}
+
+// pullImage pulls the runtime image, reading (and discarding) the pull progress
+// stream so the request does not block on an unconsumed response body.
+func (m *Manager) pullImage(ctx context.Context) error {
+	rc, err := m.client.ImagePull(ctx, m.image, image.PullOptions{})
+	if err != nil {
+		// If the image already exists locally, the pull error is benign (e.g. a
+		// not-yet-tagged or concurrently-pulled image). Re-check presence.
+		if m.imagePresentCheck(ctx) {
+			return nil
+		}
+		return fmt.Errorf("pull image: %w", err)
+	}
+	defer rc.Close()
+	if _, err := io.Copy(io.Discard, rc); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("read pull output: %w", err)
+		}
+	}
+	return nil
+}
+
+// imagePresentCheck is a best-effort re-check used to swallow benign pull
+// errors (e.g. "pull access denied") when the image already exists locally.
+func (m *Manager) imagePresentCheck(ctx context.Context) bool {
+	has, err := m.imagePresent(ctx)
+	return err == nil && has
 }
 
 // itzgEnv maps MCM's create options onto the environment variables expected by
