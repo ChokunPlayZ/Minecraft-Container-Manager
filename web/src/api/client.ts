@@ -19,6 +19,7 @@ import type {
   PlayerCommandArgs,
   FileEntry,
   FileList,
+  FileContent,
   UnzipResult,
   User,
   PasskeyMeta,
@@ -328,6 +329,15 @@ export const api = {
     request<FileEntry>(`/api/servers/${serverId}/files/from_url`, {
       method: 'POST',
       body: JSON.stringify({ url, dir, name: name ?? '' }),
+    }),
+
+  readFileContent: (serverId: string, path: string) =>
+    request<FileContent>(`/api/servers/${serverId}/files/content?path=${encodeURIComponent(path)}`),
+
+  writeFileContent: (serverId: string, path: string, content: string) =>
+    request<FileEntry>(`/api/servers/${serverId}/files/content`, {
+      method: 'PUT',
+      body: JSON.stringify({ path, content }),
     }),
 
   deleteFile: (serverId: string, path: string) =>

@@ -1,12 +1,12 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Play, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react';
+import { ArrowLeft, FolderOpen, LayoutGrid, Play, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server, ServerState } from '../api/types';
 import { AppShell } from '../components/app-shell';
 import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
-import { FilesPanel } from '../components/files-panel';
+import { FileManager } from '../components/file-manager';
 import { InstallPanel } from '../components/install-panel';
 import { ModsPanel } from '../components/mods-panel';
 import { OpsPanel } from '../components/ops-panel';
@@ -26,6 +26,7 @@ export const Route = createFileRoute('/servers/$id')({
 function ServerDetailRoute() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const [tab, setTab] = useState<'overview' | 'files'>('overview');
   const [server, setServer] = useState<Server | null>(null);
   const [statusState, setStatusState] = useState<ServerState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -179,31 +180,60 @@ function ServerDetailRoute() {
           </Card>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <ConsoleViewer serverId={server.id} running={state === 'running'} />
-            <div className="mt-4">
-              <PlayersPanel server={server} />
+        {/* Tabs */}
+        <div className="mb-4 flex items-center gap-1 border-b">
+          <button
+            type="button"
+            onClick={() => setTab('overview')}
+            className={
+              tab === 'overview'
+                ? 'inline-flex items-center gap-2 border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
+                : 'inline-flex items-center gap-2 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+            }
+          >
+            <LayoutGrid className="h-4 w-4" /> Overview
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('files')}
+            className={
+              tab === 'files'
+                ? 'inline-flex items-center gap-2 border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
+                : 'inline-flex items-center gap-2 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+            }
+          >
+            <FolderOpen className="h-4 w-4" /> Files
+          </button>
+        </div>
+
+        {tab === 'files' ? (
+          <FileManager server={server} />
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <ConsoleViewer serverId={server.id} running={state === 'running'} />
+              <div className="mt-4">
+                <PlayersPanel server={server} />
+              </div>
+            </div>
+            <div className="space-y-4">
+              <ServerSettings
+                key={`${server.name}-${server.ram_mb}`}
+                server={server}
+                onSaved={(s) => setServer(s)}
+              />
+              <InstallPanel
+                serverId={server.id}
+                serverType={server.server_type}
+                onInstalled={loadServer}
+              />
+              <OpsPanel server={server} refreshKey={state} />
+              <ModsPanel server={server} />
+              <PropertiesEditor server={server} />
+              <BackupsPanel server={server} />
             </div>
           </div>
-          <div className="space-y-4">
-            <ServerSettings
-              key={`${server.name}-${server.ram_mb}`}
-              server={server}
-              onSaved={(s) => setServer(s)}
-            />
-            <InstallPanel
-              serverId={server.id}
-              serverType={server.server_type}
-              onInstalled={loadServer}
-            />
-            <OpsPanel server={server} refreshKey={state} />
-            <ModsPanel server={server} />
-            <PropertiesEditor server={server} />
-            <FilesPanel server={server} />
-            <BackupsPanel server={server} />
-          </div>
-        </div>
+        )}
 
         <Separator className="my-6" />
         <Card>

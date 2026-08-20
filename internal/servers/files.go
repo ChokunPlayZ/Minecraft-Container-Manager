@@ -30,6 +30,8 @@ var (
 	ErrInvalidArchive = errors.New("invalid archive")
 	// ErrDownloadFailed is returned when a URL download fails.
 	ErrDownloadFailed = errors.New("download failed")
+	// ErrReadTooLarge is returned when a file is too large to read into the web editor.
+	ErrReadTooLarge = errors.New("file too large to read")
 )
 
 // maxDownloadBytes caps how large a file downloaded from a URL may be (512 MB).
@@ -479,6 +481,58 @@ func (s *Store) OpenFileForDownload(id, rel string) (*os.File, string, error) {
 		return nil, "", err
 	}
 	return handle, filepath.Base(f), nil
+}
+
+// maxEditBytes caps the size of a file that may be read into the web editor.
+// Larger files should be downloaded and edited locally instead.
+const maxEditBytes int64 = 5 << 20 // 5 MB
+
+// ReadFileContent reads a file inside the server data dir as text for editing.
+// It reports ErrIsDirectory for folders and a friendly size error for files
+// that are too large to safely load into the editor.
+func (s *Store) ReadFileContent(id, rel string) (string, error) {
+	f, err := s.resolveDownloadPath(id, rel)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(f)
+	if err != nil {
+		return "", err
+	}
+	if info.Size() > maxEditBytes {
+		return "", fmt.Errorf("%w: file is too large to edit", ErrReadTooLarge)
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// WriteFileContent writes text content to a file inside the server data dir,
+// creating any missing parent directories. It is also used to create new files.
+func (s *Store) WriteFileContent(id, rel, content string) (FileEntry, error) {
+	if rel == "" || rel == "." || rel == ".." {
+		return FileEntry{}, ErrInvalidPath
+	}
+	clean := path.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
+		return FileEntry{}, ErrInvalidPath
+	}
+	target, err := s.resolvePath(id, clean)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	if target == s.dataPath(id) {
+		return FileEntry{}, ErrInvalidPath
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return FileEntry{}, err
+	}
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		return FileEntry{}, err
+	}
+	return statEntry(target, filepath.Base(target))
 }
 
 // statEntry produces a FileEntry for a path on disk.

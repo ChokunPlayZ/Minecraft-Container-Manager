@@ -150,6 +150,8 @@ func (s *Server) routes() {
 	// File manager.
 	s.mux.HandleFunc("GET /api/servers/{id}/files", s.requireAuth(s.wrapJSON(s.handleListFiles)))
 	s.mux.HandleFunc("GET /api/servers/{id}/files/download", s.requireAuth(s.handleDownloadFile))
+	s.mux.HandleFunc("GET /api/servers/{id}/files/content", s.requireAuth(s.wrapJSON(s.handleReadFileContent)))
+	s.mux.HandleFunc("PUT /api/servers/{id}/files/content", s.requireAuth(s.wrapJSON(s.handleWriteFileContent)))
 	s.mux.HandleFunc("POST /api/servers/{id}/files/upload", s.requireAuth(s.wrapJSON(s.handleUploadFile)))
 	s.mux.HandleFunc("POST /api/servers/{id}/files/archive", s.requireAuth(s.wrapJSON(s.handleArchiveFile)))
 	s.mux.HandleFunc("POST /api/servers/{id}/files/unzip", s.requireAuth(s.wrapJSON(s.handleUnzipFile)))

@@ -46,6 +46,36 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, info.ModTime(), handle)
 }
 
+// handleReadFileContent returns a file's text content for the web editor.
+func (s *Server) handleReadFileContent(w http.ResponseWriter, r *http.Request) {
+	rel := normalizeRel(r.URL.Query().Get("path"))
+	content, err := s.servers.ReadFileContent(r.PathValue("id"), rel)
+	if err != nil {
+		s.writeFileErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": rel, "content": content})
+}
+
+// handleWriteFileContent saves text content to a file in the server data dir,
+// creating the file and any parent directories as needed.
+func (s *Server) handleWriteFileContent(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	entry, err := s.servers.WriteFileContent(r.PathValue("id"), normalizeRel(in.Path), in.Content)
+	if err != nil {
+		s.writeFileErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
 // handleUploadFile saves an uploaded file into the server's data dir.
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(256 << 20); err != nil {
@@ -188,6 +218,9 @@ func (s *Server) writeFileErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "is_directory", "That entry is a folder, not a file.")
 	case errors.Is(err, servers.ErrInvalidArchive):
 		writeError(w, http.StatusBadRequest, "invalid_archive", "That file isn't a valid zip archive.")
+	case errors.Is(err, servers.ErrReadTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large",
+			"That file is too large to edit in the browser. Download it and edit locally instead.")
 	case errors.Is(err, io.ErrShortBuffer), errors.Is(err, io.ErrUnexpectedEOF):
 		writeError(w, http.StatusBadRequest, "invalid_archive", "That zip archive couldn't be read.")
 	default:

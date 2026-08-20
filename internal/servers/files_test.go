@@ -191,3 +191,64 @@ func TestUnzipInvalidArchive(t *testing.T) {
 		t.Fatalf("expected error for invalid archive")
 	}
 }
+
+func TestWriteAndReadFileContentRoundTrip(t *testing.T) {
+	s := minimalStore(t.TempDir())
+	const rel = "config/ops.yml"
+	const content = "ops:\n  - uuid: abc\n    name: steve\n    level: 4\n"
+
+	entry, err := s.WriteFileContent("id", rel, content)
+	if err != nil {
+		t.Fatalf("WriteFileContent error: %v", err)
+	}
+	if entry.Name != "ops.yml" || entry.IsDir {
+		t.Fatalf("unexpected entry: %+v", entry)
+	}
+	// The write must create missing parent directories.
+	if _, err := os.Stat(filepath.Join(s.dataPath("id"), "config", "ops.yml")); err != nil {
+		t.Fatalf("written file missing: %v", err)
+	}
+
+	got, err := s.ReadFileContent("id", rel)
+	if err != nil {
+		t.Fatalf("ReadFileContent error: %v", err)
+	}
+	if got != content {
+		t.Fatalf("content mismatch:\n got %q\nwant %q", got, content)
+	}
+}
+
+func TestReadFileContentRejectsDirectoryAndTooLarge(t *testing.T) {
+	s := minimalStore(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(s.dataPath("id"), "worlds"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if _, err := s.ReadFileContent("id", "worlds"); err == nil {
+		t.Fatalf("expected error reading a directory")
+	}
+
+	big := filepath.Join(s.dataPath("id"), "huge.bin")
+	if err := os.WriteFile(big, bytes.Repeat([]byte("x"), int(maxEditBytes)+1), 0o644); err != nil {
+		t.Fatalf("write huge file: %v", err)
+	}
+	if _, err := s.ReadFileContent("id", "huge.bin"); err == nil {
+		t.Fatalf("expected error for oversized file")
+	}
+}
+
+func TestWriteFileContentRejectsTraversal(t *testing.T) {
+	s := minimalStore(t.TempDir())
+	bad := []string{
+		"",
+		".",
+		"..",
+		"../escape.txt",
+		"a/../../escape.txt",
+		"/etc/passwd",
+	}
+	for _, rel := range bad {
+		if _, err := s.WriteFileContent("id", rel, "x"); err == nil {
+			t.Fatalf("WriteFileContent(%q) expected error, got none", rel)
+		}
+	}
+}

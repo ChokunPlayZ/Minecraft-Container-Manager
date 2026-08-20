@@ -161,6 +161,11 @@ export interface FileList {
   entries: FileEntry[];
 }
 
+export interface FileContent {
+  path: string;
+  content: string;
+}
+
 export interface UnzipResult {
   ok: boolean;
   count: number;
