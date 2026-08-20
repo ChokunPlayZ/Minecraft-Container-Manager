@@ -136,6 +136,12 @@ export const api = {
     return () => source.close();
   },
 
+  consoleCommand: (id: string, command: string) =>
+    request<{ ok: boolean }>(`/api/servers/${id}/console/command`, {
+      method: 'POST',
+      body: JSON.stringify({ command }),
+    }),
+
   installInfo: (id: string) => request<InstallInfo>(`/api/servers/${id}/install`),
 
   installServer: (id: string, input: InstallInput) =>

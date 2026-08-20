@@ -144,6 +144,30 @@ func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
 	s.streamConsole(r.Context(), w, rc)
 }
 
+// handleServerConsoleCommand sends a single command to a running server's
+// console via the container stdin. It does not require RCON to be enabled.
+func (s *Server) handleServerConsoleCommand(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Command string `json:"command"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if err := s.servers.SendConsoleCommand(r.Context(), r.PathValue("id"), in.Command); err != nil {
+		switch {
+		case errors.Is(err, servers.ErrServerNotRunning):
+			writeError(w, http.StatusConflict, "server_not_running",
+				"Server is not running - start it before sending console commands")
+		default:
+			writeError(w, http.StatusInternalServerError, "console_error",
+				"Couldn't send the command to the server console right now.")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleInstall(provision bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		res, err := s.servers.Install(r.Context(), r.PathValue("id"), provision)

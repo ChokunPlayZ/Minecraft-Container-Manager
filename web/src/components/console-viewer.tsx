@@ -1,11 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
-import { api } from '../api/client';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Send } from 'lucide-react';
+import { api, ApiError } from '../api/client';
 import type { ConsoleLine } from '../api/types';
+import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Input } from './ui/input';
 
-export function ConsoleViewer({ serverId }: { serverId: string }) {
+export function ConsoleViewer({ serverId, running }: { serverId: string; running?: boolean }) {
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [command, setCommand] = useState('');
+  const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,6 +35,22 @@ export function ConsoleViewer({ serverId }: { serverId: string }) {
     }
   }, [lines]);
 
+  async function sendCommand(e?: FormEvent) {
+    e?.preventDefault();
+    const trimmed = command.trim();
+    if (!trimmed || sending) return;
+    setSending(true);
+    try {
+      await api.consoleCommand(serverId, trimmed);
+      setCommand('');
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : 'Could not send the command');
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -52,6 +73,24 @@ export function ConsoleViewer({ serverId }: { serverId: string }) {
           )}
           {error && <p className="text-red-400">{error}</p>}
         </div>
+        <form onSubmit={sendCommand} className="mt-3 flex gap-2">
+          <Input
+            value={command}
+            onChange={(e) => setCommand(e.target.value)}
+            placeholder={running ? 'Enter a server command...' : 'Start the server to send commands'}
+            disabled={!running || sending}
+            aria-label="Console command"
+            className="font-mono"
+          />
+          <Button
+            type="submit"
+            size="icon"
+            disabled={!running || sending || command.trim() === ''}
+            aria-label="Send command"
+          >
+            <Send />
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );

@@ -30,6 +30,7 @@ type dockerRuntime interface {
 	Status(ctx context.Context, containerID string) (string, error)
 	Exists(ctx context.Context, containerID string) (bool, error)
 	Logs(ctx context.Context, containerID string, follow bool) (io.ReadCloser, error)
+	SendConsole(ctx context.Context, containerID, command string) error
 	Create(ctx context.Context, opts docker.CreateOpts) (string, error)
 	HostAddress() string
 }

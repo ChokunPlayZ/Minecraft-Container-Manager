@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,9 @@ func (f *fakeRuntime) Create(_ context.Context, opts docker.CreateOpts) (string,
 }
 func (f *fakeRuntime) Logs(context.Context, string, bool) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("console output")), nil
+}
+func (f *fakeRuntime) SendConsole(context.Context, string, string) error {
+	return nil
 }
 
 // TestConsoleProvisionsContainer verifies that opening the console for a server
@@ -137,6 +141,66 @@ func TestConsoleReusesExistingContainer(t *testing.T) {
 	}
 	if fake.created {
 		t.Error("expected no create when a container already exists")
+	}
+}
+
+func insertServerForConsoleCmd(t *testing.T, dbHandle *db.Store, id, state string) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := dbHandle.DB.ExecContext(context.Background(),
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'existing-cid', ?, ?, ?)`,
+		id, "console-cmd", "paper", "1.21.1", "120", 2048, 0, 0, 25603, "[]", state, now, now); err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+}
+
+func TestSendConsoleCommandRejectsStoppedServer(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	s := &Store{db: dbHandle.DB, docker: &fakeRuntime{}, dataDir: dir}
+	id := uuid.NewString()
+	insertServerForConsoleCmd(t, dbHandle, id, StateStopped)
+
+	if err := s.SendConsoleCommand(context.Background(), id, "say hello"); !errors.Is(err, ErrServerNotRunning) {
+		t.Fatalf("SendConsoleCommand error = %v, want ErrServerNotRunning", err)
+	}
+}
+
+func TestSendConsoleCommandRejectsEmptyOrUnsafe(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	s := &Store{db: dbHandle.DB, docker: &fakeRuntime{}, dataDir: dir}
+	id := uuid.NewString()
+	insertServerForConsoleCmd(t, dbHandle, id, StateRunning)
+
+	if err := s.SendConsoleCommand(context.Background(), id, "   "); err == nil {
+		t.Fatal("expected empty command to be rejected")
+	}
+	if err := s.SendConsoleCommand(context.Background(), id, "say hello\x00vil"); err == nil {
+		t.Fatal("expected control character to be rejected")
+	}
+}
+
+func TestSendConsoleCommandSendsToRunningServer(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	s := &Store{db: dbHandle.DB, docker: fake, dataDir: dir}
+	id := uuid.NewString()
+	insertServerForConsoleCmd(t, dbHandle, id, StateRunning)
+
+	if err := s.SendConsoleCommand(context.Background(), id, "say hello"); err != nil {
+		t.Fatalf("SendConsoleCommand: %v", err)
 	}
 }
 

@@ -130,6 +130,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/servers/{id}/recreate", s.requireAuth(s.wrapJSON(s.handleRecreateServer)))
 	s.mux.HandleFunc("GET /api/servers/{id}/status", s.requireAuth(s.wrapJSON(s.handleServerStatus)))
 	s.mux.HandleFunc("GET /api/servers/{id}/console", s.requireAuth(s.handleServerConsole))
+	s.mux.HandleFunc("POST /api/servers/{id}/console/command", s.requireAuth(s.wrapJSON(s.handleServerConsoleCommand)))
 	s.mux.HandleFunc("GET /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(false))))
 	s.mux.HandleFunc("POST /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(true))))
 

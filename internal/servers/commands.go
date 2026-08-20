@@ -145,3 +145,35 @@ func (s *Store) RunPlayerCommand(ctx context.Context, id, name, commandLine stri
 	}
 	return strings.TrimSpace(out), nil
 }
+
+// consoleCommandRe keeps interactive console input to characters Minecraft
+// accepts as a server command line, rejecting control/non-printable text that
+// could corrupt the server stdin or the Docker exec payload.
+var consoleCommandRe = regexp.MustCompile(`^[^\r\n\x00]+$`)
+
+// SendConsoleCommand sends a single command to a running server's console via
+// the container's stdin (no RCON required). The command must be a single line
+// of printable text.
+func (s *Store) SendConsoleCommand(ctx context.Context, id, command string) error {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if srv.State != StateRunning {
+		return ErrServerNotRunning
+	}
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("empty command")
+	}
+	if !consoleCommandRe.MatchString(command) {
+		return errors.New("command contains unsupported characters")
+	}
+	if srv.ContainerID == "" {
+		return errors.New("server has no container")
+	}
+	if err := s.docker.SendConsole(ctx, srv.ContainerID, command); err != nil {
+		return err
+	}
+	return nil
+}

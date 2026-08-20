@@ -345,6 +345,60 @@ func (m *Manager) Logs(ctx context.Context, containerID string, follow bool) (io
 	return rc, nil
 }
 
+// SendConsole writes a command to a running server's console without requiring
+// RCON. It execs the itzg image's stdin-helper (mc-send-to-console, falling
+// back to the older rcon-cli name) inside the container, which pipes the line
+// into the running Java server's stdin. Output is drained and discarded so a
+// chatty response cannot fill the exec stream and block.
+func (m *Manager) SendConsole(ctx context.Context, containerID, command string) error {
+	for _, helper := range []string{"mc-send-to-console", "rcon-cli"} {
+		err := m.execConsole(ctx, containerID, helper, command)
+		if err == nil {
+			return nil
+		}
+		// Only fall back when the first helper binary is missing; other
+		// failures (container gone, non-zero exit) are real and should surface.
+		if !errors.Is(err, errConsoleBinaryMissing) {
+			return err
+		}
+	}
+	return fmt.Errorf("no console helper found in runtime image")
+}
+
+// errConsoleBinaryMissing marks a console exec that failed because the helper
+// binary is not present in the image (exec exits with 127, the shell's
+// "command not found" status).
+var errConsoleBinaryMissing = errors.New("console helper binary not found")
+
+func (m *Manager) execConsole(ctx context.Context, containerID, helper, command string) error {
+	execID, err := m.client.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd:          []string{helper, command},
+		AttachStdin:  false,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create console exec: %w", err)
+	}
+	hij, err := m.client.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
+	if err != nil {
+		return fmt.Errorf("attach console exec: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, hij.Reader)
+	hij.Close()
+	insp, err := m.client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return fmt.Errorf("inspect console exec: %w", err)
+	}
+	if insp.ExitCode == 127 {
+		return errConsoleBinaryMissing
+	}
+	if insp.ExitCode != 0 {
+		return fmt.Errorf("console command exited with code %d", insp.ExitCode)
+	}
+	return nil
+}
+
 // exposedPorts returns the set of container ports to mark exposed. It always
 // includes the primary game port plus each extra port with its protocol.
 func exposedPorts(extras []ExtraPort) nat.PortSet {

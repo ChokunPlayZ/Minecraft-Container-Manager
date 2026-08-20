@@ -8,6 +8,15 @@ import { Label } from './ui/label';
 import { Select } from './ui/select';
 import { Plus, Trash2 } from 'lucide-react';
 
+function genId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback for non-secure contexts (e.g. plain HTTP on a LAN address)
+  // where crypto.randomUUID is not available.
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (s: Server) => void }) {
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
@@ -21,7 +30,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
 
   function newPort(): ExtraPort {
     return {
-      id: crypto.randomUUID(),
+      id: genId(),
       description: '',
       host_port: 0,
       container_port: 0,
