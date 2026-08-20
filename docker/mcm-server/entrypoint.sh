@@ -23,23 +23,30 @@ download() {
 
 resolve_paper() {
     if [ "$VERSION" = "latest" ]; then
-        mc=$(curl -fsSL "https://api.papermc.io/v2/projects/paper" \
-            | jq -r '.versions[-1]')
+        # Fill groups versions by version group, most recent first; the first
+        # entry of the newest group is the latest release.
+        mc=$(curl -fsSL "https://fill.papermc.io/v3/projects/paper" \
+            | jq -r '.versions | to_entries | .[0].value[0]')
         [ -n "$mc" ] && [ "$mc" != "null" ] || { log "Could not resolve latest Paper version" >&2; exit 1; }
     else
         mc="$VERSION"
     fi
 
+    builds_json=$(curl -fsSL "https://fill.papermc.io/v3/projects/paper/versions/${mc}/builds")
+
     if [ -n "$BUILD" ]; then
         build="$BUILD"
     else
-        build=$(curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/${mc}/builds" \
-            | jq -r '.builds[-1].build' 2>/dev/null)
+        build=$(printf '%s' "$builds_json" | jq -r '.[0].id' 2>/dev/null)
         [ -n "$build" ] && [ "$build" != "null" ] || { log "Could not resolve Paper build for $mc" >&2; exit 1; }
     fi
 
+    url=$(printf '%s' "$builds_json" | jq -r --arg build "$build" \
+        '.[] | select(.id == ($build | tonumber)) | .downloads["server:default"].url // empty' | head -n1)
+    [ -n "$url" ] || { log "Could not resolve Paper download for $mc (build $build)" >&2; exit 1; }
+
     log "Resolved Paper build: $build (version: $mc)"
-    download "https://api.papermc.io/v2/projects/paper/versions/${mc}/builds/${build}/downloads/paper-${mc}-${build}.jar"
+    download "$url"
 }
 
 resolve_fabric() {

@@ -1,11 +1,5 @@
-{
-  "project_id": "paper",
-  "project_name": "Paper",
-  "version": "1.21.1",
-  "builds": [
-    {"build": 100, "time": "2024-01-01T00:00:00Z", "channel": "default", "promoted": true},
-    {"build": 101, "time": "2024-01-02T00:00:00Z", "channel": "default", "promoted": true},
-    {"build": 120, "time": "2024-01-03T00:00:00Z", "channel": "default", "promoted": true}
-  ],
-  "downloads": {}
-}
+[
+  {"id": 120, "channel": "STABLE"},
+  {"id": 101, "channel": "STABLE"},
+  {"id": 100, "channel": "STABLE"}
+]

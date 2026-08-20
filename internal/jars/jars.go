@@ -41,7 +41,7 @@ func ParseJarType(s string) (JarType, error) {
 }
 
 const (
-	defaultPaperBase    = "https://api.papermc.io/v2"
+	defaultPaperBase    = "https://fill.papermc.io/v3"
 	defaultFabricBase   = "https://meta.fabricmc.net/v2"
 	defaultMojangManf   = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 	defaultForgeBase    = "https://files.minecraftforge.net/net/minecraftforge/forge"
@@ -98,19 +98,19 @@ type Build struct {
 
 // PaperProject is the JSON shape returned by GET {base}/projects/paper.
 type PaperProject struct {
-	ProjectID     string   `json:"project_id"`
-	ProjectName   string   `json:"project_name"`
-	VersionGroups []string `json:"version_groups"`
-	Versions      []string `json:"versions"`
+	Project struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"project"`
+	// Versions maps a version group (e.g. "1.21") to its concrete versions.
+	Versions map[string][]string `json:"versions"`
 }
 
-// PaperBuildsPage is the JSON shape returned by GET {base}/projects/paper/versions/{v}/builds.
-type PaperBuildsPage struct {
-	ProjectID string `json:"project_id"`
-	Version   string `json:"version"`
-	Builds    []struct {
-		Build int `json:"build"`
-	} `json:"builds"`
+// PaperBuild is a single entry in the JSON array returned by
+// GET {base}/projects/paper/versions/{v}/builds.
+type PaperBuild struct {
+	ID      int    `json:"id"`
+	Channel string `json:"channel"`
 }
 
 // ManifestEntry is a single version entry in Mojang's version manifest.
@@ -134,19 +134,41 @@ func (r *Resolver) PaperVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, r.PaperBase+"/projects/paper", &p); err != nil {
 		return nil, err
 	}
-	return p.Versions, nil
+	// Fill groups versions by version group; flatten deterministically so the
+	// dropdown ordering is stable. A version may appear in multiple groups
+	// (e.g. a snapshot and its release), so deduplicate.
+	groups := make([]string, 0, len(p.Versions))
+	for g := range p.Versions {
+		groups = append(groups, g)
+	}
+	sort.Strings(groups)
+	seen := map[string]bool{}
+	var out []string
+	for _, g := range groups {
+		for _, v := range p.Versions[g] {
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
 
 // PaperBuilds returns the build numbers for a Paper version.
 func (r *Resolver) PaperBuilds(ctx context.Context, version string) ([]Build, error) {
-	var page PaperBuildsPage
-	if err := r.getJSON(ctx, fmt.Sprintf("%s/projects/paper/versions/%s/builds", r.PaperBase, version), &page); err != nil {
+	var raw []PaperBuild
+	if err := r.getJSON(ctx, fmt.Sprintf("%s/projects/paper/versions/%s/builds", r.PaperBase, version), &raw); err != nil {
 		return nil, err
 	}
-	builds := make([]Build, 0, len(page.Builds))
-	for _, b := range page.Builds {
-		builds = append(builds, Build{Number: b.Build})
+	builds := make([]Build, 0, len(raw))
+	for _, b := range raw {
+		builds = append(builds, Build{Number: b.ID})
 	}
+	// Fill returns builds newest-first; normalize to ascending so consumers can
+	// rely on the last entry being the newest.
+	sort.Slice(builds, func(i, j int) bool { return builds[i].Number < builds[j].Number })
 	return builds, nil
 }
 

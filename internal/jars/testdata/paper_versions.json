@@ -1,7 +1,10 @@
 {
-  "project_id": "paper",
-  "project_name": "Paper",
-  "version_groups": ["1.20", "1.21"],
-  "versions": ["1.20.1", "1.20.4", "1.21.1"],
-  "downloads": {}
+  "project": {
+    "id": "paper",
+    "name": "Paper"
+  },
+  "versions": {
+    "1.20": ["1.20.1", "1.20.4"],
+    "1.21": ["1.21.1"]
+  }
 }
