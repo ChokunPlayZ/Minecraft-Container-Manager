@@ -19,6 +19,22 @@ import (
 	"github.com/mcm-panel/mcm/internal/ports"
 )
 
+// dockerRuntime is the subset of the Docker manager used by the server store.
+// It is an interface so tests can substitute a fake runtime.
+type dockerRuntime interface {
+	Ping(ctx context.Context) error
+	RuntimeStatus(ctx context.Context) docker.RuntimeStatus
+	Remove(ctx context.Context, containerID string) error
+	Start(ctx context.Context, containerID string) error
+	Stop(ctx context.Context, containerID string, timeout time.Duration) error
+	Status(ctx context.Context, containerID string) (string, error)
+	Logs(ctx context.Context, containerID string, follow bool) (io.ReadCloser, error)
+	Create(ctx context.Context, opts docker.CreateOpts) (string, error)
+	HostAddress() string
+}
+
+var _ dockerRuntime = (*docker.Manager)(nil)
+
 // Server state values.
 const (
 	StateStopped  = "stopped"
@@ -135,7 +151,7 @@ type InstallResult struct {
 // Store coordinates the database, docker, jar resolution, and port allocation.
 type Store struct {
 	db      *sql.DB
-	docker  *docker.Manager
+	docker  dockerRuntime
 	jars    *jars.Resolver
 	ports   *ports.Pool
 	dataDir string
@@ -443,7 +459,10 @@ func (s *Store) Console(ctx context.Context, id string, follow bool) (io.ReadClo
 		return nil, err
 	}
 	if srv.ContainerID == "" {
-		return nil, errors.New("server has no container")
+		srv, err = s.ensureContainer(ctx, srv)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return s.docker.Logs(ctx, srv.ContainerID, follow)
 }
