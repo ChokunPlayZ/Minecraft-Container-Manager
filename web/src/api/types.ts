@@ -29,6 +29,16 @@ export interface Server {
 export interface Me {
   id: string;
   email: string;
+  totp_enabled?: boolean;
+  created_at?: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  totp_enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ServerStatus {

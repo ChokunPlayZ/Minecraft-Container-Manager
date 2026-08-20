@@ -20,6 +20,7 @@ import type {
   FileEntry,
   FileList,
   UnzipResult,
+  User,
 } from './types';
 
 export class ApiError extends Error {
@@ -150,6 +151,18 @@ export const api = {
 
   putSettings: (settings: Settings) =>
     request<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+
+  listUsers: () =>
+    request<{ users: User[] }>('/api/users').then((res) => res.users ?? []),
+
+  createUser: (email: string, password: string) =>
+    request<User>('/api/users', { method: 'POST', body: JSON.stringify({ email, password }) }),
+
+  updateUser: (id: string, input: { email?: string; password?: string }) =>
+    request<User>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+
+  deleteUser: (id: string) =>
+    request<{ ok: boolean }>(`/api/users/${id}`, { method: 'DELETE' }),
 
   listBackups: (serverId: string) =>
     request<{ backups: BackupRecord[] }>(`/api/servers/${serverId}/backups`),

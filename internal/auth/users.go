@@ -54,6 +54,98 @@ func (u *Users) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// List returns every user, ordered by creation time. Password hashes and other
+// sensitive columns are excluded from the marshaled representation by the User
+// struct's json tags.
+func (u *Users) List(ctx context.Context) ([]User, error) {
+	rows, err := u.db.QueryContext(ctx,
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var usr User
+		var totpEnabled int
+		if err := rows.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &totpEnabled, &usr.WebAuthnID, &usr.CreatedAt, &usr.UpdatedAt); err != nil {
+			return nil, err
+		}
+		usr.TOTPEnabled = totpEnabled == 1
+		users = append(users, usr)
+	}
+	return users, rows.Err()
+}
+
+// ErrEmailTaken is returned when an email update would violate the unique
+// constraint on users.email.
+var ErrEmailTaken = errors.New("email already in use")
+
+// UpdateEmail changes a user's email address.
+func (u *Users) UpdateEmail(ctx context.Context, id, email string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := u.db.ExecContext(ctx,
+		`UPDATE users SET email = ?, updated_at = ? WHERE id = ?`, email, now, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdatePassword stores a new argon2id password hash for a user.
+func (u *Users) UpdatePassword(ctx context.Context, id, passwordHash string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := u.db.ExecContext(ctx,
+		`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, passwordHash, now, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// Delete removes a user along with their passkeys and sessions.
+func (u *Users) Delete(ctx context.Context, id string) error {
+	tx, err := u.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM passkeys WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
 // GetByEmail returns a user by email address.
 func (u *Users) GetByEmail(ctx context.Context, email string) (User, error) {
 	return u.scan(u.db.QueryRowContext(ctx,

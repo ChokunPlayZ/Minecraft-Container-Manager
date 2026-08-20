@@ -173,6 +173,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions", s.requireAuth(s.wrapJSON(s.handleJarVersions)))
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions/{v}/builds", s.requireAuth(s.wrapJSON(s.handleJarBuilds)))
 
+	// User management.
+	s.mux.HandleFunc("GET /api/users", s.requireAuth(s.wrapJSON(s.handleListUsers)))
+	s.mux.HandleFunc("POST /api/users", s.requireAuth(s.wrapJSON(s.handleCreateUser)))
+	s.mux.HandleFunc("PATCH /api/users/{id}", s.requireAuth(s.wrapJSON(s.handleUpdateUser)))
+	s.mux.HandleFunc("DELETE /api/users/{id}", s.requireAuth(s.wrapJSON(s.handleDeleteUser)))
+
 	// Ports and settings.
 	s.mux.HandleFunc("GET /api/ports/available", s.requireAuth(s.wrapJSON(s.handleAvailablePorts)))
 	s.mux.HandleFunc("GET /api/settings", s.requireAuth(s.wrapJSON(s.handleGetSettings)))

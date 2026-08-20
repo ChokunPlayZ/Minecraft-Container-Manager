@@ -92,6 +92,22 @@ func (m *Manager) Delete(ctx context.Context, token string) error {
 	return err
 }
 
+// RevokeByUser deletes every session owned by the given user. This is used when
+// a user is deleted or their password changes.
+func (m *Manager) RevokeByUser(ctx context.Context, userID string) error {
+	_, err := m.db.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID)
+	return err
+}
+
+// RevokeByUserExcept deletes a user's sessions except the one identified by
+// keepToken. This preserves the acting admin's own session when they change
+// their own password.
+func (m *Manager) RevokeByUserExcept(ctx context.Context, userID, keepToken string) error {
+	_, err := m.db.ExecContext(ctx,
+		`DELETE FROM sessions WHERE user_id = ? AND token_hash != ?`, userID, HashToken(keepToken))
+	return err
+}
+
 // HashToken returns the lowercase hex SHA-256 digest of a session token.
 func HashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
