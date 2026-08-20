@@ -21,6 +21,7 @@ import type {
   FileList,
   UnzipResult,
   User,
+  PasskeyMeta,
 } from './types';
 
 export class ApiError extends Error {
@@ -163,6 +164,42 @@ export const api = {
 
   deleteUser: (id: string) =>
     request<{ ok: boolean }>(`/api/users/${id}`, { method: 'DELETE' }),
+
+  totpStatus: () => request<{ totp_enabled: boolean }>('/api/auth/totp'),
+
+  totpEnroll: () =>
+    request<{ secret: string; qr_uri: string }>('/api/auth/totp/enroll', {
+      method: 'POST',
+    }),
+
+  totpConfirm: (code: string) =>
+    request<{ totp_enabled: boolean }>('/api/auth/totp/enroll/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  totpDisable: (code: string) =>
+    request<{ totp_enabled: boolean }>('/api/auth/totp/disable', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  passkeyList: () => request<PasskeyMeta[]>('/api/passkey'),
+
+  passkeyRegisterBegin: () =>
+    request<{ registration_id: string; options: PublicKeyCredentialCreationOptions }>(
+      '/api/passkey/register/begin',
+      { method: 'POST' },
+    ),
+
+  passkeyRegisterFinish: (registration_id: string, credential: unknown, name?: string) =>
+    request<{ ok: boolean }>('/api/passkey/register/finish', {
+      method: 'POST',
+      body: JSON.stringify({ registration_id, name, ...(credential as object) }),
+    }),
+
+  passkeyDelete: (id: string) =>
+    request<{ ok: boolean }>('/api/passkey', { method: 'DELETE', body: JSON.stringify({ id }) }),
 
   listBackups: (serverId: string) =>
     request<{ backups: BackupRecord[] }>(`/api/servers/${serverId}/backups`),
@@ -317,6 +354,8 @@ export interface CreateServerInput {
 export interface UpdateServerInput {
   name: string;
   ram_mb: number;
+  cpu_limit?: number;
+  memory_limit_mb?: number;
   backup_enabled?: boolean;
   backup_interval_minutes?: number;
   extra_ports?: ExtraPort[];

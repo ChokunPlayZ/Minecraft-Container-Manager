@@ -11,6 +11,8 @@ import { Plus, Trash2 } from 'lucide-react';
 export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (s: Server) => void }) {
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
+  const [cpuLimit, setCpuLimit] = useState(server.cpu_limit ?? 0);
+  const [memoryLimitMb, setMemoryLimitMb] = useState(server.memory_limit_mb ?? 0);
   const [backupEnabled, setBackupEnabled] = useState(server.backup_enabled ?? true);
   const [backupInterval, setBackupInterval] = useState(server.backup_interval_minutes ?? 720);
   const [extraPorts, setExtraPorts] = useState<ExtraPort[]>(server.extra_ports ?? []);
@@ -43,6 +45,8 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
       const updated = await api.updateServer(server.id, {
         name: name.trim(),
         ram_mb: ramMb,
+        cpu_limit: cpuLimit,
+        memory_limit_mb: memoryLimitMb,
         backup_enabled: backupEnabled,
         backup_interval_minutes: backupInterval,
         extra_ports: extraPorts,
@@ -59,7 +63,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Settings</CardTitle>
-        <CardDescription>Update the server name and allocated memory.</CardDescription>
+        <CardDescription>Update the server name, resources, backups, and published ports.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
@@ -77,6 +81,30 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
               value={ramMb}
               onChange={(e) => setRamMb(Number(e.target.value))}
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-cpu-limit">CPU limit (cores)</Label>
+            <Input
+              id="edit-cpu-limit"
+              type="number"
+              min={0}
+              step={0.5}
+              value={cpuLimit}
+              onChange={(e) => setCpuLimit(Number(e.target.value))}
+            />
+            <p className="text-xs text-muted-foreground">0 means no CPU quota.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-memory-limit">Memory limit (MB)</Label>
+            <Input
+              id="edit-memory-limit"
+              type="number"
+              min={0}
+              step={64}
+              value={memoryLimitMb}
+              onChange={(e) => setMemoryLimitMb(Number(e.target.value))}
+            />
+            <p className="text-xs text-muted-foreground">0 falls back to the RAM-derived default.</p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-backup-interval">Automatic backup interval (minutes)</Label>

@@ -16,6 +16,8 @@ export interface Server {
   version: string;
   build: string;
   ram_mb: number;
+  cpu_limit: number;
+  memory_limit_mb: number;
   host_port: number;
   extra_ports: ExtraPort[];
   container_id: string | null;
@@ -31,6 +33,11 @@ export interface Me {
   email: string;
   totp_enabled?: boolean;
   created_at?: string;
+}
+
+export interface PasskeyMeta {
+  id: string;
+  name: string;
 }
 
 export interface User {
