@@ -17,10 +17,10 @@ const testImage = "itzg/minecraft-server:test"
 // sequence of image/pull/create responses. It exercises image-presence checks
 // and pull-on-create without a real daemon or a bound port.
 type fakeDaemon struct {
-	haveImage        atomic.Bool
-	pullCount        atomic.Int32
-	createCount      atomic.Int32
-	failFirstCreate  atomic.Bool
+	haveImage       atomic.Bool
+	pullCount       atomic.Int32
+	createCount     atomic.Int32
+	failFirstCreate atomic.Bool
 }
 
 // RoundTrip implements http.RoundTripper over the Docker Engine API.
