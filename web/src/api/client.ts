@@ -67,14 +67,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail = `Request failed (${res.status})`;
     try {
       const body = await res.json();
-      detail = body?.detail ?? body?.message ?? JSON.stringify(body);
+      detail = body?.error?.message ?? body?.message ?? detail;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, `Request failed (${res.status})`, detail);
+    throw new ApiError(res.status, detail, detail);
   }
 
   if (res.status === 204) return undefined as T;

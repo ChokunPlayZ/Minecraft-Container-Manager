@@ -31,6 +31,14 @@ const (
 // ErrNotFound is returned when a server id does not exist.
 var ErrNotFound = errors.New("server not found")
 
+// ErrInvalidJar is returned when a requested jar type, version, or build cannot
+// be resolved/validated because it is unsupported or unknown.
+var ErrInvalidJar = errors.New("invalid or unsupported jar")
+
+// ErrUpstream is returned when resolving jar metadata fails because an upstream
+// provider is unreachable or misbehaving.
+var ErrUpstream = errors.New("upstream provider error")
+
 // Server is the public representation of a server record.
 type Server struct {
 	ID         string `json:"id"`
@@ -211,7 +219,10 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 	}
 	resolved, err := s.jars.Validate(ctx, in.ServerType, in.Version, in.Build)
 	if err != nil {
-		return Server{}, fmt.Errorf("validate jar: %w", err)
+		if errors.Is(err, jars.ErrUpstream) {
+			return Server{}, fmt.Errorf("%w: validate jar: %v", ErrUpstream, err)
+		}
+		return Server{}, fmt.Errorf("%w: validate jar: %v", ErrInvalidJar, err)
 	}
 	port, err := s.ports.Allocate(ctx)
 	if err != nil {
@@ -415,7 +426,10 @@ func (s *Store) Install(ctx context.Context, id string, provision bool) (Install
 	}
 	resolved, err := s.jars.Validate(ctx, jars.JarType(srv.ServerType), srv.Version, srv.Build)
 	if err != nil {
-		return InstallResult{}, fmt.Errorf("validate jar: %w", err)
+		if errors.Is(err, jars.ErrUpstream) {
+			return InstallResult{}, fmt.Errorf("%w: validate jar: %v", ErrUpstream, err)
+		}
+		return InstallResult{}, fmt.Errorf("%w: validate jar: %v", ErrInvalidJar, err)
 	}
 	if provision {
 		srv, err = s.ensureContainer(ctx, srv)

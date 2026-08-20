@@ -5,6 +5,7 @@ package jars
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,10 @@ import (
 	"strconv"
 	"time"
 )
+
+// ErrUpstream is returned when fetching metadata from an upstream provider
+// fails (network error, non-200 response, or unparseable body).
+var ErrUpstream = errors.New("upstream provider error")
 
 // JarType identifies a supported server platform.
 type JarType string
@@ -335,7 +340,7 @@ func (r *Resolver) getJSON(ctx context.Context, url string, out any) error {
 
 	resp, err := r.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf("request %s: %w", url, err)
+		return fmt.Errorf("request %s: %w", url, errors.Join(ErrUpstream, err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -343,7 +348,7 @@ func (r *Resolver) getJSON(ctx context.Context, url string, out any) error {
 		return fmt.Errorf("%s returned %s: %s", url, resp.Status, string(body))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode %s: %w", url, err)
+		return fmt.Errorf("decode %s: %w", url, errors.Join(ErrUpstream, err))
 	}
 	return nil
 }

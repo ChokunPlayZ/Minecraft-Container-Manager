@@ -1,4 +1,4 @@
-export type ServerType = 'paper' | 'fabric';
+export type ServerType = 'paper' | 'fabric' | 'vanilla' | 'forge' | 'neoforge' | 'spigot';
 export type ServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
 
 export interface ExtraPort {

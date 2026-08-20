@@ -112,6 +112,10 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                   >
                     <option value="paper">Paper</option>
                     <option value="fabric">Fabric</option>
+                    <option value="vanilla">Vanilla</option>
+                    <option value="forge">Forge</option>
+                    <option value="neoforge">NeoForge</option>
+                    <option value="spigot">Spigot</option>
                   </Select>
                 </div>
                 <div className="space-y-1.5">

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/ports"
 	"github.com/mcm-panel/mcm/internal/servers"
 )
@@ -42,7 +43,8 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		status, code, message := friendlyCreateErr(err)
+		writeError(w, status, code, message)
 		return
 	}
 	writeJSON(w, http.StatusCreated, srv)
@@ -154,5 +156,22 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "internal", err.Error())
+	if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
+		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't reach the upstream provider right now.")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal", "Something went wrong while handling your request.")
+}
+
+// friendlyCreateErr maps a server-creation error to a user-facing status, code,
+// and message. Upstream fetch failures surface as 502; jar validation problems
+// as 400; everything else as 500.
+func friendlyCreateErr(err error) (int, string, string) {
+	if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
+		return http.StatusBadGateway, "upstream_error", "Couldn't reach the upstream provider right now."
+	}
+	if errors.Is(err, servers.ErrInvalidJar) {
+		return http.StatusBadRequest, "invalid_request", "That server type or version isn't supported."
+	}
+	return http.StatusInternalServerError, "internal", "Something went wrong while handling your request."
 }

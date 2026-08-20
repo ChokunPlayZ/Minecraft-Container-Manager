@@ -69,10 +69,10 @@ func (s *Server) writeModErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, servers.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "server not found")
 	case errors.Is(err, servers.ErrInvalidModName):
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid_request", "That file isn't a valid mod or plugin.")
 	case errors.Is(err, servers.ErrUnsupportedMods):
-		writeError(w, http.StatusBadRequest, "unsupported", err.Error())
+		writeError(w, http.StatusBadRequest, "unsupported", "This server type doesn't support mods or plugins.")
 	default:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal", "Something went wrong while handling your request.")
 	}
 }

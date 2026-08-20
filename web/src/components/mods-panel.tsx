@@ -10,7 +10,14 @@ export function ModsPanel({ server }: { server: Server }) {
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
   const [error, setError] = useState<string | null>(null);
 
+  const unsupported = server.server_type === 'vanilla';
+
   const load = useCallback(async () => {
+    if (unsupported) {
+      setItems([]);
+      setError(null);
+      return;
+    }
     try {
       const res = await api.mods(server.id);
       setItems(res.items ?? []);
@@ -19,7 +26,7 @@ export function ModsPanel({ server }: { server: Server }) {
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to load mods');
     }
-  }, [server.id]);
+  }, [server.id, unsupported]);
 
   useEffect(() => {
     void load();
@@ -57,6 +64,22 @@ export function ModsPanel({ server }: { server: Server }) {
   }
 
   const label = type === 'mods' ? 'Mods' : 'Plugins';
+
+  if (unsupported) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Mods &amp; plugins</CardTitle>
+          <CardDescription>Manage installed artifacts.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            This server type doesn&apos;t support mods or plugins.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
