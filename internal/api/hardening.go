@@ -168,11 +168,18 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if s.servers != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if err := s.servers.Reachable(ctx); err != nil {
+		dockerStatus := s.servers.DockerStatus(ctx)
+		if !dockerStatus.Reachable {
 			checks["docker"] = "unreachable"
 			ready = false
 		} else {
 			checks["docker"] = "ok"
+			if !dockerStatus.ImageReady {
+				checks["docker_image"] = "missing"
+				ready = false
+			} else {
+				checks["docker_image"] = "ok"
+			}
 		}
 	} else {
 		checks["docker"] = "unavailable"

@@ -165,6 +165,12 @@ func (s *Store) Reachable(ctx context.Context) error {
 	return s.docker.Ping(ctx)
 }
 
+// DockerStatus returns the runtime health of the Docker host (daemon reachability
+// and runtime-image presence) for diagnostics.
+func (s *Store) DockerStatus(ctx context.Context) docker.RuntimeStatus {
+	return s.docker.RuntimeStatus(ctx)
+}
+
 // Pool exposes the underlying port pool for the available-ports endpoint.
 func (s *Store) Pool() *ports.Pool {
 	return s.ports

@@ -164,6 +164,9 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't reach the upstream provider right now.")
 		return
 	}
+	// The error is intentionally hidden from the client, but it must reach the
+	// logs so operators can diagnose why a server action failed.
+	s.logger.Printf("server action failed err=%v", err)
 	writeError(w, http.StatusInternalServerError, "internal", "Something went wrong while handling your request.")
 }
 

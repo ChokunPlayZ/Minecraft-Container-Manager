@@ -183,6 +183,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/ports/available", s.requireAuth(s.wrapJSON(s.handleAvailablePorts)))
 	s.mux.HandleFunc("GET /api/settings", s.requireAuth(s.wrapJSON(s.handleGetSettings)))
 	s.mux.HandleFunc("PUT /api/settings", s.requireAuth(s.wrapJSON(s.handlePutSettings)))
+	s.mux.HandleFunc("GET /api/docker/status", s.requireAuth(s.wrapJSON(s.handleDockerStatus)))
 
 	// DNS publishing.
 	s.mux.HandleFunc("GET /api/dns", s.requireAuth(s.wrapJSON(s.handleListDNS)))

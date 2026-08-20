@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 )
@@ -48,6 +50,41 @@ func (m *Manager) Ping(ctx context.Context) error {
 		return fmt.Errorf("docker ping: %w", err)
 	}
 	return nil
+}
+
+// RuntimeStatus describes the health of the Docker host relevant to MCM: whether
+// the daemon is reachable and whether the runtime image needed to launch server
+// containers is present locally.
+type RuntimeStatus struct {
+	Reachable  bool   `json:"reachable"`
+	Image      string `json:"image"`
+	ImageReady bool   `json:"image_ready"`
+	Error      string `json:"error,omitempty"`
+}
+
+// RuntimeStatus checks the Docker daemon and the presence of the mcm-server
+// runtime image. A reachable daemon with a missing image is a common reason a
+// server fails to start, so both are surfaced here for diagnostics.
+func (m *Manager) RuntimeStatus(ctx context.Context) RuntimeStatus {
+	st := RuntimeStatus{Image: imageName}
+	if _, err := m.client.Ping(ctx); err != nil {
+		st.Error = fmt.Sprintf("docker daemon unreachable: %v", err)
+		return st
+	}
+	st.Reachable = true
+
+	f := filters.NewArgs()
+	f.Add("reference", imageName)
+	imgs, err := m.client.ImageList(ctx, image.ListOptions{Filters: f})
+	if err != nil {
+		st.Error = fmt.Sprintf("list images: %v", err)
+		return st
+	}
+	st.ImageReady = len(imgs) > 0
+	if !st.ImageReady {
+		st.Error = fmt.Sprintf("runtime image %q is not present; run 'docker build -t %s docker/mcm-server'", imageName, imageName)
+	}
+	return st
 }
 
 // HostAddress returns the network address on which the Docker daemon is
