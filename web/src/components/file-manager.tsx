@@ -23,6 +23,7 @@ import type { FileEntry, Server } from '../api/types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
+import { useModal } from './ui/modal';
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -87,6 +88,7 @@ export function FileManager({ server }: { server: Server }) {
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [editorBusy, setEditorBusy] = useState(false);
+  const { confirm, prompt, dialog } = useModal();
 
   const load = useCallback(async () => {
     setError(null);
@@ -130,8 +132,8 @@ export function FileManager({ server }: { server: Server }) {
     setCwd(parts.slice(0, seg).join('/'));
   }
 
-  function closeEditor() {
-    if (editorDirty && !window.confirm('Discard unsaved changes?')) return;
+  async function closeEditor() {
+    if (editorDirty && !(await confirm('Discard unsaved changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
     setEditorPath(null);
     setEditorContent('');
     setEditorDirty(false);
@@ -139,7 +141,7 @@ export function FileManager({ server }: { server: Server }) {
   }
 
   async function openEditor(path: string) {
-    if (editorDirty && editorPath !== path && !window.confirm('Discard unsaved changes?')) return;
+    if (editorDirty && editorPath !== path && !(await confirm('Discard unsaved changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
     setEditorBusy(true);
     setEditorError(null);
     setEditorPath(path);
@@ -156,11 +158,11 @@ export function FileManager({ server }: { server: Server }) {
     }
   }
 
-  function newFile() {
-    const name = window.prompt('New file name (e.g. ops.json):', 'new-file.txt');
+  async function newFile() {
+    const name = await prompt('New file name (e.g. ops.json):', 'new-file.txt', { title: 'New file' });
     if (!name || !name.trim()) return;
     const base = cwd ? `${cwd}/${name.trim()}` : name.trim();
-    if (editorDirty && !window.confirm('Discard unsaved changes?')) return;
+    if (editorDirty && !(await confirm('Discard unsaved changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
     setEditorPath(base);
     setEditorContent('');
     setEditorDirty(true);
@@ -225,21 +227,21 @@ export function FileManager({ server }: { server: Server }) {
   }
 
   async function handleRename(entry: FileEntry) {
-    const name = window.prompt(`Rename "${entry.name}" to:`, entry.name);
+    const name = await prompt(`Rename "${entry.name}" to:`, entry.name, { title: 'Rename item', confirmLabel: 'Rename' });
     if (!name || name.trim() === entry.name) return;
     await run(() => api.renameFile(server.id, joinPath(cwd, entry.name), name.trim()));
   }
 
   async function handleDelete(entry: FileEntry) {
     const what = entry.is_directory ? 'folder' : 'file';
-    if (!window.confirm(`Delete ${what} "${entry.name}"? This cannot be undone.`)) return;
+    if (!(await confirm(`Delete ${what} "${entry.name}"? This cannot be undone.`, { title: `Delete ${what}`, confirmLabel: 'Delete', destructive: true }))) return;
     const path = joinPath(cwd, entry.name);
     await run(() => api.deleteFile(server.id, path));
-    if (path === editorPath) closeEditor();
+    if (path === editorPath) await closeEditor();
   }
 
   async function handleMkdir() {
-    const name = window.prompt('New folder name:');
+    const name = await prompt('New folder name:', '', { title: 'New folder' });
     if (!name || !name.trim()) return;
     await run(() => api.mkdir(server.id, joinPath(cwd, name.trim())));
   }
@@ -266,7 +268,9 @@ export function FileManager({ server }: { server: Server }) {
   }
 
   return (
-    <div className="space-y-4">
+    <>
+      {dialog}
+      <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -286,7 +290,7 @@ export function FileManager({ server }: { server: Server }) {
         <Button variant="outline" size="sm" onClick={() => void handleMkdir()} disabled={busy}>
           <FolderPlus className="h-4 w-4" /> New folder
         </Button>
-        <Button variant="outline" size="sm" onClick={() => newFile()} disabled={busy}>
+        <Button variant="outline" size="sm" onClick={() => void newFile()} disabled={busy}>
           <FilePlus2 className="h-4 w-4" /> New file
         </Button>
         <Button variant="outline" size="sm" onClick={() => setShowUrlInput((v) => !v)} disabled={busy}>
@@ -488,7 +492,7 @@ export function FileManager({ server }: { server: Server }) {
                   >
                     <Save className="h-4 w-4" /> {editorBusy ? 'Saving...' : 'Save'}
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={closeEditor} title="Close" aria-label="Close editor">
+                  <Button variant="ghost" size="icon" onClick={() => void closeEditor()} title="Close" aria-label="Close editor">
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
@@ -511,6 +515,7 @@ export function FileManager({ server }: { server: Server }) {
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

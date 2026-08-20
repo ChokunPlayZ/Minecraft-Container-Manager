@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { useModal } from '../components/ui/modal';
 
 export const Route = createFileRoute('/users')({
   component: UsersRoute,
@@ -28,6 +29,7 @@ function UsersRoute() {
   const [editPassword, setEditPassword] = useState<Record<string, string>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const { confirm, dialog } = useModal();
 
   const reload = useCallback(async () => {
     try {
@@ -91,7 +93,7 @@ function UsersRoute() {
   };
 
   const removeUser = async (u: User) => {
-    if (!window.confirm(`Delete user ${u.email}? This cannot be undone.`)) return;
+    if (!(await confirm(`Delete user ${u.email}? This cannot be undone.`, { title: 'Delete user', confirmLabel: 'Delete', destructive: true }))) return;
     setBusy((b) => ({ ...b, [u.id]: true }));
     setError(null);
     try {
@@ -105,7 +107,9 @@ function UsersRoute() {
   };
 
   return (
-    <RequireAuth>
+    <>
+      {dialog}
+      <RequireAuth>
       <AppShell>
         <div className="mb-6 flex items-end justify-between gap-4">
           <div>
@@ -234,7 +238,8 @@ function UsersRoute() {
           ))}
         </div>
       </AppShell>
-    </RequireAuth>
+      </RequireAuth>
+    </>
   );
 }
 

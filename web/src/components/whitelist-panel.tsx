@@ -6,12 +6,14 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { useModal } from './ui/modal';
 
 export function WhitelistPanel({ server }: { server: Server }) {
   const [entries, setEntries] = useState<WhitelistEntry[]>([]);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useModal();
 
   const load = useCallback(async () => {
     try {
@@ -44,7 +46,7 @@ export function WhitelistPanel({ server }: { server: Server }) {
   }
 
   async function remove(playerName: string) {
-    if (!window.confirm(`Remove ${playerName} from the whitelist?`)) return;
+    if (!(await confirm(`Remove ${playerName} from the whitelist?`, { title: 'Remove from whitelist', confirmLabel: 'Remove', destructive: true }))) return;
     setError(null);
     try {
       await api.removeWhitelist(server.id, playerName);
@@ -55,7 +57,9 @@ export function WhitelistPanel({ server }: { server: Server }) {
   }
 
   return (
-    <Card>
+    <>
+      {dialog}
+      <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Whitelist</CardTitle>
         <CardDescription>Control which players are allowed to join.</CardDescription>
@@ -107,6 +111,7 @@ export function WhitelistPanel({ server }: { server: Server }) {
           ))}
         </div>
       </CardContent>
-    </Card>
+      </Card>
+    </>
   );
 }

@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { useModal } from '../components/ui/modal';
 
 export const Route = createFileRoute('/settings')({
   component: SettingsRoute,
@@ -299,6 +300,7 @@ function PasskeyCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const { confirm, dialog } = useModal();
 
   const reload = useCallback(async () => {
     try {
@@ -344,7 +346,7 @@ function PasskeyCard() {
   }
 
   async function remove(p: PasskeyMeta) {
-    if (!window.confirm(`Delete passkey ${p.name || p.id}?`)) return;
+    if (!(await confirm(`Delete passkey ${p.name || p.id}?`, { title: 'Delete passkey', confirmLabel: 'Delete', destructive: true }))) return;
     setBusy(true);
     setError(null);
     setSaved(null);
@@ -360,7 +362,9 @@ function PasskeyCard() {
   }
 
   return (
-    <Card>
+    <>
+      {dialog}
+      <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <KeyRound className="h-4 w-4" />
@@ -403,6 +407,7 @@ function PasskeyCard() {
           {busy ? 'Working…' : 'Add passkey'}
         </Button>
       </CardContent>
-    </Card>
+      </Card>
+    </>
   );
 }

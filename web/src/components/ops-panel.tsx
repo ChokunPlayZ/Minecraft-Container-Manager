@@ -6,12 +6,14 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { useModal } from './ui/modal';
 
 export function OpsPanel({ server, refreshKey }: { server: Server; refreshKey: string }) {
   const [ops, setOps] = useState<Op[]>([]);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useModal();
 
   const load = useCallback(async () => {
     try {
@@ -44,7 +46,7 @@ export function OpsPanel({ server, refreshKey }: { server: Server; refreshKey: s
   }
 
   async function remove(opName: string) {
-    if (!window.confirm(`Remove ${opName} as operator?`)) return;
+    if (!(await confirm(`Remove ${opName} as operator?`, { title: 'Remove operator', confirmLabel: 'Remove', destructive: true }))) return;
     setError(null);
     try {
       await api.removeOp(server.id, opName);
@@ -55,7 +57,9 @@ export function OpsPanel({ server, refreshKey }: { server: Server; refreshKey: s
   }
 
   return (
-    <Card>
+    <>
+      {dialog}
+      <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Operators</CardTitle>
         <CardDescription>Grant or revoke server operator status.</CardDescription>
@@ -111,6 +115,7 @@ export function OpsPanel({ server, refreshKey }: { server: Server; refreshKey: s
           ))}
         </div>
       </CardContent>
-    </Card>
+      </Card>
+    </>
   );
 }

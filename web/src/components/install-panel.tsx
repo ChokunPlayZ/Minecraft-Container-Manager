@@ -6,6 +6,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
+import { useModal } from './ui/modal';
 
 export function InstallPanel({
   serverId,
@@ -25,6 +26,7 @@ export function InstallPanel({
   const [loadingBuilds, setLoadingBuilds] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useModal();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,11 +73,12 @@ export function InstallPanel({
     if (!version || !build) return;
 
     const action = info?.installed ? 'upgrade' : 'install';
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Are you sure you want to ${action} the server jar ${version} (build ${build})? ` +
         (info?.installed
           ? 'This will replace the currently installed jar and may restart the server.'
           : 'This will create the server container and download the jar.'),
+      { title: `${action === 'upgrade' ? 'Upgrade' : 'Install'} server jar`, confirmLabel: action === 'upgrade' ? 'Upgrade' : 'Install', destructive: action === 'upgrade' },
     );
     if (!confirmed) return;
 
@@ -92,7 +95,9 @@ export function InstallPanel({
   }
 
   return (
-    <Card>
+    <>
+      {dialog}
+      <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Install</CardTitle>
         <CardDescription>Choose a jar version and build to install or upgrade.</CardDescription>
@@ -165,6 +170,7 @@ export function InstallPanel({
           </>
         )}
       </CardContent>
-    </Card>
+      </Card>
+    </>
   );
 }

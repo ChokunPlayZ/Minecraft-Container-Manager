@@ -6,6 +6,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { useModal } from './ui/modal';
 
 function formatBytes(bytes: number): string {
   if (!bytes) return '0 B';
@@ -19,6 +20,7 @@ export function BackupsPanel({ server }: { server: Server }) {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, dialog } = useModal();
 
   const load = useCallback(async () => {
     try {
@@ -49,7 +51,7 @@ export function BackupsPanel({ server }: { server: Server }) {
   }
 
   async function restore(backupId: string) {
-    if (!window.confirm('Restore this backup over the current world?')) return;
+    if (!(await confirm('Restore this backup over the current world?', { title: 'Restore backup', confirmLabel: 'Restore', destructive: true }))) return;
     setError(null);
     try {
       await api.restoreBackup(server.id, backupId);
@@ -59,7 +61,7 @@ export function BackupsPanel({ server }: { server: Server }) {
   }
 
   async function remove(backupId: string) {
-    if (!window.confirm('Delete this backup? This cannot be undone.')) return;
+    if (!(await confirm('Delete this backup? This cannot be undone.', { title: 'Delete backup', confirmLabel: 'Delete', destructive: true }))) return;
     try {
       await api.deleteBackup(backupId);
       await load();
@@ -69,7 +71,9 @@ export function BackupsPanel({ server }: { server: Server }) {
   }
 
   return (
-    <Card>
+    <>
+      {dialog}
+      <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Backups</CardTitle>
         <CardDescription>Offsite world snapshots in S3-compatible storage.</CardDescription>
@@ -132,6 +136,7 @@ export function BackupsPanel({ server }: { server: Server }) {
           ))}
         </div>
       </CardContent>
-    </Card>
+      </Card>
+    </>
   );
 }

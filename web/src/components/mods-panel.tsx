@@ -4,12 +4,14 @@ import { api, ApiError } from '../api/client';
 import type { Mod, Server } from '../api/types';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { useModal } from './ui/modal';
 
 export function ModsPanel({ server }: { server: Server }) {
   const [items, setItems] = useState<Mod[]>([]);
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const { confirm, dialog } = useModal();
 
   const unsupported = server.server_type === 'vanilla';
 
@@ -59,7 +61,7 @@ export function ModsPanel({ server }: { server: Server }) {
   }
 
   async function remove(mod: Mod) {
-    if (!window.confirm(`Delete ${mod.file}? This cannot be undone.`)) return;
+    if (!(await confirm(`Delete ${mod.file}? This cannot be undone.`, { title: 'Delete artifact', confirmLabel: 'Delete', destructive: true }))) return;
     setError(null);
     try {
       await api.deleteMod(server.id, mod.name);
@@ -88,7 +90,9 @@ export function ModsPanel({ server }: { server: Server }) {
   }
 
   return (
-    <Card>
+    <>
+      {dialog}
+      <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">{label}</CardTitle>
         <CardDescription>
@@ -160,6 +164,7 @@ export function ModsPanel({ server }: { server: Server }) {
           ))}
         </div>
       </CardContent>
-    </Card>
+      </Card>
+    </>
   );
 }

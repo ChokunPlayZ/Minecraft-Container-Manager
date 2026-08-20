@@ -18,6 +18,7 @@ import { StatusBadge } from '../components/status-badge';
 import { WhitelistPanel } from '../components/whitelist-panel';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
+import { useModal } from '../components/ui/modal';
 
 export const Route = createFileRoute('/servers/$id')({
   component: ServerDetailRoute,
@@ -31,6 +32,7 @@ function ServerDetailRoute() {
   const [statusState, setStatusState] = useState<ServerState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
+  const { confirm, dialog } = useModal();
 
   const loadServer = useCallback(async () => {
     setError(null);
@@ -84,7 +86,7 @@ function ServerDetailRoute() {
 
   async function handleDelete() {
     if (!server) return;
-    const confirmed = window.confirm(`Delete server "${server.name}"?`);
+    const confirmed = await confirm(`Delete server "${server.name}"?`, { title: 'Delete server', confirmLabel: 'Delete', destructive: true });
     if (!confirmed) return;
     try {
       await api.deleteServer(server.id);
@@ -96,8 +98,9 @@ function ServerDetailRoute() {
 
   async function handleRecreate() {
     if (!server) return;
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Rebuild the container for "${server.name}"? This stops the server now and provisions a fresh container on the next start.`,
+      { title: 'Rebuild container', confirmLabel: 'Rebuild', destructive: true },
     );
     if (!confirmed) return;
     try {
@@ -115,8 +118,9 @@ function ServerDetailRoute() {
 
   async function handleKill() {
     if (!server) return;
-    const confirmed = window.confirm(
+    const confirmed = await confirm(
       `Force-kill "${server.name}"? This stops the container immediately without a graceful shutdown, which may skip saving worlds. Use this only if the server is unresponsive.`,
+      { title: 'Force-kill server', confirmLabel: 'Force-kill', destructive: true },
     );
     if (!confirmed) return;
     try {
@@ -145,7 +149,9 @@ function ServerDetailRoute() {
   const state = statusState ?? server.state;
 
   return (
-    <RequireAuth>
+    <>
+      {dialog}
+      <RequireAuth>
       <AppShell>
         <Link to="/dashboard" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft className="h-4 w-4" /> Back to servers
@@ -269,6 +275,7 @@ function ServerDetailRoute() {
           </div>
         )}
       </AppShell>
-    </RequireAuth>
+      </RequireAuth>
+    </>
   );
 }
