@@ -98,23 +98,32 @@ func newTestStore(t *testing.T, id, state string) *Store {
 	return s
 }
 
-func TestRunPlayerCommandRCONDisabled(t *testing.T) {
-	s := newTestStore(t, "", StateRunning)
-	ctx := context.Background()
-	id := firstServerID(t, s)
-	srv, err := s.Get(ctx, id)
+func TestRunPlayerCommandFallsBackToConsole(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
 	if err != nil {
-		t.Fatalf("get server: %v", err)
+		t.Fatalf("open db: %v", err)
 	}
+	fake := &fakeRuntime{}
+	s := &Store{db: dbHandle.DB, docker: fake, dataDir: dir}
+	id := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	// The server has a container but no RCON configured, so RunPlayerCommand
+	// must fall back to sending the command through the console pipe.
+	if _, err := dbHandle.DB.ExecContext(context.Background(),
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'existing-cid', ?, ?, ?)`,
+		id, "test", "vanilla", "1.21.1", "", 1024, 0, 0, 25565, "[]", StateRunning, now, now); err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+	fake.existing = map[string]bool{"existing-cid": true}
 
-	// Ensure server.properties exists but does not enable RCON.
-	if _, err := s.SaveProperties(srv.ID, "server-port=25565\n"); err != nil {
-		t.Fatalf("save properties: %v", err)
+	out, err := s.RunPlayerCommand(context.Background(), id, "Steve", "kick Steve")
+	if err != nil {
+		t.Fatalf("RunPlayerCommand with RCON disabled should fall back to the console pipe: %v", err)
 	}
-	s.db.ExecContext(context.Background(), `UPDATE servers SET state=? WHERE id=?`, StateRunning, srv.ID)
-	_, err = s.RunPlayerCommand(ctx, srv.ID, "Steve", "kick Steve")
-	if !errors.Is(err, ErrRCONDisabled) {
-		t.Fatalf("RunPlayerCommand with RCON disabled = %v, want ErrRCONDisabled", err)
+	if out != "" {
+		t.Errorf("console fallback response = %q, want empty", out)
 	}
 }
 

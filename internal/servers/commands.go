@@ -8,10 +8,6 @@ import (
 	"strings"
 )
 
-// ErrRCONDisabled is returned when a player command cannot run because the
-// server does not have RCON enabled.
-var ErrRCONDisabled = errors.New("rcon is not enabled")
-
 // ErrServerNotRunning is returned when a player command is attempted while the
 // server is not running.
 var ErrServerNotRunning = errors.New("server is not running")
@@ -25,7 +21,7 @@ var itemRe = regexp.MustCompile(`^[A-Za-z0-9_:.-]{1,64}$`)
 
 // customCommandRe is deliberately loose: a custom command is free-form server
 // text, but we still reject control characters and shell metacharacters to keep
-// the RCON payload sane.
+// the command payload sane.
 var customCommandRe = regexp.MustCompile(`^[A-Za-z0-9_ .:/@%+~=,-]{1,256}$`)
 
 // validGamemodes are the named gamemode selectors Minecraft accepts.

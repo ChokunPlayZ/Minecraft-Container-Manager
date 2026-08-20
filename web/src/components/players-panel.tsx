@@ -141,11 +141,7 @@ export function PlayersPanel({ server }: { server: Server }) {
     setNotice(null);
     try {
       await api.runPlayerCommand(server.id, active.player, active.action, args);
-      setNotice(
-        `Sent ${activeDef?.label ?? active.action} to ${active.player}.${
-          source === 'console' ? ' (RCON is not enabled; command may not have run)' : ''
-        }`,
-      );
+      setNotice(`Sent ${activeDef?.label ?? active.action} to ${active.player}.`);
       setActive(null);
       void load();
     } catch (err) {
