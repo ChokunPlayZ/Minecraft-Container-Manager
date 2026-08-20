@@ -166,7 +166,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	hostCfg := &container.HostConfig{
 		Binds: []string{fmt.Sprintf("%s:%s", opts.DataDir, containerData)},
 		RestartPolicy: container.RestartPolicy{
-			Name: container.RestartPolicyUnlessStopped,
+			// Server containers are created with no restart policy so that the
+			// panel (and the user) retain explicit control over their lifecycle.
+			Name: container.RestartPolicyDisabled,
 		},
 		Resources:    containerResources(opts),
 		PortBindings: portBindings(opts),
