@@ -181,8 +181,9 @@ export function FileManager({ server }: { server: Server }) {
     }
   }
 
-  async function handleUpload(file: File) {
-    await run(() => api.uploadFile(server.id, file, cwd));
+  async function handleUpload(files: File[]) {
+    if (files.length === 0) return;
+    await run(() => api.uploadFiles(server.id, files, cwd));
   }
 
   async function handleDownload(entry: FileEntry) {
@@ -256,10 +257,11 @@ export function FileManager({ server }: { server: Server }) {
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void handleUpload(f);
+            const files = e.target.files ? Array.from(e.target.files) : [];
+            if (files.length) void handleUpload(files);
             e.target.value = '';
           }}
         />

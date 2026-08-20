@@ -76,28 +76,38 @@ func (s *Server) handleWriteFileContent(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, entry)
 }
 
-// handleUploadFile saves an uploaded file into the server's data dir.
+// handleUploadFile saves one or more uploaded files into the server's data dir.
+// The multipart request may carry multiple "file" fields, which are all saved
+// into the same destination directory.
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(256 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "could not parse upload")
 		return
 	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
+	dir := normalizeRel(r.URL.Query().Get("dir"))
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "missing file field")
 		return
 	}
-	// The file reader must be closed after the handler finishes to avoid
-	// leaking the temp file backing a large multipart upload.
-	defer file.Close()
-
-	dir := normalizeRel(r.URL.Query().Get("dir"))
-	entry, err := s.servers.UploadFile(r.PathValue("id"), dir, header.Filename, file)
-	if err != nil {
-		s.writeFileErr(w, err)
-		return
+	entries := make([]servers.FileEntry, 0, len(files))
+	for _, fh := range files {
+		file, err := fh.Open()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "could not read uploaded file")
+			return
+		}
+		// The reader must be closed after each upload to avoid leaking the temp
+		// file backing a large multipart part.
+		entry, uerr := s.servers.UploadFile(r.PathValue("id"), dir, fh.Filename, file)
+		_ = file.Close()
+		if uerr != nil {
+			s.writeFileErr(w, uerr)
+			return
+		}
+		entries = append(entries, entry)
 	}
-	writeJSON(w, http.StatusCreated, entry)
+	writeJSON(w, http.StatusCreated, entries)
 }
 
 // handleArchiveFile zips a file or directory.

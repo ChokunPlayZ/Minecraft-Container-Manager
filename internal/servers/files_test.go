@@ -252,3 +252,31 @@ func TestWriteFileContentRejectsTraversal(t *testing.T) {
 		}
 	}
 }
+
+func TestUploadFileSavesIntoDir(t *testing.T) {
+	s := minimalStore(t.TempDir())
+	entry, err := s.UploadFile("id", "plugins", "my-plugin.jar", strings.NewReader("jarbytes"))
+	if err != nil {
+		t.Fatalf("UploadFile error: %v", err)
+	}
+	if entry.Name != "my-plugin.jar" || entry.IsDir {
+		t.Fatalf("unexpected entry: %+v", entry)
+	}
+	data, err := os.ReadFile(filepath.Join(s.dataPath("id"), "plugins", "my-plugin.jar"))
+	if err != nil {
+		t.Fatalf("uploaded file missing: %v", err)
+	}
+	if string(data) != "jarbytes" {
+		t.Fatalf("uploaded content mismatch: %q", data)
+	}
+}
+
+func TestUploadFileRejectsTraversal(t *testing.T) {
+	s := minimalStore(t.TempDir())
+	bad := []string{"", ".", "..", "../escape.jar", "a/../../escape.jar", "plugins/weird"}
+	for _, name := range bad {
+		if _, err := s.UploadFile("id", "plugins", name, strings.NewReader("x")); err == nil {
+			t.Fatalf("UploadFile(%q) expected error, got none", name)
+		}
+	}
+}

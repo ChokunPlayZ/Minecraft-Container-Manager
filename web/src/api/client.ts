@@ -303,11 +303,13 @@ export const api = {
     return res.blob();
   },
 
-  uploadFile: (serverId: string, file: File, dir: string) => {
+  uploadFiles: (serverId: string, files: File[], dir: string): Promise<FileEntry[]> => {
     const body = new FormData();
-    body.append('file', file);
+    for (const file of files) {
+      body.append('file', file);
+    }
     const q = dir ? `?dir=${encodeURIComponent(dir)}` : '';
-    return request<FileEntry>(`/api/servers/${serverId}/files/upload${q}`, {
+    return request<FileEntry[]>(`/api/servers/${serverId}/files/upload${q}`, {
       method: 'POST',
       body,
     });
