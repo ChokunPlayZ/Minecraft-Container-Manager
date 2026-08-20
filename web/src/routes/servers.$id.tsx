@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Play, RefreshCw, Square, Trash2 } from 'lucide-react';
+import { ArrowLeft, Play, RefreshCw, RotateCcw, Square, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server, ServerState } from '../api/types';
 import { AppShell } from '../components/app-shell';
@@ -93,6 +93,25 @@ function ServerDetailRoute() {
     }
   }
 
+  async function handleRecreate() {
+    if (!server) return;
+    const confirmed = window.confirm(
+      `Rebuild the container for "${server.name}"? This stops the server now and provisions a fresh container on the next start.`,
+    );
+    if (!confirmed) return;
+    try {
+      setBusy(true);
+      setError(null);
+      const updated = await api.recreateServer(server.id);
+      setServer(updated);
+      setStatusState('stopped');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : 'Failed to rebuild container');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!server) {
     return (
       <RequireAuth>
@@ -144,6 +163,9 @@ function ServerDetailRoute() {
               onClick={() => void run(() => api.restartServer(server.id))}
             >
               <RefreshCw className="h-4 w-4" /> Restart
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={() => void handleRecreate()}>
+              <RotateCcw className="h-4 w-4" /> Rebuild
             </Button>
             <Button variant="ghost" size="icon" onClick={() => void handleDelete()} aria-label="Delete server">
               <Trash2 className="h-4 w-4" />

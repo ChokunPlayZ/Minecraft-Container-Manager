@@ -3,6 +3,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -253,6 +255,9 @@ func itzgEnv(opts CreateOpts) []string {
 		"VERSION=" + opts.Version,
 		"MEMORY=" + fmt.Sprintf("%dM", opts.RAMMB),
 		"EULA=TRUE",
+		// Let itzg create the named console input pipe so console commands can
+		// be sent to the server stdin without requiring RCON.
+		"CREATE_CONSOLE_IN_PIPE=true",
 	}
 	switch strings.ToLower(opts.ServerType) {
 	case "paper":
@@ -370,9 +375,16 @@ func (m *Manager) SendConsole(ctx context.Context, containerID, command string) 
 // "command not found" status).
 var errConsoleBinaryMissing = errors.New("console helper binary not found")
 
+// ErrConsolePipeDisabled marks a console exec that failed because the server
+// container was not started with itzg's CREATE_CONSOLE_IN_PIPE, so the named
+// console input pipe does not exist. The container must be recreated (restarted
+// with the env present) before console input can work.
+var ErrConsolePipeDisabled = errors.New("console input pipe is not enabled on the server container")
+
 func (m *Manager) execConsole(ctx context.Context, containerID, helper, command string) error {
 	execID, err := m.client.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          []string{helper, command},
+		User:         m.execUserForContainer(ctx, containerID),
 		AttachStdin:  false,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -384,7 +396,8 @@ func (m *Manager) execConsole(ctx context.Context, containerID, helper, command 
 	if err != nil {
 		return fmt.Errorf("attach console exec: %w", err)
 	}
-	_, _ = io.Copy(io.Discard, hij.Reader)
+	var stderr bytes.Buffer
+	_, _ = stdcopy.StdCopy(io.Discard, &stderr, hij.Reader)
 	hij.Close()
 	insp, err := m.client.ContainerExecInspect(ctx, execID.ID)
 	if err != nil {
@@ -394,9 +407,45 @@ func (m *Manager) execConsole(ctx context.Context, containerID, helper, command 
 		return errConsoleBinaryMissing
 	}
 	if insp.ExitCode != 0 {
-		return fmt.Errorf("console command exited with code %d", insp.ExitCode)
+		msg := strings.TrimSpace(stderr.String())
+		if strings.Contains(msg, "CREATE_CONSOLE_IN_PIPE") || strings.Contains(msg, "Named pipe") {
+			return ErrConsolePipeDisabled
+		}
+		if msg != "" {
+			return fmt.Errorf("console command failed (code %d): %s", insp.ExitCode, msg)
+		}
+		return fmt.Errorf("console command failed (code %d)", insp.ExitCode)
 	}
 	return nil
+}
+
+// execUserForContainer returns the `uid:gid` the server process runs as, so the
+// console-send helper can be exec'd as that same user. The itzg image names the
+// runtime user via its UID/GID environment variables; it falls back to 1000:1000
+// (the image default) when they are absent or the container cannot be inspected.
+func (m *Manager) execUserForContainer(ctx context.Context, containerID string) string {
+	uid, gid := "1000", "1000"
+	insp, err := m.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return uid + ":" + gid
+	}
+	for _, e := range insp.Config.Env {
+		k, v, ok := strings.Cut(e, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "UID":
+			if v != "" {
+				uid = v
+			}
+		case "GID":
+			if v != "" {
+				gid = v
+			}
+		}
+	}
+	return uid + ":" + gid
 }
 
 // exposedPorts returns the set of container ports to mark exposed. It always

@@ -118,6 +118,7 @@ export const api = {
   startServer: (id: string) => request<Server>(`/api/servers/${id}/start`, { method: 'POST' }),
   stopServer: (id: string) => request<Server>(`/api/servers/${id}/stop`, { method: 'POST' }),
   restartServer: (id: string) => request<Server>(`/api/servers/${id}/restart`, { method: 'POST' }),
+  recreateServer: (id: string) => request<Server>(`/api/servers/${id}/recreate`, { method: 'POST' }),
 
   serverStatus: (id: string) => request<ServerStatus>(`/api/servers/${id}/status`),
 

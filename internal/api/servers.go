@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/ports"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -159,13 +160,24 @@ func (s *Server) handleServerConsoleCommand(w http.ResponseWriter, r *http.Reque
 		case errors.Is(err, servers.ErrServerNotRunning):
 			writeError(w, http.StatusConflict, "server_not_running",
 				"Server is not running - start it before sending console commands")
+		case errors.Is(err, docker.ErrConsolePipeDisabled):
+			writeError(w, http.StatusConflict, "console_pipe_disabled",
+				"Console input isn't enabled on this server's container. Recreate the server to enable it.")
 		default:
-			writeError(w, http.StatusInternalServerError, "console_error",
-				"Couldn't send the command to the server console right now.")
+			s.logConsoleCmdError(err, r)
+			writeError(w, http.StatusInternalServerError, "console_error", err.Error())
 		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) logConsoleCmdError(err error, r *http.Request) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Printf("console command failed server=%s method=%s path=%s err=%v",
+		r.PathValue("id"), r.Method, r.URL.Path, err)
 }
 
 func (s *Server) handleInstall(provision bool) http.HandlerFunc {
