@@ -69,6 +69,16 @@ export function InstallPanel({
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!version || !build) return;
+
+    const action = info?.installed ? 'upgrade' : 'install';
+    const confirmed = window.confirm(
+      `Are you sure you want to ${action} the server jar ${version} (build ${build})? ` +
+        (info?.installed
+          ? 'This will replace the currently installed jar and may restart the server.'
+          : 'This will create the server container and download the jar.'),
+    );
+    if (!confirmed) return;
+
     setBusy(true);
     setError(null);
     try {
@@ -144,7 +154,11 @@ export function InstallPanel({
                 </div>
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" disabled={busy || loadingBuilds || !version || !build}>
+              <Button
+                type="submit"
+                variant="destructive"
+                disabled={busy || loadingBuilds || !version || !build}
+              >
                 {busy ? 'Installing...' : info?.installed ? 'Upgrade' : 'Install'}
               </Button>
             </form>
