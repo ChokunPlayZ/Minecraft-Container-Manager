@@ -28,6 +28,7 @@ type dockerRuntime interface {
 	Start(ctx context.Context, containerID string) error
 	Stop(ctx context.Context, containerID string, timeout time.Duration) error
 	Status(ctx context.Context, containerID string) (string, error)
+	Exists(ctx context.Context, containerID string) (bool, error)
 	Logs(ctx context.Context, containerID string, follow bool) (io.ReadCloser, error)
 	Create(ctx context.Context, opts docker.CreateOpts) (string, error)
 	HostAddress() string
@@ -492,7 +493,20 @@ func (s *Store) Install(ctx context.Context, id string, provision bool) (Install
 
 func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error) {
 	if srv.ContainerID != "" {
-		return srv, nil
+		// Verify the recorded container still exists. It may have been removed
+		// outside MCM (e.g. `docker rm`); if so, drop the stale id and create a
+		// replacement so the server keeps working instead of failing forever.
+		exists, err := s.docker.Exists(ctx, srv.ContainerID)
+		if err != nil {
+			return Server{}, err
+		}
+		if exists {
+			return srv, nil
+		}
+		if err := s.clearContainerID(ctx, srv.ID); err != nil {
+			return Server{}, err
+		}
+		srv.ContainerID = ""
 	}
 	cid, err := s.docker.Create(ctx, docker.CreateOpts{
 		ID:            srv.ID,
@@ -538,6 +552,15 @@ func (s *Store) dataPath(id string) string {
 func (s *Store) setState(ctx context.Context, id, state string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET state=?, updated_at=? WHERE id=?`, state, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+// clearContainerID forgets a server's recorded container id so the next
+// ensureContainer provisions a fresh container. Used when the recorded
+// container no longer exists (e.g. it was deleted outside MCM).
+func (s *Store) clearContainerID(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET container_id='', updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 

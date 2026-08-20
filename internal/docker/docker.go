@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -314,6 +315,20 @@ func (m *Manager) Status(ctx context.Context, containerID string) (string, error
 		return "", fmt.Errorf("inspect container: %w", err)
 	}
 	return insp.State.Status, nil
+}
+
+// Exists reports whether a container with the given id is present on the
+// daemon. A missing container (e.g. one deleted manually outside MCM) is not an
+// error; it returns (false, nil) so callers can recreate it.
+func (m *Manager) Exists(ctx context.Context, containerID string) (bool, error) {
+	_, err := m.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect container: %w", err)
+	}
+	return true, nil
 }
 
 // Logs returns a stream of the container's combined stdout/stderr logs.

@@ -21,6 +21,8 @@ type fakeRuntime struct {
 	created  bool
 	createID string
 	lastOpts docker.CreateOpts
+	// existing container ids reported present by Exists.
+	existing map[string]bool
 }
 
 func (f *fakeRuntime) Ping(context.Context) error { return nil }
@@ -35,6 +37,14 @@ func (f *fakeRuntime) Stop(context.Context, string, time.Duration) error {
 func (f *fakeRuntime) Status(context.Context, string) (string, error) {
 	return "stopped", nil
 }
+func (f *fakeRuntime) Exists(_ context.Context, id string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.existing == nil {
+		return false, nil
+	}
+	return f.existing[id], nil
+}
 func (f *fakeRuntime) HostAddress() string { return "127.0.0.1" }
 func (f *fakeRuntime) Create(_ context.Context, opts docker.CreateOpts) (string, error) {
 	f.mu.Lock()
@@ -42,6 +52,10 @@ func (f *fakeRuntime) Create(_ context.Context, opts docker.CreateOpts) (string,
 	f.created = true
 	f.lastOpts = opts
 	f.createID = "created-" + opts.ID
+	if f.existing == nil {
+		f.existing = map[string]bool{}
+	}
+	f.existing["created-"+opts.ID] = true
 	return f.createID, nil
 }
 func (f *fakeRuntime) Logs(context.Context, string, bool) (io.ReadCloser, error) {
@@ -116,11 +130,52 @@ func TestConsoleReusesExistingContainer(t *testing.T) {
 		id, "console-test", "paper", "1.21.1", "120", 2048, 0, 0, 25601, "[]", StateRunning, now, now); err != nil {
 		t.Fatalf("insert server: %v", err)
 	}
+	fake.existing = map[string]bool{"existing-cid": true}
 
 	if _, err := s.Console(context.Background(), id, false); err != nil {
 		t.Fatalf("Console: %v", err)
 	}
 	if fake.created {
 		t.Error("expected no create when a container already exists")
+	}
+}
+
+// TestStartRecreatesDeletedContainer verifies that when the recorded container
+// id no longer exists (e.g. it was removed with `docker rm` outside MCM), the
+// store provisions a fresh container and persists the new id instead of failing
+// against a ghost container.
+func TestStartRecreatesDeletedContainer(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	s := &Store{db: dbHandle.DB, docker: fake, dataDir: dir}
+
+	id := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := dbHandle.DB.ExecContext(context.Background(),
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ghost-container', ?, ?, ?)`,
+		id, "start-test", "paper", "1.21.1", "120", 2048, 0, 0, 25602, "[]", StateStopped, now, now); err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+	// The recorded id is not present on the daemon.
+	fake.existing = map[string]bool{}
+
+	srv, err := s.Start(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !fake.created {
+		t.Fatal("expected Start to recreate the missing container")
+	}
+	want := "created-" + id
+	if srv.ContainerID != want {
+		t.Errorf("ContainerID after Start = %q, want %q", srv.ContainerID, want)
+	}
+	if srv.State != StateRunning {
+		t.Errorf("State after Start = %q, want %q", srv.State, StateRunning)
 	}
 }
