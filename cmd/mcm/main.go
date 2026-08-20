@@ -49,7 +49,7 @@ func main() {
 		logger.Fatalf("configure webauthn: %v", err)
 	}
 
-	dockerMgr, err := docker.New(cfg.DockerHost)
+	dockerMgr, err := docker.New(cfg.DockerHost, cfg.ServerImage)
 	if err != nil {
 		logger.Fatalf("create docker client: %v", err)
 	}

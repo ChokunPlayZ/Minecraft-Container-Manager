@@ -30,6 +30,8 @@ type Config struct {
 	RateLimitWindow  time.Duration
 	DefaultCPULimit  float64
 	DefaultMemoryMB  int
+	// ServerImage is the Docker image used to run Minecraft server containers.
+	ServerImage string
 	// S3 holds the object-storage configuration used for world backups. An
 	// empty Endpoint disables backups.
 	S3 S3Config
@@ -82,6 +84,7 @@ const (
 	EnvRateLimitWindow  = "MCM_RATE_LIMIT_WINDOW"
 	EnvDefaultCPULimit  = "MCM_DEFAULT_CPU_LIMIT"
 	EnvDefaultMemoryMB  = "MCM_DEFAULT_MEMORY_MB"
+	EnvServerImage      = "MCM_SERVER_IMAGE"
 	EnvWebAuthnRPID     = "MCM_WEB_AUTHN_RPID"
 	EnvWebAuthnOrigin   = "MCM_WEB_AUTHN_RP_ORIGIN"
 	EnvWebAuthnName     = "MCM_WEB_AUTHN_RP_NAME"
@@ -106,6 +109,7 @@ const (
 	defaultRateLimitWindow  = time.Minute
 	defaultCPULimit         = 0
 	defaultMemoryMB         = 0
+	defaultServerImage      = "itzg/minecraft-server"
 )
 
 // Load builds a Config from the environment. Missing variables fall back to
@@ -157,6 +161,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.ServerImage = getenv(EnvServerImage, defaultServerImage)
 
 	pr, err := ParsePortRange(getenv(EnvPortRange, defaultPortRange))
 	if err != nil {

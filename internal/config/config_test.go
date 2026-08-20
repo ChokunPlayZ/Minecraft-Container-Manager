@@ -179,6 +179,9 @@ func TestLoadHardeningDefaults(t *testing.T) {
 	if cfg.DefaultCPULimit != 0 || cfg.DefaultMemoryMB != 0 {
 		t.Errorf("default resource limits = %v / %d, want 0/0", cfg.DefaultCPULimit, cfg.DefaultMemoryMB)
 	}
+	if cfg.ServerImage != "itzg/minecraft-server" {
+		t.Errorf("ServerImage = %q, want itzg/minecraft-server", cfg.ServerImage)
+	}
 }
 
 func TestLoadHardeningOverrides(t *testing.T) {
@@ -193,6 +196,7 @@ func TestLoadHardeningOverrides(t *testing.T) {
 	t.Setenv(EnvRateLimitWindow, "5m")
 	t.Setenv(EnvDefaultCPULimit, "2.5")
 	t.Setenv(EnvDefaultMemoryMB, "4096")
+	t.Setenv(EnvServerImage, "itzg/minecraft-server:latest")
 
 	cfg, err := Load()
 	if err != nil {
@@ -224,6 +228,9 @@ func TestLoadHardeningOverrides(t *testing.T) {
 	}
 	if cfg.DefaultMemoryMB != 4096 {
 		t.Errorf("DefaultMemoryMB = %d, want 4096", cfg.DefaultMemoryMB)
+	}
+	if cfg.ServerImage != "itzg/minecraft-server:latest" {
+		t.Errorf("ServerImage = %q, want itzg/minecraft-server:latest", cfg.ServerImage)
 	}
 }
 

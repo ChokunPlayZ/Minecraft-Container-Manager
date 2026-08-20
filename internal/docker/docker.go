@@ -21,7 +21,6 @@ import (
 const (
 	mcPort        = 25565
 	mcProto       = "tcp"
-	imageName     = "mcm-server:latest"
 	containerData = "/data"
 )
 
@@ -30,16 +29,21 @@ const (
 type Manager struct {
 	client *client.Client
 	host   string
+	image  string
 }
 
-// New builds a Manager from a Docker host string (e.g. "unix:///...").
-func New(host string) (*Manager, error) {
+// New builds a Manager from a Docker host string (e.g. "unix:///...") and the
+// runtime image used to launch server containers.
+func New(host, image string) (*Manager, error) {
+	if image == "" {
+		image = "itzg/minecraft-server"
+	}
 	cli, err := client.NewClientWithOpts(client.WithHost(host))
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
 	cli.NegotiateAPIVersion(context.Background())
-	return &Manager{client: cli, host: host}, nil
+	return &Manager{client: cli, host: host, image: image}, nil
 }
 
 // Ping verifies the Docker daemon is reachable and responds. It is used by the
@@ -62,11 +66,12 @@ type RuntimeStatus struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// RuntimeStatus checks the Docker daemon and the presence of the mcm-server
-// runtime image. A reachable daemon with a missing image is a common reason a
-// server fails to start, so both are surfaced here for diagnostics.
+// RuntimeStatus checks the Docker daemon and the presence of the runtime image
+// used to launch server containers. A reachable daemon with a missing image is
+// a common reason a server fails to start, so both are surfaced here for
+// diagnostics.
 func (m *Manager) RuntimeStatus(ctx context.Context) RuntimeStatus {
-	st := RuntimeStatus{Image: imageName}
+	st := RuntimeStatus{Image: m.image}
 	if _, err := m.client.Ping(ctx); err != nil {
 		st.Error = fmt.Sprintf("docker daemon unreachable: %v", err)
 		return st
@@ -74,7 +79,7 @@ func (m *Manager) RuntimeStatus(ctx context.Context) RuntimeStatus {
 	st.Reachable = true
 
 	f := filters.NewArgs()
-	f.Add("reference", imageName)
+	f.Add("reference", m.image)
 	imgs, err := m.client.ImageList(ctx, image.ListOptions{Filters: f})
 	if err != nil {
 		st.Error = fmt.Sprintf("list images: %v", err)
@@ -82,7 +87,7 @@ func (m *Manager) RuntimeStatus(ctx context.Context) RuntimeStatus {
 	}
 	st.ImageReady = len(imgs) > 0
 	if !st.ImageReady {
-		st.Error = fmt.Sprintf("runtime image %q is not present; run 'docker build -t %s docker/mcm-server'", imageName, imageName)
+		st.Error = fmt.Sprintf("runtime image %q is not present; run 'docker pull %s'", m.image, m.image)
 	}
 	return st
 }
@@ -140,7 +145,7 @@ func Name(id string) string {
 func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	name := Name(opts.ID)
 	cfg := &container.Config{
-		Image: imageName,
+		Image: m.image,
 		Env: []string{
 			"MCM_DATA_DIR=" + containerData,
 			"SERVER_TYPE=" + opts.ServerType,

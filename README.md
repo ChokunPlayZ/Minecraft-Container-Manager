@@ -125,6 +125,7 @@ so the socket is available. Build the `mcm-server:latest` image with the
 | `MCM_RATE_LIMIT_WINDOW` | `1m` | Sliding window for the general rate limiter. |
 | `MCM_DEFAULT_CPU_LIMIT` | `0` | Default CPU cores limit for new servers (0 = unlimited). |
 | `MCM_DEFAULT_MEMORY_MB` | `0` | Default memory limit (MB) for new servers (0 = RAM-derived default). |
+| `MCM_SERVER_IMAGE` | `itzg/minecraft-server` | Docker image used to run Minecraft server containers. |
 | `MCM_S3_ENDPOINT` | *(empty)* | S3-compatible object store endpoint (e.g. `http://minio:9000`). Empty disables backups. |
 | `MCM_S3_ACCESS_KEY` | *(empty)* | Access key for the S3 store. |
 | `MCM_S3_SECRET_KEY` | *(empty)* | Secret key for the S3 store. |
