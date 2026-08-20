@@ -15,6 +15,8 @@ import type {
   Mod,
   ModList,
   ServerProperties,
+  PlayerCommandAction,
+  PlayerCommandArgs,
 } from './types';
 
 export class ApiError extends Error {
@@ -150,6 +152,20 @@ export const api = {
     request<{ backups: BackupRecord[] }>(`/api/servers/${serverId}/backups`),
 
   players: (serverId: string) => request<PlayerList>(`/api/servers/${serverId}/players`),
+
+  runPlayerCommand: (
+    serverId: string,
+    name: string,
+    action: PlayerCommandAction,
+    args: PlayerCommandArgs = {},
+  ) =>
+    request<{ ok: boolean; response: string }>(
+      `/api/servers/${serverId}/players/${encodeURIComponent(name)}/command`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ action, args }),
+      },
+    ),
 
   ops: (serverId: string) => request<{ ops: Op[] }>(`/api/servers/${serverId}/ops`),
 

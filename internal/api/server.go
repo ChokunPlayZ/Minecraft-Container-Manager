@@ -134,6 +134,7 @@ func (s *Server) routes() {
 
 	// Server management (players, ops, mods/plugins).
 	s.mux.HandleFunc("GET /api/servers/{id}/players", s.requireAuth(s.wrapJSON(s.handleListPlayers)))
+	s.mux.HandleFunc("POST /api/servers/{id}/players/{name}/command", s.requireAuth(s.wrapJSON(s.handleRunPlayerCommand)))
 	s.mux.HandleFunc("GET /api/servers/{id}/ops", s.requireAuth(s.wrapJSON(s.handleListOps)))
 	s.mux.HandleFunc("POST /api/servers/{id}/ops", s.requireAuth(s.wrapJSON(s.handleAddOP)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}/ops/{name}", s.requireAuth(s.wrapJSON(s.handleRemoveOP)))

@@ -83,6 +83,27 @@ export interface Player {
   name: string;
 }
 
+export interface PlayerCommandArgs {
+  reason?: string;
+  target?: string;
+  item?: string;
+  amount?: number;
+  mode?: string;
+  command?: string;
+}
+
+export type PlayerCommandAction =
+  | 'kick'
+  | 'ban'
+  | 'pardon'
+  | 'op'
+  | 'deop'
+  | 'give'
+  | 'gamemode'
+  | 'tp'
+  | 'kill'
+  | 'custom';
+
 export interface PlayerList {
   players: Player[];
   source: 'rcon' | 'console';
