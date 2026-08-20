@@ -114,9 +114,11 @@ func joinCommand(verb, name, optional string) string {
 	return verb + " " + name + " " + optional
 }
 
-// RunPlayerCommand executes an RCON SERVERDATA command against a running server.
-// It returns the server's response text. The caller is responsible for building
-// a safe command line (see BuildPlayerCommand).
+// RunPlayerCommand executes a command against a running server on behalf of a
+// player. It prefers RCON when the server exposes it (returning the response
+// text) and otherwise falls back to the console stdin pipe, so the quick player
+// menu works without RCON just like the main console. The caller is
+// responsible for building a safe command line (see BuildPlayerCommand).
 func (s *Store) RunPlayerCommand(ctx context.Context, id, name, commandLine string) (string, error) {
 	srv, err := s.Get(ctx, id)
 	if err != nil {
@@ -131,19 +133,21 @@ func (s *Store) RunPlayerCommand(ctx context.Context, id, name, commandLine stri
 	if strings.TrimSpace(commandLine) == "" {
 		return "", errors.New("empty command")
 	}
-	client, err := s.rconDial(ctx, id)
-	if err != nil {
-		return "", err
+
+	// Prefer RCON: it is the only path that returns the server's response.
+	// If RCON is disabled or unreachable, fall back to the console pipe so the
+	// command still runs without RCON.
+	if client, derr := s.rconDial(ctx, id); derr == nil && client != nil {
+		defer client.Close()
+		if out, cerr := client.Command(commandLine); cerr == nil {
+			return strings.TrimSpace(out), nil
+		}
 	}
-	if client == nil {
-		return "", ErrRCONDisabled
+
+	if serr := s.SendConsoleCommand(ctx, id, commandLine); serr != nil {
+		return "", serr
 	}
-	defer client.Close()
-	out, cerr := client.Command(commandLine)
-	if cerr != nil {
-		return "", cerr
-	}
-	return strings.TrimSpace(out), nil
+	return "", nil
 }
 
 // consoleCommandRe keeps interactive console input to characters Minecraft

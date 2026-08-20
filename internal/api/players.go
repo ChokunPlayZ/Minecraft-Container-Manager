@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/servers"
 )
 
@@ -18,7 +19,8 @@ func (s *Server) handleListPlayers(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRunPlayerCommand executes a server command (kick/ban/op/give, etc.)
-// against a running server over RCON on behalf of an online player.
+// against a running server on behalf of an online player. It works whether the
+// server is reached over RCON or the console stdin pipe.
 func (s *Server) handleRunPlayerCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	name := r.PathValue("name")
@@ -39,17 +41,17 @@ func (s *Server) handleRunPlayerCommand(w http.ResponseWriter, r *http.Request) 
 	response, err := s.servers.RunPlayerCommand(r.Context(), id, name, command)
 	if err != nil {
 		switch {
-		case errors.Is(err, servers.ErrRCONDisabled):
-			writeError(w, http.StatusBadRequest, "rcon_disabled",
-				"RCON is not enabled - set enable-rcon=true in server.properties and restart the server")
 		case errors.Is(err, servers.ErrServerNotRunning):
 			writeError(w, http.StatusConflict, "server_not_running",
 				"Server is not running - start it before sending player commands")
+		case errors.Is(err, docker.ErrConsolePipeDisabled):
+			writeError(w, http.StatusConflict, "console_pipe_disabled",
+				"Console input isn't enabled on this server's container. Recreate the server to enable it.")
 		case errors.Is(err, servers.ErrNotFound):
 			s.writeServerErr(w, err)
 		default:
 			writeError(w, http.StatusInternalServerError, "rcon_error",
-				"Couldn't reach the server's RCON endpoint right now.")
+				"Couldn't send the command to the server right now.")
 		}
 		return
 	}
