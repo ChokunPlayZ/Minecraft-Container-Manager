@@ -55,7 +55,7 @@ func main() {
 	}
 
 	jarResolver := jars.NewResolver()
-	serverStore := servers.NewStore(handle, dockerMgr, jarResolver, cfg.PortRange.Start, cfg.PortRange.End, cfg.DataDir)
+	serverStore := servers.NewStore(handle, dockerMgr, jarResolver, cfg.PortRange.Start, cfg.PortRange.End, cfg.DataDir, cfg.DataDirHost)
 	dnsService := dns.New(handle.DB)
 	serverStore.SetDNS(dnsService)
 	backupStore := backups.New(handle.DB, backups.S3Config{

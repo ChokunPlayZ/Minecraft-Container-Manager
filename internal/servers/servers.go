@@ -157,18 +157,23 @@ type Store struct {
 	jars    *jars.Resolver
 	ports   *ports.Pool
 	dataDir string
+	// dataDirHost is the host-visible absolute path used as the Docker bind
+	// source. When empty it falls back to dataDir (bare-metal installs, where
+	// the process path and the host path are the same).
+	dataDirHost string
 	// dns optionally publishes/removes SRV records as servers start and stop.
 	dns dns.Publisher
 }
 
 // NewStore wires the server store together.
-func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, end int, dataDir string) *Store {
+func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, end int, dataDir, dataDirHost string) *Store {
 	return &Store{
-		db:      handle.DB,
-		docker:  dm,
-		jars:    jr,
-		ports:   ports.NewPool(handle.DB, start, end),
-		dataDir: dataDir,
+		db:          handle.DB,
+		docker:      dm,
+		jars:        jr,
+		ports:       ports.NewPool(handle.DB, start, end),
+		dataDir:     dataDir,
+		dataDirHost: dataDirHost,
 	}
 }
 
@@ -513,7 +518,7 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 		ID:            srv.ID,
 		HostPort:      srv.HostPort,
 		ExtraPorts:    toDockerExtras(srv.ExtraPorts),
-		DataDir:       s.dataPath(srv.ID),
+		DataDir:       s.dockerDataPath(srv.ID),
 		ServerType:    srv.ServerType,
 		Version:       srv.Version,
 		Build:         srv.Build,
@@ -548,6 +553,17 @@ func toDockerExtras(ports []ExtraPort) []docker.ExtraPort {
 
 func (s *Store) dataPath(id string) string {
 	return filepath.Join(s.dataDir, "servers", id)
+}
+
+// dockerDataPath returns the bind-mount source used when provisioning a server
+// container. Docker resolves bind sources against the daemon host, so when MCM
+// runs inside its own container (dataDir is a container path) the host-visible
+// path must be used instead. On bare metal it is identical to dataPath.
+func (s *Store) dockerDataPath(id string) string {
+	if s.dataDirHost != "" {
+		return filepath.Join(s.dataDirHost, "servers", id)
+	}
+	return s.dataPath(id)
 }
 
 func (s *Store) setState(ctx context.Context, id, state string) error {

@@ -8,10 +8,15 @@ services:
     environment:
       MCM_ADDR: ${MCM_ADDR:-:8080}
       MCM_PORT_RANGE: ${MCM_PORT_RANGE:-25565-25665}
-      # Container-side data paths. The host bind mount below maps whatever you
-      # set MCM_DATA_DIR to (host path, default ./data) onto /data so the app
-      # and the mounted volume always agree.
+      # Container-side data path the panel reads/writes itself. /data is the
+      # fixed mount point defined by the bind mount below.
       MCM_DATA_DIR: /data
+      # Host-side path that the bind mount maps onto /data. Docker resolves the
+      # bind source for each server container against the HOST, not the panel
+      # container, so MCM needs this host path to mount a server's data dir.
+      # Defaults to ${PWD}/data (the project directory). Override to place data
+      # elsewhere by setting MCM_DATA_DIR_HOST to an absolute host path.
+      MCM_DATA_DIR_HOST: ${MCM_DATA_DIR_HOST:-${PWD}/data}
       MCM_DB_PATH: ${MCM_DB_PATH:-/data/mcm.db}
       DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
       MCM_SESSION_SECRET: ${MCM_SESSION_SECRET:-}
@@ -21,8 +26,9 @@ services:
       PGID: ${PGID:-1000}
       TZ: ${TZ:-UTC}
     volumes:
-      # Host bind mount; resolves relative to this file, so ./data is a real
-      # directory next to docker-compose.yml instead of an anonymous volume.
-      - ${MCM_DATA_DIR:-./data}:/data
+      # Host bind mount. Must match MCM_DATA_DIR_HOST above so the path the
+      # panel sees (/data) and the host path MCM binds for server containers
+      # refer to the same directory.
+      - ${MCM_DATA_DIR_HOST:-${PWD}/data}:/data
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped

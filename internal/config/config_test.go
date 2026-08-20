@@ -63,6 +63,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DataDir != "./data" {
 		t.Errorf("DataDir = %q, want ./data", cfg.DataDir)
 	}
+	if cfg.DataDirHost != "" {
+		t.Errorf("DataDirHost = %q, want empty by default", cfg.DataDirHost)
+	}
 	if cfg.DockerHost != "unix:///var/run/docker.sock" {
 		t.Errorf("DockerHost = %q", cfg.DockerHost)
 	}
@@ -84,6 +87,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(EnvAddr, ":9090")
 	t.Setenv(EnvPortRange, "31000-31100")
 	t.Setenv(EnvDataDir, "/tmp/mcm")
+	t.Setenv(EnvDataDirHost, "/host/mcm")
 	t.Setenv(EnvDBPath, "/tmp/custom.db")
 	t.Setenv(EnvDockerHost, "tcp://127.0.0.1:2375")
 	t.Setenv(EnvSessionSecret, "super-secret")
@@ -95,6 +99,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Addr != ":9090" {
 		t.Errorf("Addr = %q", cfg.Addr)
+	}
+	if cfg.DataDirHost != "/host/mcm" {
+		t.Errorf("DataDirHost = %q, want /host/mcm", cfg.DataDirHost)
 	}
 	if cfg.PortRange.Start != 31000 || cfg.PortRange.End != 31100 {
 		t.Errorf("PortRange = %d-%d", cfg.PortRange.Start, cfg.PortRange.End)

@@ -59,9 +59,10 @@ The panel container mounts `/var/run/docker.sock` so it can manage Minecraft
 server containers on the host. Minecraft servers bind the host port range
 configured by `MCM_PORT_RANGE` (default `25565-25665`).
 
-Persistence and permissions are wired through the compose file: `MCM_DATA_DIR`
-is a host directory (default `./data`, next to `docker-compose.yml`) mounted
+Persistence and permissions are wired through the compose file: `MCM_DATA_DIR_HOST`
+is a host directory (default `${PWD}/data`, next to `docker-compose.yml`) mounted
 into the container at `/data` and used for the SQLite database and server data.
+It is also the host-side path MCM binds into each Minecraft server container.
 Set `PUID`/`PGID` to match your host user so the bind-mounted files stay owned
 by you, or specify a `user:` on the service to run the panel as a fixed
 UID/GID. The image entrypoint fixes up data-directory ownership before the
@@ -112,7 +113,8 @@ pulled on the host before starting servers.
 | --- | --- | --- |
 | `MCM_ADDR` | `:8080` | Listen address for the web/API server. |
 | `MCM_PORT_RANGE` | `25565-25665` | Host port range allocated to Minecraft servers. |
-| `MCM_DATA_DIR` | `./data` | Docker: host directory bind-mounted into the container at `/data`. Bare metal: process data directory. |
+| `MCM_DATA_DIR_HOST` | `${PWD}/data` | Docker: host directory bind-mounted into the panel at `/data`; also the host-side path MCM binds into each server container. Set an absolute host path to relocate data. |
+| `MCM_DATA_DIR` | `/data` (Docker) / `./data` (bare metal) | Process-side data directory the panel reads and writes itself. In Docker the compose file pins this to `/data`. |
 | `MCM_DB_PATH` | `$MCM_DATA_DIR/mcm.db` | SQLite database file (container path for Docker, process path for bare metal). |
 | `PUID` / `PGID` | `1000` / `1000` | Docker only: UID/GID the panel runs as and that own the data directory. |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon endpoint. |

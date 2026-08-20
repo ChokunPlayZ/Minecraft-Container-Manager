@@ -30,6 +30,12 @@ type Config struct {
 	RateLimitWindow  time.Duration
 	DefaultCPULimit  float64
 	DefaultMemoryMB  int
+	// DataDirHost is the host-visible absolute path that corresponds to the
+	// process's DataDir. It is used as the bind-mount source when provisioning
+	// server containers through a Docker daemon. When running on bare metal
+	// (or when the panel's DataDir already is a host path) it is left empty and
+	// DataDir is used directly.
+	DataDirHost string
 	// ServerImage is the Docker image used to run Minecraft server containers.
 	ServerImage string
 	// S3 holds the object-storage configuration used for world backups. An
@@ -70,6 +76,7 @@ const (
 	EnvAddr             = "MCM_ADDR"
 	EnvPortRange        = "MCM_PORT_RANGE"
 	EnvDataDir          = "MCM_DATA_DIR"
+	EnvDataDirHost      = "MCM_DATA_DIR_HOST"
 	EnvDBPath           = "MCM_DB_PATH"
 	EnvDockerHost       = "DOCKER_HOST"
 	EnvSessionSecret    = "MCM_SESSION_SECRET"
@@ -119,6 +126,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Addr:            getenv(EnvAddr, defaultAddr),
 		DataDir:         getenv(EnvDataDir, defaultDataDir),
+		DataDirHost:     getenv(EnvDataDirHost, ""),
 		DockerHost:      getenv(EnvDockerHost, defaultDockerHost),
 		TLSCert:         getenv(EnvTLSCert, ""),
 		TLSKey:          getenv(EnvTLSKey, ""),
