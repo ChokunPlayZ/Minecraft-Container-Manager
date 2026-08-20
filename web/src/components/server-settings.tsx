@@ -20,6 +20,7 @@ function genId(): string {
 export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (s: Server) => void }) {
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
+  const [hostPort, setHostPort] = useState(server.host_port);
   const [cpuLimit, setCpuLimit] = useState(server.cpu_limit ?? 0);
   const [memoryLimitMb, setMemoryLimitMb] = useState(server.memory_limit_mb ?? 0);
   const [backupEnabled, setBackupEnabled] = useState(server.backup_enabled ?? true);
@@ -54,6 +55,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
       const updated = await api.updateServer(server.id, {
         name: name.trim(),
         ram_mb: ramMb,
+        host_port: hostPort,
         cpu_limit: cpuLimit,
         memory_limit_mb: memoryLimitMb,
         backup_enabled: backupEnabled,
@@ -90,6 +92,20 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
               value={ramMb}
               onChange={(e) => setRamMb(Number(e.target.value))}
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-port">Game port (host)</Label>
+            <Input
+              id="edit-port"
+              type="number"
+              min={1}
+              max={65535}
+              value={hostPort}
+              onChange={(e) => setHostPort(Number(e.target.value))}
+            />
+            <p className="text-xs text-muted-foreground">
+              Changes take effect on the next container rebuild or start.
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-cpu-limit">CPU limit (cores)</Label>

@@ -11,6 +11,7 @@ import type {
   VersionInfo,
   VersionMeta,
   Op,
+  WhitelistEntry,
   PlayerList,
   Mod,
   ModList,
@@ -242,13 +243,32 @@ export const api = {
       method: 'DELETE',
     }),
 
+  whitelist: (serverId: string) =>
+    request<{ whitelist: WhitelistEntry[] }>(`/api/servers/${serverId}/whitelist`),
+
+  addWhitelist: (serverId: string, name: string) =>
+    request<{ whitelist: WhitelistEntry[] }>(`/api/servers/${serverId}/whitelist`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+
+  removeWhitelist: (serverId: string, name: string) =>
+    request<{ ok: boolean }>(`/api/servers/${serverId}/whitelist/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+
   mods: (serverId: string) => request<ModList>(`/api/servers/${serverId}/mods`),
 
-  uploadMod: (serverId: string, file: File) => {
-    const body = new FormData();
-    body.append('file', file);
-    return request<Mod>(`/api/servers/${serverId}/mods`, { method: 'POST', body });
-  },
+  uploadMod: (
+    serverId: string,
+    file: File,
+    onProgress?: (loaded: number, total: number) => void,
+  ) =>
+    uploadWithProgress<Mod>(
+      `/api/servers/${serverId}/mods`,
+      [['file', file]],
+      onProgress,
+    ),
 
   setModEnabled: (serverId: string, name: string, enabled: boolean) =>
     request<Mod>(`/api/servers/${serverId}/mods/${encodeURIComponent(name)}`, {
@@ -304,16 +324,22 @@ export const api = {
     return res.blob();
   },
 
-  uploadFiles: (serverId: string, files: File[], dir: string): Promise<FileEntry[]> => {
-    const body = new FormData();
-    for (const file of files) {
-      body.append('file', file);
-    }
+  uploadFiles: (
+    serverId: string,
+    files: File[],
+    dir: string,
+    onProgress?: (loaded: number, total: number) => void,
+  ): Promise<FileEntry[]> => {
     const q = dir ? `?dir=${encodeURIComponent(dir)}` : '';
-    return request<FileEntry[]>(`/api/servers/${serverId}/files/upload${q}`, {
-      method: 'POST',
-      body,
-    });
+    const parts: Array<[string, Blob | string]> = [];
+    for (const file of files) {
+      parts.push(['file', file]);
+    }
+    return uploadWithProgress<FileEntry[]>(
+      `/api/servers/${serverId}/files/upload${q}`,
+      parts,
+      onProgress,
+    );
   },
 
   archiveFile: (serverId: string, source: string, name?: string) =>
@@ -374,6 +400,7 @@ export interface CreateServerInput {
 export interface UpdateServerInput {
   name: string;
   ram_mb: number;
+  host_port?: number;
   cpu_limit?: number;
   memory_limit_mb?: number;
   backup_enabled?: boolean;
@@ -384,4 +411,47 @@ export interface UpdateServerInput {
 export interface InstallInput {
   version: string;
   build: string;
+}
+
+// uploadWithProgress uploads a multipart body while reporting progress. The
+// endpoint must return the JSON type T on success.
+export async function uploadWithProgress<T>(
+  path: string,
+  parts: Array<[string, Blob | string]>,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<T> {
+  const body = new FormData();
+  for (const [key, value] of parts) {
+    body.append(key, value);
+  }
+  const token = await ensureCsrf();
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', path);
+    xhr.withCredentials = true;
+    if (token) xhr.setRequestHeader('X-CSRF-Token', token);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(xhr.responseText ? (JSON.parse(xhr.responseText) as T) : (undefined as T));
+        } catch {
+          reject(new ApiError(xhr.status, 'Invalid response'));
+        }
+      } else {
+        let detail = `Upload failed (${xhr.status})`;
+        try {
+          const body = JSON.parse(xhr.responseText);
+          detail = body?.error?.message ?? body?.message ?? detail;
+        } catch {
+          /* non-JSON body */
+        }
+        reject(new ApiError(xhr.status, detail, detail));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'Network error during upload'));
+    xhr.send(body);
+  });
 }

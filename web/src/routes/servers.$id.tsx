@@ -15,9 +15,9 @@ import { PropertiesEditor } from '../components/properties-editor';
 import { RequireAuth } from '../components/require-auth';
 import { ServerSettings } from '../components/server-settings';
 import { StatusBadge } from '../components/status-badge';
+import { WhitelistPanel } from '../components/whitelist-panel';
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
-import { Separator } from '../components/ui/separator';
+import { Card, CardContent } from '../components/ui/card';
 
 export const Route = createFileRoute('/servers/$id')({
   component: ServerDetailRoute,
@@ -236,53 +236,38 @@ function ServerDetailRoute() {
         {tab === 'files' ? (
           <FileManager server={server} />
         ) : (
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <ConsoleViewer serverId={server.id} running={state === 'running'} />
-              <div className="mt-4">
+          <div className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-3">
+              <div className="space-y-4 lg:col-span-2">
+                <ConsoleViewer serverId={server.id} running={state === 'running'} />
                 <PlayersPanel server={server} />
               </div>
+              <div className="space-y-4">
+                <ServerSettings
+                  key={`${server.name}-${server.ram_mb}-${server.host_port}`}
+                  server={server}
+                  onSaved={(s) => setServer(s)}
+                />
+                <InstallPanel
+                  serverId={server.id}
+                  serverType={server.server_type}
+                  onInstalled={loadServer}
+                />
+              </div>
             </div>
-            <div className="space-y-4">
-              <ServerSettings
-                key={`${server.name}-${server.ram_mb}`}
-                server={server}
-                onSaved={(s) => setServer(s)}
-              />
-              <InstallPanel
-                serverId={server.id}
-                serverType={server.server_type}
-                onInstalled={loadServer}
-              />
+
+            <div className="grid gap-4 lg:grid-cols-2">
               <OpsPanel server={server} refreshKey={state} />
+              <WhitelistPanel server={server} />
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-3">
               <ModsPanel server={server} />
               <PropertiesEditor server={server} />
               <BackupsPanel server={server} />
             </div>
           </div>
         )}
-
-        <Separator className="my-6" />
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">About</CardTitle>
-            <CardDescription>Instance metadata.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="text-muted-foreground">Container ID</dt>
-              <dd>{server.container_id ?? 'not created'}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Created</dt>
-              <dd>{new Date(server.created_at).toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Updated</dt>
-              <dd>{new Date(server.updated_at).toLocaleString()}</dd>
-            </div>
-          </CardContent>
-        </Card>
       </AppShell>
     </RequireAuth>
   );

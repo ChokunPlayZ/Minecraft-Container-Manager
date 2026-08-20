@@ -9,6 +9,7 @@ export function ModsPanel({ server }: { server: Server }) {
   const [items, setItems] = useState<Mod[]>([]);
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const unsupported = server.server_type === 'vanilla';
 
@@ -34,11 +35,16 @@ export function ModsPanel({ server }: { server: Server }) {
 
   async function upload(file: File) {
     setError(null);
+    setUploadProgress(0);
     try {
-      await api.uploadMod(server.id, file);
+      await api.uploadMod(server.id, file, (loaded, total) => {
+        setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
+      });
+      setUploadProgress(null);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Upload failed');
+      setUploadProgress(null);
     }
   }
 
@@ -101,6 +107,19 @@ export function ModsPanel({ server }: { server: Server }) {
         />
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {uploadProgress !== null && (
+          <div className="flex items-center gap-3 rounded-md border p-3 text-sm">
+            <span className="shrink-0 text-muted-foreground">Uploading...</span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+            <span className="shrink-0 tabular-nums text-muted-foreground">{uploadProgress}%</span>
+          </div>
+        )}
 
         <div className="space-y-2">
           {items.length === 0 && (

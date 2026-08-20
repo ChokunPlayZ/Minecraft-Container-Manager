@@ -111,6 +111,7 @@ type UpdateInput struct {
 	Version               *string       `json:"version"`
 	Build                 *string       `json:"build"`
 	RAMMB                 *int          `json:"ram_mb"`
+	HostPort              *int          `json:"host_port"`
 	CPULimit              *float64      `json:"cpu_limit"`
 	MemoryLimitMB         *int          `json:"memory_limit_mb"`
 	BackupEnabled         *bool         `json:"backup_enabled"`
@@ -304,6 +305,24 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 	if in.RAMMB != nil {
 		srv.RAMMB = *in.RAMMB
 	}
+	if in.HostPort != nil && *in.HostPort != srv.HostPort {
+		port := *in.HostPort
+		if port < 1 || port > 65535 {
+			return Server{}, fmt.Errorf("host_port must be between 1 and 65535")
+		}
+		if err := s.ensurePortFree(ctx, id, port); err != nil {
+			return Server{}, err
+		}
+		srv.HostPort = port
+		// Docker binds host ports at container creation, so a changed primary
+		// game port requires a fresh container. Detach the existing one so the
+		// next Start provisions a new container bound to the new port.
+		if srv.ContainerID != "" {
+			_ = s.docker.Remove(ctx, srv.ContainerID)
+			srv.ContainerID = ""
+			srv.State = StateStopped
+		}
+	}
 	if in.CPULimit != nil {
 		if *in.CPULimit < 0 {
 			return Server{}, fmt.Errorf("cpu_limit must be non-negative")
@@ -328,12 +347,28 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, updated_at=? WHERE id=?`,
-		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), now, id)
+		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, container_id=?, state=?, updated_at=? WHERE id=?`,
+		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, id)
 	if err != nil {
 		return Server{}, fmt.Errorf("update server: %w", err)
 	}
 	return s.Get(ctx, id)
+}
+
+// ensurePortFree verifies that port is not already assigned to another server.
+// In the context of the port pool, a port that was previously allocated to this
+// server is freed when the old host_port is overwritten below.
+func (s *Store) ensurePortFree(ctx context.Context, id string, port int) error {
+	var other string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM servers WHERE host_port = ? AND id != ?`, port, id).Scan(&other)
+	if err == nil {
+		return fmt.Errorf("host_port %d is already in use by another server", port)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check host_port: %w", err)
+	}
+	return nil
 }
 
 // Delete removes a server record and its container if one exists.

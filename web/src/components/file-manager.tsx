@@ -75,6 +75,7 @@ export function FileManager({ server }: { server: Server }) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [url, setUrl] = useState('');
@@ -183,7 +184,21 @@ export function FileManager({ server }: { server: Server }) {
 
   async function handleUpload(files: File[]) {
     if (files.length === 0) return;
-    await run(() => api.uploadFiles(server.id, files, cwd));
+    setBusy(true);
+    setError(null);
+    setUploadProgress(0);
+    try {
+      await api.uploadFiles(server.id, files, cwd, (loaded, total) => {
+        setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
+      });
+      setUploadProgress(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : 'Upload failed');
+      setUploadProgress(null);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleDownload(entry: FileEntry) {
@@ -303,6 +318,19 @@ export function FileManager({ server }: { server: Server }) {
       )}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {uploadProgress !== null && (
+        <div className="flex items-center gap-3 rounded-md border p-3 text-sm">
+          <span className="shrink-0 text-muted-foreground">Uploading...</span>
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
+            <div
+              className="h-full bg-primary transition-all"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          <span className="shrink-0 tabular-nums text-muted-foreground">{uploadProgress}%</span>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Left: browser */}

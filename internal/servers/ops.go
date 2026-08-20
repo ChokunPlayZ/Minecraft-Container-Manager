@@ -49,6 +49,9 @@ func (s *Store) writeOps(id string, ops []OP) error {
 	if ops == nil {
 		ops = []OP{}
 	}
+	if err := os.MkdirAll(s.dataPath(id), 0o755); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(ops, "", "  ")
 	if err != nil {
 		return err

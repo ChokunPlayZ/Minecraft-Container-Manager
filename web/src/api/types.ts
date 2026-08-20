@@ -133,6 +133,11 @@ export interface Op {
   bypassesPlayerLimit?: boolean;
 }
 
+export interface WhitelistEntry {
+  uuid: string;
+  name: string;
+}
+
 export interface Mod {
   name: string;
   file: string;
