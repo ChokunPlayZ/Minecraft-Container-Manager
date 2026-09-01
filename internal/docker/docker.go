@@ -275,11 +275,11 @@ func itzgEnv(opts CreateOpts) []string {
 }
 
 // containerResources builds the container resource limits. The memory limit
-// defaults to RAM + 512MB unless an explicit memory_limit_mb is set. A positive
+// defaults to RAM + 2GB unless an explicit memory_limit_mb is set. A positive
 // cpu_limit (cores) is translated to NanoCPUs.
 func containerResources(opts CreateOpts) container.Resources {
 	res := container.Resources{
-		Memory: int64((opts.RAMMB + 512) * 1024 * 1024),
+		Memory: int64((opts.RAMMB + 2048) * 1024 * 1024),
 	}
 	if opts.MemoryLimitMB > 0 {
 		res.Memory = int64(opts.MemoryLimitMB) * 1024 * 1024

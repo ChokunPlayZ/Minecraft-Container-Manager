@@ -128,7 +128,7 @@ pulled on the host before starting servers.
 | `MCM_RATE_LIMIT_MAX` | `100` | Maximum state-changing requests per client per window. |
 | `MCM_RATE_LIMIT_WINDOW` | `1m` | Sliding window for the general rate limiter. |
 | `MCM_DEFAULT_CPU_LIMIT` | `0` | Default CPU cores limit for new servers (0 = unlimited). |
-| `MCM_DEFAULT_MEMORY_MB` | `0` | Default memory limit (MB) for new servers (0 = RAM-derived default). |
+| `MCM_DEFAULT_MEMORY_MB` | `0` | Default memory limit (MB) for new servers (0 = configured server RAM + 2 GiB). |
 | `MCM_SERVER_IMAGE` | `itzg/minecraft-server` | Docker image used to run Minecraft server containers. |
 | `MCM_S3_ENDPOINT` | *(empty)* | S3-compatible object store endpoint (e.g. `http://minio:9000`). Empty disables backups. |
 | `MCM_S3_ACCESS_KEY` | *(empty)* | Access key for the S3 store. |

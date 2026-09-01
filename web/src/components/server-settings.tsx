@@ -238,7 +238,7 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
                   value={memoryLimitMb}
                   onChange={(e) => setMemoryLimitMb(Number(e.target.value))}
                 />
-                <p className="text-xs text-muted-foreground">0 falls back to the RAM-derived default.</p>
+                <p className="text-xs text-muted-foreground">0 allows the configured server RAM plus 2 GiB of overhead.</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="edit-backup-interval">Automatic backup interval (minutes)</Label>
