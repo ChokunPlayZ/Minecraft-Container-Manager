@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { Send } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { ConsoleLine } from '../api/types';
@@ -6,12 +6,15 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 
+const AUTO_SCROLL_THRESHOLD_PX = 24;
+
 export function ConsoleViewer({ serverId, running }: { serverId: string; running?: boolean }) {
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [command, setCommand] = useState('');
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
     const seen = new Set<string>();
@@ -29,11 +32,21 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
     return close;
   }, [serverId]);
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  useLayoutEffect(() => {
+    const consoleElement = scrollRef.current;
+    if (consoleElement && shouldAutoScrollRef.current) {
+      consoleElement.scrollTop = consoleElement.scrollHeight;
     }
   }, [lines]);
+
+  function handleConsoleScroll() {
+    const consoleElement = scrollRef.current;
+    if (!consoleElement) return;
+
+    const distanceFromBottom =
+      consoleElement.scrollHeight - consoleElement.clientHeight - consoleElement.scrollTop;
+    shouldAutoScrollRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD_PX;
+  }
 
   async function sendCommand(e?: FormEvent) {
     e?.preventDefault();
@@ -59,6 +72,7 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
       <CardContent>
         <div
           ref={scrollRef}
+          onScroll={handleConsoleScroll}
           className="h-72 overflow-y-auto rounded-md border bg-black/90 p-3 font-mono text-xs leading-5 text-emerald-100"
         >
           {lines.length === 0 && !error ? (
