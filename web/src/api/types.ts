@@ -177,3 +177,79 @@ export interface UnzipResult {
   ok: boolean;
   count: number;
 }
+
+export interface ModrinthSearchHit {
+  project_id: string;
+  project_type: string;
+  slug: string;
+  author: string;
+  title: string;
+  description: string;
+  categories: string[];
+  display_categories?: string[];
+  versions: string[];
+  downloads: number;
+  follows: number;
+  icon_url: string | null;
+  date_created: string;
+  date_modified: string;
+  latest_version: string;
+  license: string;
+  client_side: 'required' | 'optional' | 'unsupported';
+  server_side: 'required' | 'optional' | 'unsupported';
+  gallery?: string[];
+  color?: number;
+}
+
+export interface ModrinthSearchResult {
+  hits: ModrinthSearchHit[];
+  offset: number;
+  limit: number;
+  total_hits: number;
+}
+
+export interface ModrinthVersionFile {
+  hashes?: { sha1?: string; sha512?: string };
+  url: string;
+  filename: string;
+  primary: boolean;
+  size: number;
+  file_type?: string | null;
+}
+
+export interface ModrinthVersion {
+  id: string;
+  project_id: string;
+  author_id: string;
+  name: string;
+  version_number: string;
+  game_versions: string[];
+  version_type: 'release' | 'beta' | 'alpha';
+  loaders: string[];
+  featured: boolean;
+  status: string;
+  date_published: string;
+  downloads: number;
+  changelog?: string;
+  files: ModrinthVersionFile[];
+}
+
+export interface ModrinthProject {
+  id: string;
+  slug: string;
+  title: string;
+  description: string;
+  body?: string;
+  categories: string[];
+  client_side: string;
+  server_side: string;
+  body_url?: string | null;
+  issues_url?: string | null;
+  source_url?: string | null;
+  wiki_url?: string | null;
+  discord_url?: string | null;
+  icon_url: string | null;
+  downloads: number;
+  followers: number;
+  license?: { id: string; name: string; url: string | null };
+}

@@ -70,6 +70,13 @@ function isMock(): boolean {
 let mockPropertiesContent =
   '# Minecraft server properties\nserver-port=25565\nmotd=§aMega SMP Server §7| §e100 Players Online!\nmax-players=150\npvp=true\nview-distance=10\nsimulation-distance=8\nwhite-list=true\nenforce-whitelist=false\ndifficulty=hard\nenable-rcon=true\nrcon.port=25575';
 
+let mockMods: Mod[] = [
+  { name: 'EssentialsX', file: 'EssentialsX-2.20.1.jar', enabled: true },
+  { name: 'Vault', file: 'Vault.jar', enabled: true },
+  { name: 'CoreProtect', file: 'CoreProtect-22.4.jar', enabled: true },
+  { name: 'LuckPerms', file: 'LuckPerms-5.4.102.jar', enabled: true },
+];
+
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
 
@@ -150,16 +157,53 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
       content: mockPropertiesContent,
     } as T;
   }
+  if (path.startsWith('/api/servers/') && path.endsWith('/mods/download')) {
+    let name = 'Downloaded-Mod';
+    let file = 'downloaded-mod.jar';
+    if (init.body) {
+      try {
+        const parsed = JSON.parse(init.body as string);
+        if (parsed.filename) {
+          file = parsed.filename;
+          name = file.replace(/\.jar$/i, '');
+        }
+      } catch {
+        // ignore
+      }
+    }
+    const newMod: Mod = { name, file, enabled: true };
+    mockMods = [...mockMods.filter((m) => m.name !== name && m.file !== file), newMod];
+    return newMod as T;
+  }
   if (path.startsWith('/api/servers/') && path.endsWith('/mods')) {
     return {
       type: 'plugins',
-      items: [
-        { name: 'EssentialsX', file: 'EssentialsX-2.20.1.jar', enabled: true },
-        { name: 'Vault', file: 'Vault.jar', enabled: true },
-        { name: 'CoreProtect', file: 'CoreProtect-22.4.jar', enabled: true },
-        { name: 'LuckPerms', file: 'LuckPerms-5.4.102.jar', enabled: true },
-      ],
+      items: mockMods,
     } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.includes('/mods/')) {
+    const parts = path.split('/');
+    const modName = decodeURIComponent(parts[parts.length - 1]);
+    if (init.method === 'DELETE') {
+      mockMods = mockMods.filter((m) => m.name !== modName && m.file !== modName);
+      return { ok: true } as T;
+    }
+    if (init.method === 'PATCH') {
+      let enabled = true;
+      if (init.body) {
+        try {
+          const parsed = JSON.parse(init.body as string);
+          if (typeof parsed.enabled === 'boolean') enabled = parsed.enabled;
+        } catch {
+          // ignore
+        }
+      }
+      mockMods = mockMods.map((m) =>
+        m.name === modName || m.file === modName ? { ...m, enabled } : m,
+      );
+      const updated = mockMods.find((m) => m.name === modName || m.file === modName);
+      return updated as T;
+    }
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/backups')) {
     return {
@@ -433,6 +477,12 @@ export const api = {
     }),
 
   mods: (serverId: string) => request<ModList>(`/api/servers/${serverId}/mods`),
+
+  downloadMod: (serverId: string, url: string, filename: string) =>
+    request<Mod>(`/api/servers/${serverId}/mods/download`, {
+      method: 'POST',
+      body: JSON.stringify({ url, filename }),
+    }),
 
   uploadMod: (
     serverId: string,

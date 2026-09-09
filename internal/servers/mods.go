@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ModType identifies the artifact directory a server uses.
@@ -238,4 +241,76 @@ func resolveModDirEntry(dir, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// DownloadMod fetches an artifact file from a remote URL (e.g. Modrinth CDN) and saves it
+// into the server's mod/plugin directory.
+func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL string) (Mod, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return Mod{}, err
+	}
+	if !validModFileName(filename) {
+		return Mod{}, ErrInvalidModName
+	}
+	u, err := url.Parse(downloadURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return Mod{}, ErrInvalidPath
+	}
+	dir, _, err := s.modsPath(id, srv.ServerType)
+	if err != nil {
+		return Mod{}, err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return Mod{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return Mod{}, err
+	}
+	req.Header.Set("User-Agent", "mcm-panel/1.0 (https://github.com/mcm-panel/mcm)")
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return Mod{}, ErrDownloadFailed
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Mod{}, fmt.Errorf("%w: status %d", ErrDownloadFailed, resp.StatusCode)
+	}
+
+	tmpFile := filepath.Join(dir, fmt.Sprintf(".tmp_%d_%s", time.Now().UnixNano(), filename))
+	dst, err := os.Create(tmpFile)
+	if err != nil {
+		return Mod{}, err
+	}
+	_, werr := io.Copy(dst, io.LimitReader(resp.Body, maxDownloadBytes+1))
+	cerr := dst.Close()
+	if werr != nil {
+		_ = os.Remove(tmpFile)
+		return Mod{}, werr
+	}
+	if cerr != nil {
+		_ = os.Remove(tmpFile)
+		return Mod{}, cerr
+	}
+
+	if fi, ferr := os.Stat(tmpFile); ferr == nil && fi.Size() > maxDownloadBytes {
+		_ = os.Remove(tmpFile)
+		return Mod{}, fmt.Errorf("%w: file too large", ErrDownloadFailed)
+	}
+
+	target := filepath.Join(dir, filename)
+	// If a .disabled version exists for the same base name, remove it so there's no duplicate
+	disabledTarget := target + ".disabled"
+	_ = os.Remove(disabledTarget)
+
+	if err := os.Rename(tmpFile, target); err != nil {
+		_ = os.Remove(tmpFile)
+		return Mod{}, err
+	}
+
+	return Mod{Name: modDisplayBase(filename), File: filename, Enabled: true}, nil
 }

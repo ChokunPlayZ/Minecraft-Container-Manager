@@ -146,6 +146,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/servers/{id}/whitelist/{name}", s.requireAuth(s.wrapJSON(s.handleRemoveWhitelist)))
 	s.mux.HandleFunc("GET /api/servers/{id}/mods", s.requireAuth(s.wrapJSON(s.handleListMods)))
 	s.mux.HandleFunc("POST /api/servers/{id}/mods", s.requireAuth(s.wrapJSON(s.handleUploadMod)))
+	s.mux.HandleFunc("POST /api/servers/{id}/mods/download", s.requireAuth(s.wrapJSON(s.handleDownloadMod)))
 	s.mux.HandleFunc("PATCH /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleSetModEnabled)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleDeleteMod)))
 	s.mux.HandleFunc("GET /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleGetProperties)))

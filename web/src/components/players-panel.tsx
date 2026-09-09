@@ -18,7 +18,6 @@ import {
   Shield,
   ShieldCheck,
   Skull,
-  User,
   UserCog,
   Users,
   X,

@@ -37,6 +37,32 @@ func (s *Server) handleUploadMod(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, mod)
 }
 
+// handleDownloadMod downloads a mod/plugin artifact from a remote URL.
+func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		URL      string `json:"url"`
+		Filename string `json:"filename"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if in.URL == "" || in.Filename == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "url and filename are required")
+		return
+	}
+	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL)
+	if err != nil {
+		if errors.Is(err, servers.ErrDownloadFailed) {
+			writeError(w, http.StatusBadGateway, "download_failed", "Failed to download mod from remote URL.")
+			return
+		}
+		s.writeModErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, mod)
+}
+
 // handleSetModEnabled toggles a mod/plugin between enabled and disabled.
 func (s *Server) handleSetModEnabled(w http.ResponseWriter, r *http.Request) {
 	var in struct {

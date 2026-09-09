@@ -7,8 +7,6 @@ import {
   Copy,
   Terminal,
   Sparkles,
-  ChevronDown,
-  Info,
   AlertCircle,
   Code,
 } from 'lucide-react';
