@@ -17,7 +17,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { useModal } from './ui/modal';
-import { ModrinthBrowser } from './modrinth-browser';
+import { CatalogBrowser } from './catalog-browser';
 
 export function ModsPanel({ server }: { server: Server }) {
   const [activeTab, setActiveTab] = useState<'installed' | 'browse'>('installed');
@@ -156,7 +156,7 @@ export function ModsPanel({ server }: { server: Server }) {
               }`}
             >
               <Compass className="h-4 w-4" />
-              Browse Modrinth
+              Browse Modrinth &amp; Catalogs
               <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
             </button>
           </div>
@@ -195,7 +195,7 @@ export function ModsPanel({ server }: { server: Server }) {
                     className="gap-1.5 text-xs border-primary/30 text-primary hover:bg-primary/5"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    Add from Modrinth
+                    Browse Catalogs
                   </Button>
                 </div>
               </div>
@@ -279,7 +279,7 @@ export function ModsPanel({ server }: { server: Server }) {
                       className="mt-3 gap-1.5 text-xs"
                     >
                       <Compass className="h-3.5 w-3.5" />
-                      Browse Modrinth Catalog
+                      Browse Online Catalogs
                     </Button>
                   </div>
                 ) : filteredItems.length === 0 ? (
@@ -343,9 +343,9 @@ export function ModsPanel({ server }: { server: Server }) {
           </Card>
         )}
 
-        {/* Tab 2: Modrinth Browser */}
+        {/* Tab 2: Mod & Plugin Catalogs */}
         {activeTab === 'browse' && (
-          <ModrinthBrowser
+          <CatalogBrowser
             server={server}
             installedMods={items}
             onModInstalled={() => {

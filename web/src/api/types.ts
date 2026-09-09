@@ -253,3 +253,226 @@ export interface ModrinthProject {
   followers: number;
   license?: { id: string; name: string; url: string | null };
 }
+
+export type ModProvider = 'modrinth' | 'hangar' | 'spiget' | 'curseforge';
+
+// --- Hangar (PaperMC) ---
+export interface HangarPagination {
+  count: number;
+  limit: number;
+  offset: number;
+}
+
+export interface HangarNamespace {
+  owner: string;
+  slug: string;
+}
+
+export interface HangarStats {
+  views: number;
+  downloads: number;
+  recentViews: number;
+  recentDownloads: number;
+  stars: number;
+  watchers: number;
+}
+
+export interface HangarProject {
+  id: number;
+  name: string;
+  namespace: HangarNamespace;
+  stats: HangarStats;
+  category: string;
+  description: string;
+  lastUpdated: string;
+  visibility: string;
+  avatarUrl: string;
+  supportedPlatforms: Record<string, string[]>;
+  mainPageContent?: string;
+  memberNames?: string[];
+}
+
+export interface HangarSearchResult {
+  pagination: HangarPagination;
+  result: HangarProject[];
+}
+
+export interface HangarFileInfo {
+  name: string;
+  sizeBytes: number;
+  sha256Hash: string;
+}
+
+export interface HangarPlatformDownload {
+  fileInfo?: HangarFileInfo;
+  downloadUrl?: string;
+  externalUrl?: string | null;
+}
+
+export interface HangarVersion {
+  id: number;
+  projectId: number;
+  name: string;
+  visibility: string;
+  description?: string;
+  stats: {
+    totalDownloads: number;
+    platformDownloads: Record<string, number>;
+  };
+  author: string;
+  channel: {
+    name: string;
+    color: string;
+    description?: string;
+  };
+  downloads: Record<string, HangarPlatformDownload>;
+  platformDependencies: Record<string, string[]>;
+  platformDependenciesFormatted?: Record<string, string[]>;
+  createdAt: string;
+}
+
+export interface HangarVersionsResult {
+  pagination: HangarPagination;
+  result: HangarVersion[];
+}
+
+// --- SpigotMC (via Spiget) ---
+export interface SpigetFile {
+  type: string;
+  size: number;
+  sizeUnit: string;
+  url: string;
+}
+
+export interface SpigetRating {
+  count: number;
+  average: number;
+}
+
+export interface SpigetIcon {
+  url: string;
+  data?: string;
+}
+
+export interface SpigetResource {
+  id: number;
+  name: string;
+  tag: string;
+  version: {
+    id: number;
+    uuid?: string;
+  };
+  author: {
+    id: number;
+    name?: string;
+  };
+  category: {
+    id: number;
+  };
+  rating: SpigetRating;
+  downloads: number;
+  icon: SpigetIcon;
+  releaseDate: number;
+  updateDate: number;
+  testedVersions?: string[];
+  premium?: boolean;
+  file?: SpigetFile;
+  links?: {
+    discussion?: string;
+    sourceCode?: string;
+    donation?: string;
+  };
+}
+
+export interface SpigetVersion {
+  id: number;
+  name: string;
+  releaseDate: number;
+  resource: number;
+  downloads: number;
+  rating: SpigetRating;
+  uuid?: string;
+}
+
+// --- CurseForge ---
+export interface CurseForgeFileHash {
+  value: string;
+  algo: number;
+}
+
+export interface CurseForgeFile {
+  id: number;
+  gameId: number;
+  modId: number;
+  isAvailable: boolean;
+  displayName: string;
+  fileName: string;
+  releaseType: number; // 1 = Release, 2 = Beta, 3 = Alpha
+  fileStatus: number;
+  hashes: CurseForgeFileHash[];
+  fileDate: string;
+  fileLength: number;
+  downloadCount: number;
+  downloadUrl: string | null;
+  gameVersions: string[];
+}
+
+export interface CurseForgeModAuthor {
+  id: number;
+  name: string;
+  url: string;
+}
+
+export interface CurseForgeModLogo {
+  id: number;
+  modId: number;
+  title: string;
+  description: string;
+  thumbnailUrl: string;
+  url: string;
+}
+
+export interface CurseForgeCategory {
+  id: number;
+  gameId: number;
+  name: string;
+  slug: string;
+  url: string;
+  iconUrl: string;
+}
+
+export interface CurseForgeMod {
+  id: number;
+  gameId: number;
+  name: string;
+  slug: string;
+  links: {
+    websiteUrl: string;
+    wikiUrl?: string;
+    issuesUrl?: string;
+    sourceUrl?: string;
+  };
+  summary: string;
+  status: number;
+  downloadCount: number;
+  isFeatured: boolean;
+  primaryCategoryId: number;
+  categories: CurseForgeCategory[];
+  classId?: number;
+  authors: CurseForgeModAuthor[];
+  logo?: CurseForgeModLogo;
+  dateModified: string;
+  dateCreated: string;
+  dateReleased: string;
+  latestFiles: CurseForgeFile[];
+}
+
+export interface CurseForgeSearchResult {
+  data: CurseForgeMod[];
+  pagination: {
+    index: number;
+    pageSize: number;
+    totalCount: number;
+  };
+}
+
