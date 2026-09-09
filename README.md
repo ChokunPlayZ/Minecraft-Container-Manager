@@ -24,9 +24,9 @@ game port directly, and the panel manages the servers themselves.
 - TOTP / passkey: multi-factor authentication for panel accounts.
 - Onboarding: guided first-run setup and account creation.
 
-> Note: backup scheduling, idle spin-down, Cloudflare SRV, and TOTP/passkey are
+> Note: backup scheduling, idle spin-down, and TOTP/passkey are
 > currently stubbed in the backend and wired into configuration only. See
-> "Stubbed features" below.
+> "Stubbed features" below. Cloudflare SRV DNS routing is fully implemented.
 
 ## Quickstart (Docker Compose)
 
@@ -137,8 +137,8 @@ pulled on the host before starting servers.
 | `MCM_S3_REGION` | `us-east-1` | Region reported during S3 signing. |
 | `TZ` | `UTC` | Container/system timezone. |
 
-The idle timeout and Cloudflare credentials for the remaining stubbed features
-are intended to be added to this table as those features are implemented.
+Cloudflare DNS credentials and options can be configured dynamically through
+the panel Settings UI (`/settings?tab=dns`) or via `PUT /api/settings`.
 
 ## API summary
 
@@ -161,6 +161,11 @@ backend, but the intended surface is:
 | `GET` | `/api/servers/:id/backups` | List backups for a server. |
 | `POST` | `/api/servers/:id/restore/:backupId` | Restore a backup. |
 | `DELETE` | `/api/backups/:backupId` | Delete a backup. |
+| `GET` | `/api/dns` | List active DNS records and Cloudflare status. |
+| `POST` | `/api/dns/test` | Test Cloudflare credentials & zone access. |
+| `GET` | `/api/servers/:id/dns` | Get DNS record status and join address for a server. |
+| `POST` | `/api/servers/:id/dns` | Publish or update an SRV record for a server. |
+| `DELETE` | `/api/servers/:id/dns` | Remove an SRV record for a server. |
 | `GET` | `/healthz` | Liveness probe, always returns `200`. |
 | `GET` | `/readyz` | Readiness probe, checks DB and Docker reachability. |
 
@@ -208,9 +213,36 @@ limited per server via the `backup_retention` setting (default 10). Scheduling
 is configured per server: enable/disable automatic backups and set the interval
 in minutes from the server settings.
 
+## Cloudflare SRV DNS Routing
+
+MCM integrates directly with the Cloudflare API v4 to automatically register,
+update, and delete RFC 2782-compliant DNS SRV records (`_minecraft._tcp`) for
+your Minecraft servers. This allows players to connect using human-friendly
+domain names (e.g. `mc.example.com` or `survival.example.com`) without having to
+type non-standard container game ports.
+
+### Global Configuration (`/settings?tab=dns` or `PUT /api/settings`)
+
+| Setting Key | Default | Description |
+| --- | --- | --- |
+| `dns_publish` | `false` | Master toggle to enable Cloudflare SRV DNS management. |
+| `dns_domain` | *(empty)* | Base apex zone domain (e.g. `example.com`). |
+| `dns_zone` | *(empty)* | Cloudflare Zone ID (32-character hexadecimal string). |
+| `dns_api_token` | *(empty)* | Cloudflare API token with `Zone.DNS:Edit` permissions. |
+| `dns_host` | *(empty)* | Target A/AAAA host pointing to the panel host IP (falls back to `dns_domain`). |
+| `dns_service` | `_minecraft` | Service name according to RFC 2782. |
+| `dns_proto` | `_tcp` | Protocol name according to RFC 2782. |
+| `dns_ttl` | `1` | DNS record TTL in seconds (`1` = Auto). |
+
+### Per-Server Routing
+
+- **Custom Subdomain or Apex:** In the server's settings tab ("DNS / Routing"), specify a custom subdomain (e.g. `survival` creates `_minecraft._tcp.survival.example.com` allowing players to join via `survival.example.com`). Specify `@` or leave blank for root apex domain routing (`_minecraft._tcp.example.com`).
+- **One-Click Direct Join:** The server overview displays an interactive badge showing the exact Minecraft join address with one-click clipboard copying.
+- **Idempotent Updates:** Publishing checks for existing records to update them without duplicate conflict errors (`code 81057`). Removing a server automatically cleans up the registered Cloudflare SRV record.
+
 ## Stubbed features
 
 The following are not yet implemented end-to-end and are reserved in the data
-model and configuration only: idle spin-down, Cloudflare SRV registration, and
-TOTP/passkey authentication. Onboarding, server lifecycle
-(create/start/stop/restart/remove), and S3-compatible backups are functional.
+model and configuration only: idle spin-down and TOTP/passkey authentication.
+Onboarding, server lifecycle (create/start/stop/restart/remove), S3-compatible
+backups, and Cloudflare SRV DNS routing are functional.

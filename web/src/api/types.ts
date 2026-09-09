@@ -85,6 +85,64 @@ export interface Settings {
   [key: string]: unknown;
 }
 
+export interface DNSRecord {
+  server_id: string;
+  record_id: string;
+  name: string;
+  subdomain?: string;
+  target: string;
+  port: number;
+  priority: number;
+  weight: number;
+  ttl: number;
+  zone?: string;
+  updated_at: string;
+}
+
+export interface DNSConfig {
+  publish: boolean;
+  domain: string;
+  zone: string;
+  has_token: boolean;
+  host: string;
+  service: string;
+  proto: string;
+  ttl: number;
+  priority: number;
+  weight: number;
+}
+
+export interface DNSStatusResponse {
+  records: DNSRecord[];
+  config?: DNSConfig;
+  configured: boolean;
+}
+
+export interface ServerDNSResponse {
+  record: DNSRecord | null;
+  configured: boolean;
+  domain: string;
+  server_id: string;
+  server_name: string;
+  host_port: number;
+  join_address: string;
+}
+
+export interface DNSTestResult {
+  ok: boolean;
+  zone_name?: string;
+  status?: string;
+  message: string;
+}
+
+export interface PublishDNSInput {
+  subdomain?: string;
+  target?: string;
+  port?: number;
+  priority?: number;
+  weight?: number;
+}
+
 export type BackupStatus = 'pending' | 'completed' | 'failed';
 
 export interface BackupRecord {

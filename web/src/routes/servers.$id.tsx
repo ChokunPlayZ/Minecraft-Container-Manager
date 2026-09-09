@@ -9,6 +9,7 @@ import {
   Copy,
   Cpu,
   FolderOpen,
+  Globe,
   HardDrive,
   Package,
   Play,
@@ -62,16 +63,33 @@ export function ServerDetailRoute() {
   const [copiedAddress, setCopiedAddress] = useState(false);
   const { confirm, dialog } = useModal();
 
+  const [dnsAddress, setDnsAddress] = useState<string>('');
+  const [copiedDns, setCopiedDns] = useState(false);
+
+  const loadDns = useCallback(async (sid: string) => {
+    try {
+      const res = await api.getServerDNS(sid);
+      if (res.join_address && res.record) {
+        setDnsAddress(res.join_address);
+      } else {
+        setDnsAddress('');
+      }
+    } catch {
+      setDnsAddress('');
+    }
+  }, []);
+
   const loadServer = useCallback(async () => {
     setError(null);
     try {
       const s = await api.getServer(id);
       setServer(s);
       setStatusState(s.state);
+      void loadDns(id);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to load server');
     }
-  }, [id]);
+  }, [id, loadDns]);
 
   const pollStatus = useCallback(async () => {
     if (!server) return;
@@ -168,6 +186,13 @@ export function ServerDetailRoute() {
     }
   }
 
+  function copyDnsAddress() {
+    if (!dnsAddress) return;
+    void navigator.clipboard.writeText(dnsAddress);
+    setCopiedDns(true);
+    setTimeout(() => setCopiedDns(false), 2000);
+  }
+
   function copyAddress() {
     if (!server) return;
     const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
@@ -239,7 +264,28 @@ export function ServerDetailRoute() {
                     {server.build ? ` #${server.build}` : ''}
                   </span>
 
-                  {/* Click to copy address */}
+                  {/* Click to copy SRV join address if active */}
+                  {dnsAddress && (
+                    <button
+                      type="button"
+                      onClick={copyDnsAddress}
+                      title="Minecraft SRV Join Address — click to copy"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-xs text-primary hover:bg-primary/20 hover:text-primary transition-colors font-medium shadow-2xs"
+                    >
+                      <Globe className="h-3.5 w-3.5" />
+                      <span className="font-mono font-semibold">{dnsAddress}</span>
+                      {copiedDns ? (
+                        <Check className="h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <Copy className="h-3 w-3 opacity-70" />
+                      )}
+                      {copiedDns && (
+                        <span className="text-[10px] text-emerald-600 font-semibold">Copied!</span>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Click to copy host & port address */}
                   <button
                     type="button"
                     onClick={copyAddress}
@@ -417,6 +463,7 @@ export function ServerDetailRoute() {
                   key={`${server.name}-${server.ram_mb}-${server.host_port}`}
                   server={server}
                   onSaved={(s) => setServer(s)}
+                  onDnsChanged={(addr) => setDnsAddress(addr)}
                 />
                 <InstallPanel
                   serverId={server.id}

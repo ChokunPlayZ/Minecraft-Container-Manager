@@ -196,6 +196,8 @@ func (s *Server) routes() {
 
 	// DNS publishing.
 	s.mux.HandleFunc("GET /api/dns", s.requireAuth(s.wrapJSON(s.handleListDNS)))
+	s.mux.HandleFunc("POST /api/dns/test", s.requireAuth(s.wrapJSON(s.handleTestDNS)))
+	s.mux.HandleFunc("GET /api/servers/{id}/dns", s.requireAuth(s.wrapJSON(s.handleGetServerDNS)))
 	s.mux.HandleFunc("POST /api/servers/{id}/dns", s.requireAuth(s.wrapJSON(s.handlePublishDNS)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}/dns", s.requireAuth(s.wrapJSON(s.handleRemoveDNS)))
 

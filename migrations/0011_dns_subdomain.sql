@@ -1,0 +1,1 @@
+ALTER TABLE dns_records ADD COLUMN subdomain TEXT NOT NULL DEFAULT '';

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -40,19 +42,30 @@ func newCFClient(token, zone string, hc *http.Client, testURL ...string) *cfClie
 	return &cfClient{token: token, zone: zone, http: hc, apiURL: base}
 }
 
+// cfSRVData holds the structured SRV fields required by Cloudflare API v4.
+type cfSRVData struct {
+	Service  string `json:"service"`
+	Proto    string `json:"proto"`
+	Name     string `json:"name"`
+	Priority int    `json:"priority"`
+	Weight   int    `json:"weight"`
+	Port     int    `json:"port"`
+	Target   string `json:"target"`
+}
+
 // cfSRVRecord is the request/response body for an SRV DNS record.
 type cfSRVRecord struct {
-	Type     string `json:"type"`
-	Name     string `json:"name"`
-	Content  string `json:"content"`
-	TTL      int    `json:"ttl"`
-	Priority int    `json:"priority"`
-	Data     struct {
-		Priority int    `json:"priority"`
-		Weight   int    `json:"weight"`
-		Port     int    `json:"port"`
-		Target   string `json:"target"`
-	} `json:"data,omitempty"`
+	Type string    `json:"type"`
+	Name string    `json:"name"`
+	TTL  int       `json:"ttl"`
+	Data cfSRVData `json:"data"`
+}
+
+// cfZoneInfo contains zone metadata returned by Cloudflare.
+type cfZoneInfo struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 // cfResponse is the common Cloudflare API envelope.
@@ -66,8 +79,8 @@ type cfResponse struct {
 }
 
 // createRecord creates a new SRV record and returns its ID.
-func (c *cfClient) createRecord(ctx context.Context, name, target string, port, ttl, priority, weight int) (string, error) {
-	body, err := c.recordPayload(name, target, port, ttl, priority, weight)
+func (c *cfClient) createRecord(ctx context.Context, service, proto, srvName, recordName, target string, port, ttl, priority, weight int) (string, error) {
+	body, err := c.recordPayload(service, proto, srvName, recordName, target, port, ttl, priority, weight)
 	if err != nil {
 		return "", err
 	}
@@ -85,8 +98,8 @@ func (c *cfClient) createRecord(ctx context.Context, name, target string, port, 
 }
 
 // updateRecord updates an existing SRV record in place.
-func (c *cfClient) updateRecord(ctx context.Context, recordID, name, target string, port, ttl, priority, weight int) error {
-	body, err := c.recordPayload(name, target, port, ttl, priority, weight)
+func (c *cfClient) updateRecord(ctx context.Context, recordID, service, proto, srvName, recordName, target string, port, ttl, priority, weight int) error {
+	body, err := c.recordPayload(service, proto, srvName, recordName, target, port, ttl, priority, weight)
 	if err != nil {
 		return err
 	}
@@ -100,18 +113,64 @@ func (c *cfClient) deleteRecord(ctx context.Context, recordID string) error {
 	return err
 }
 
-func (c *cfClient) recordPayload(name, target string, port, ttl, priority, weight int) ([]byte, error) {
-	rec := cfSRVRecord{
-		Type:     "SRV",
-		Name:     name,
-		Content:  fmt.Sprintf("SRV %d %d %d %s", priority, weight, port, target),
-		TTL:      ttl,
-		Priority: priority,
+// findSRVRecord searches for an existing SRV record with the exact name in the zone.
+// Returns the record ID if found, or an empty string if none exists.
+func (c *cfClient) findSRVRecord(ctx context.Context, name string) (string, error) {
+	query := url.Values{}
+	query.Set("type", "SRV")
+	query.Set("name", name)
+	raw, err := c.do(ctx, http.MethodGet, "/zones/"+c.zone+"/dns_records?"+query.Encode(), nil)
+	if err != nil {
+		return "", err
 	}
-	rec.Data.Priority = priority
-	rec.Data.Weight = weight
-	rec.Data.Port = port
-	rec.Data.Target = target
+	var results []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &results); err != nil {
+		return "", fmt.Errorf("decode find result: %w", err)
+	}
+	if len(results) > 0 {
+		return results[0].ID, nil
+	}
+	return "", nil
+}
+
+// verifyZone verifies that the configured API token has access to the zone.
+func (c *cfClient) verifyZone(ctx context.Context) (*cfZoneInfo, error) {
+	raw, err := c.do(ctx, http.MethodGet, "/zones/"+c.zone, nil)
+	if err != nil {
+		return nil, err
+	}
+	var zone cfZoneInfo
+	if err := json.Unmarshal(raw, &zone); err != nil {
+		return nil, fmt.Errorf("decode zone result: %w", err)
+	}
+	return &zone, nil
+}
+
+func (c *cfClient) recordPayload(service, proto, srvName, recordName, target string, port, ttl, priority, weight int) ([]byte, error) {
+	svc := service
+	if !strings.HasPrefix(svc, "_") {
+		svc = "_" + svc
+	}
+	prt := proto
+	if !strings.HasPrefix(prt, "_") {
+		prt = "_" + prt
+	}
+	rec := cfSRVRecord{
+		Type: "SRV",
+		Name: recordName,
+		TTL:  ttl,
+		Data: cfSRVData{
+			Service:  svc,
+			Proto:    prt,
+			Name:     srvName,
+			Priority: priority,
+			Weight:   weight,
+			Port:     port,
+			Target:   target,
+		},
+	}
 	return json.Marshal(rec)
 }
 
@@ -145,7 +204,15 @@ func (c *cfClient) do(ctx context.Context, method, path string, body []byte) (js
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !envelope.Success {
 		msg := "cloudflare error"
 		if len(envelope.Errors) > 0 {
-			msg = envelope.Errors[0].Message
+			var errMsgs []string
+			for _, e := range envelope.Errors {
+				if e.Message != "" {
+					errMsgs = append(errMsgs, fmt.Sprintf("%s (%d)", e.Message, e.Code))
+				}
+			}
+			if len(errMsgs) > 0 {
+				msg = strings.Join(errMsgs, ", ")
+			}
 		}
 		return nil, fmt.Errorf("cloudflare API (%d): %s", resp.StatusCode, msg)
 	}

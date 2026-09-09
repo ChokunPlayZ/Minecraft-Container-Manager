@@ -6,9 +6,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Globe } from 'lucide-react';
+import { ServerDNSCard } from './server-dns-card';
 
-type SettingsTab = 'general' | 'advanced';
+type SettingsTab = 'general' | 'advanced' | 'dns';
 
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -19,7 +20,15 @@ function genId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (s: Server) => void }) {
+export function ServerSettings({
+  server,
+  onSaved,
+  onDnsChanged,
+}: {
+  server: Server;
+  onSaved: (s: Server) => void;
+  onDnsChanged?: (joinAddress: string) => void;
+}) {
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
   const [hostPort, setHostPort] = useState(server.host_port);
@@ -79,10 +88,14 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Settings</CardTitle>
-        <CardDescription>Update the server name, resources, backups, and published ports.</CardDescription>
+        <CardDescription>
+          {tab === 'dns'
+            ? 'Configure Cloudflare SRV records and domain routing.'
+            : 'Update the server name, resources, backups, and published ports.'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={onSubmit} className="space-y-4">
+        <div className="space-y-4">
           <div className="flex items-center gap-1 border-b">
             <button
               type="button"
@@ -106,7 +119,24 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
             >
               Advanced
             </button>
+            <button
+              type="button"
+              onClick={() => setTab('dns')}
+              className={
+                tab === 'dns'
+                  ? 'inline-flex items-center border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
+                  : 'inline-flex items-center border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+              }
+            >
+              <Globe className="h-3.5 w-3.5 mr-1.5" />
+              DNS / Routing
+            </button>
           </div>
+
+          {tab === 'dns' ? (
+            <ServerDNSCard server={server} onDnsChanged={onDnsChanged} bare={true} />
+          ) : (
+            <form onSubmit={onSubmit} className="space-y-4">
 
           {tab === 'general' ? (
             <div className="space-y-4">
@@ -278,6 +308,8 @@ export function ServerSettings({ server, onSaved }: { server: Server; onSaved: (
             {busy ? 'Saving...' : 'Save'}
           </Button>
         </form>
+      )}
+        </div>
       </CardContent>
     </Card>
   );

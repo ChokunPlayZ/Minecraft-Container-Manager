@@ -24,6 +24,12 @@ import type {
   UnzipResult,
   User,
   PasskeyMeta,
+  DNSRecord,
+  DNSConfig,
+  DNSStatusResponse,
+  ServerDNSResponse,
+  DNSTestResult,
+  PublishDNSInput,
 } from './types';
 
 export class ApiError extends Error {
@@ -77,8 +83,137 @@ let mockMods: Mod[] = [
   { name: 'LuckPerms', file: 'LuckPerms-5.4.102.jar', enabled: true },
 ];
 
+let mockDNSSettings: Record<string, string> = {
+  dns_publish: 'true',
+  dns_domain: 'example.com',
+  dns_zone: 'zone-123456789',
+  dns_api_token: 'cf_tok_abcdef123456',
+  dns_host: 'mc-node1.example.com',
+  dns_service: '_minecraft',
+  dns_proto: '_tcp',
+  dns_ttl: '120',
+  dns_priority: '0',
+  dns_weight: '5',
+};
+
+let mockDNSRecords: DNSRecord[] = [
+  {
+    server_id: 'demo',
+    record_id: 'cf-rec-demo-1',
+    name: '_minecraft._tcp.demo.example.com',
+    subdomain: 'demo',
+    target: 'mc-node1.example.com',
+    port: 25565,
+    priority: 0,
+    weight: 5,
+    ttl: 120,
+    zone: 'zone-123456789',
+    updated_at: '2026-01-01T00:00:00Z',
+  },
+];
+
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
+
+  if (path === '/api/settings') {
+    if (init.method === 'PUT' && init.body) {
+      try {
+        const parsed = JSON.parse(init.body as string);
+        if (parsed.settings) {
+          mockDNSSettings = { ...mockDNSSettings, ...parsed.settings };
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return { settings: mockDNSSettings } as T;
+  }
+
+  if (path === '/api/dns/test' && init.method === 'POST') {
+    return {
+      ok: true,
+      zone_name: mockDNSSettings.dns_domain || 'example.com',
+      status: 'active',
+      message: `Successfully verified zone "${mockDNSSettings.dns_domain || 'example.com'}" (status: active)`,
+    } as T;
+  }
+
+  if (path === '/api/dns' && (!init.method || init.method === 'GET')) {
+    return {
+      records: mockDNSRecords,
+      config: {
+        publish: mockDNSSettings.dns_publish === 'true',
+        domain: mockDNSSettings.dns_domain || 'example.com',
+        zone: mockDNSSettings.dns_zone || 'zone-123456789',
+        has_token: !!mockDNSSettings.dns_api_token,
+        host: mockDNSSettings.dns_host || 'mc-node1.example.com',
+        service: mockDNSSettings.dns_service || '_minecraft',
+        proto: mockDNSSettings.dns_proto || '_tcp',
+        ttl: Number(mockDNSSettings.dns_ttl) || 120,
+        priority: Number(mockDNSSettings.dns_priority) || 0,
+        weight: Number(mockDNSSettings.dns_weight) || 5,
+      },
+      configured: mockDNSSettings.dns_publish === 'true' && !!mockDNSSettings.dns_api_token,
+    } as T;
+  }
+
+  if (path.startsWith('/api/servers/') && path.endsWith('/dns')) {
+    const serverId = path.split('/')[3];
+    if (init.method === 'DELETE') {
+      mockDNSRecords = mockDNSRecords.filter((r) => r.server_id !== serverId);
+      return { ok: true } as T;
+    }
+    if (init.method === 'POST') {
+      let sub = 'demo';
+      let target = mockDNSSettings.dns_host || 'mc-node1.example.com';
+      let port = 25565;
+      let priority = 0;
+      let weight = 5;
+      if (init.body) {
+        try {
+          const parsed = JSON.parse(init.body as string);
+          if (parsed.subdomain !== undefined) sub = parsed.subdomain;
+          if (parsed.target) target = parsed.target;
+          if (parsed.port) port = parsed.port;
+          if (parsed.priority !== undefined) priority = parsed.priority;
+          if (parsed.weight !== undefined) weight = parsed.weight;
+        } catch {
+          // ignore
+        }
+      }
+      const domain = mockDNSSettings.dns_domain || 'example.com';
+      const cleanSub = sub === '@' ? '' : sub;
+      const recName = cleanSub ? `_minecraft._tcp.${cleanSub}.${domain}` : `_minecraft._tcp.${domain}`;
+      const joinAddress = cleanSub ? `${cleanSub}.${domain}` : domain;
+      const rec: DNSRecord = {
+        server_id: serverId,
+        record_id: `cf-rec-${serverId}`,
+        name: recName,
+        subdomain: sub,
+        target,
+        port,
+        priority,
+        weight,
+        ttl: 120,
+        zone: mockDNSSettings.dns_zone || 'zone-123456789',
+        updated_at: new Date().toISOString(),
+      };
+      mockDNSRecords = [...mockDNSRecords.filter((r) => r.server_id !== serverId), rec];
+      return { ok: true, record: rec, join_address: joinAddress } as T;
+    }
+    const rec = mockDNSRecords.find((r) => r.server_id === serverId) || null;
+    const domain = mockDNSSettings.dns_domain || 'example.com';
+    const joinAddress = rec ? (rec.subdomain && rec.subdomain !== '@' ? `${rec.subdomain}.${domain}` : domain) : '';
+    return {
+      record: rec,
+      configured: mockDNSSettings.dns_publish === 'true' && !!mockDNSSettings.dns_api_token,
+      domain,
+      server_id: serverId,
+      server_name: 'Mega SMP Server',
+      host_port: 25565,
+      join_address: joinAddress,
+    } as T;
+  }
 
   if (path === '/api/auth/me') {
     return { id: 'admin-1', email: 'admin@mcm.panel' } as T;
@@ -377,10 +512,36 @@ export const api = {
 
   availablePorts: () => request<number[]>('/api/ports/available'),
 
-  getSettings: () => request<Settings>('/api/settings'),
+  getSettings: () => request<{ settings: Record<string, string> }>('/api/settings'),
 
-  putSettings: (settings: Settings) =>
-    request<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  putSettings: (settings: Record<string, string>) =>
+    request<{ settings: Record<string, string> }>('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ settings }),
+    }),
+
+  getDNS: () => request<DNSStatusResponse>('/api/dns'),
+
+  testDNS: (creds?: { api_token?: string; zone?: string; domain?: string }) =>
+    request<DNSTestResult>('/api/dns/test', {
+      method: 'POST',
+      body: JSON.stringify(creds ?? {}),
+    }),
+
+  getServerDNS: (serverId: string) =>
+    request<ServerDNSResponse>(`/api/servers/${serverId}/dns`),
+
+  publishServerDNS: (serverId: string, input?: PublishDNSInput) =>
+    request<{ ok: boolean; record: DNSRecord; join_address: string }>(
+      `/api/servers/${serverId}/dns`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input ?? {}),
+      },
+    ),
+
+  removeServerDNS: (serverId: string) =>
+    request<{ ok: boolean }>(`/api/servers/${serverId}/dns`, { method: 'DELETE' }),
 
   listUsers: () =>
     request<{ users: User[] }>('/api/users').then((res) => res.users ?? []),

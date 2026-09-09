@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { KeyRound, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Globe, KeyRound, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { PasskeyMeta } from '../api/types';
 import { AppShell } from '../components/app-shell';
@@ -11,28 +11,80 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { useModal } from '../components/ui/modal';
+import { CloudflareDNSSettingsCard } from '../components/cloudflare-dns-settings';
+
+interface SettingsSearch {
+  tab?: 'account' | 'dns';
+}
 
 export const Route = createFileRoute('/settings')({
+  validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
+    tab: search.tab === 'dns' ? 'dns' : 'account',
+  }),
   component: SettingsRoute,
 });
 
 function SettingsRoute() {
   const { user, refresh } = useAuth();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const activeTab = search.tab ?? 'account';
+
+  const setTab = (tab: 'account' | 'dns') => {
+    void navigate({
+      search: (prev) => ({ ...prev, tab }),
+    });
+  };
 
   return (
     <RequireAuth>
       <AppShell>
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Account</h1>
+          <h1 className="text-2xl font-semibold">Settings</h1>
           <p className="text-sm text-muted-foreground">
-            Manage your profile, sign-in security, and authenticators.
+            Manage your account security and panel configurations.
           </p>
         </div>
-        <div className="max-w-2xl space-y-6">
-          <ProfileCard email={user?.email ?? ''} userId={user?.id ?? ''} onSaved={() => void refresh()} />
-          <TOTPCard />
-          <PasskeyCard />
+
+        {/* Tab navigation */}
+        <div className="mb-6 flex items-center gap-1 border-b">
+          <button
+            type="button"
+            onClick={() => setTab('account')}
+            className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              activeTab === 'account'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <ShieldCheck className="h-4 w-4" />
+            Account Security
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('dns')}
+            className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              activeTab === 'dns'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Globe className="h-4 w-4" />
+            Cloudflare DNS
+          </button>
         </div>
+
+        {activeTab === 'account' ? (
+          <div className="max-w-2xl space-y-6">
+            <ProfileCard email={user?.email ?? ''} userId={user?.id ?? ''} onSaved={() => void refresh()} />
+            <TOTPCard />
+            <PasskeyCard />
+          </div>
+        ) : (
+          <div className="max-w-3xl">
+            <CloudflareDNSSettingsCard />
+          </div>
+        )}
       </AppShell>
     </RequireAuth>
   );
