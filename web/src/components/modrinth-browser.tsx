@@ -17,12 +17,14 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import {
+  findInstalledMod,
   formatCount,
   formatFileSize,
   getLoaderLabel,
   getServerLoaders,
   getProjectVersions,
   isModInstalled,
+  isVersionFileInstalled,
   searchModrinth,
 } from '../api/modrinth';
 import type {
@@ -89,6 +91,7 @@ export function ModrinthBrowser({
   // Installation state
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installedIds, setInstalledIds] = useState<Set<string>>(new Set());
+  const [installedFiles, setInstalledFiles] = useState<Set<string>>(new Set());
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Project details & versions dialog
@@ -245,6 +248,7 @@ export function ModrinthBrowser({
       const mod = await api.downloadMod(server.id, primaryFile.url, primaryFile.filename);
       onModInstalled(mod);
       setInstalledIds((prev) => new Set([...prev, project.project_id, project.slug]));
+      setInstalledFiles((prev) => new Set([...prev, primaryFile.filename.toLowerCase()]));
       setNotification({
         type: 'success',
         text: `Installed ${project.title} (${primaryFile.filename})`,
@@ -268,11 +272,11 @@ export function ModrinthBrowser({
       if (selectedProject) {
         setInstalledIds((prev) => new Set([...prev, selectedProject.project_id, selectedProject.slug]));
       }
+      setInstalledFiles((prev) => new Set([...prev, file.filename.toLowerCase()]));
       setNotification({
         type: 'success',
         text: `Installed ${projectTitle} (${file.filename})`,
       });
-      setSelectedProject(null);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
@@ -535,7 +539,8 @@ export function ModrinthBrowser({
       ) : (
         <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
           {results.map((project) => {
-            const isInstalled = checkInstalled(project);
+            const installedMod = findInstalledMod(project, installedMods);
+            const isInstalled = Boolean(installedMod) || checkInstalled(project);
             const isInstalling = installingId === project.project_id;
             const isClientOnly = project.server_side === 'unsupported';
 
@@ -583,6 +588,14 @@ export function ModrinthBrowser({
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                         {project.description}
                       </p>
+
+                      {/* Installed jar indicator if on server */}
+                      {installedMod && (
+                        <div className="mt-1.5 flex items-center gap-1.5 rounded bg-emerald-500/10 px-2 py-0.5 text-[11px] font-mono text-emerald-700 dark:text-emerald-300">
+                          <Check className="h-3 w-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                          <span className="truncate">Installed: {installedMod.file}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -788,6 +801,31 @@ export function ModrinthBrowser({
                 </p>
               </div>
 
+              {/* Installed jar on server banner if detected */}
+              {(() => {
+                const selectedInstalledMod = findInstalledMod(selectedProject, installedMods);
+                if (!selectedInstalledMod) return null;
+                return (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-900 dark:text-emerald-200">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Check className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      <div className="min-w-0">
+                        <span className="font-semibold text-foreground">Installed Jar on Server:</span>{' '}
+                        <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300 truncate">
+                          {selectedInstalledMod.file}
+                        </span>
+                      </div>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
+                    >
+                      {selectedInstalledMod.enabled ? 'Enabled' : 'Disabled'}
+                    </Badge>
+                  </div>
+                );
+              })()}
+
               {/* Versions List */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -815,14 +853,21 @@ export function ModrinthBrowser({
                       const primaryFile = ver.files.find((f) => f.primary) || ver.files[0];
                       if (!primaryFile) return null;
                       const isDownloadingThis = installingId === primaryFile.url;
+                      const isThisFileInstalled =
+                        installedFiles.has(primaryFile.filename.toLowerCase()) ||
+                        isVersionFileInstalled(primaryFile, installedMods);
 
                       return (
                         <div
                           key={ver.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border bg-background/60 p-3 text-xs transition-colors hover:border-primary/40 hover:bg-secondary/20"
+                          className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-xs transition-colors ${
+                            isThisFileInstalled
+                              ? 'border-emerald-500/50 bg-emerald-500/10 dark:bg-emerald-950/20 shadow-2xs'
+                              : 'border-border bg-background/60 hover:border-primary/40 hover:bg-secondary/20'
+                          }`}
                         >
                           <div className="min-w-0 space-y-1">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold text-foreground truncate">
                                 {ver.name || ver.version_number}
                               </span>
@@ -832,6 +877,15 @@ export function ModrinthBrowser({
                               >
                                 {ver.version_type}
                               </Badge>
+                              {isThisFileInstalled && (
+                                <Badge
+                                  variant="outline"
+                                  className="border-emerald-500/40 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 gap-1 text-[10px] px-1.5 py-0 font-medium"
+                                >
+                                  <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                  Installed Jar
+                                </Badge>
+                              )}
                             </div>
 
                             <p className="truncate text-xs font-mono text-muted-foreground">
@@ -855,24 +909,47 @@ export function ModrinthBrowser({
                             </div>
                           </div>
 
-                          <Button
-                            size="sm"
-                            disabled={isDownloadingThis}
-                            onClick={() => void handleInstallVersion(primaryFile, selectedProject.title)}
-                            className="shrink-0 gap-1.5"
-                          >
-                            {isDownloadingThis ? (
-                              <>
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                Downloading...
-                              </>
-                            ) : (
-                              <>
-                                <Download className="h-3.5 w-3.5" />
-                                Install
-                              </>
-                            )}
-                          </Button>
+                          {isThisFileInstalled ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isDownloadingThis}
+                              onClick={() => void handleInstallVersion(primaryFile, selectedProject.title)}
+                              className="shrink-0 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+                              title="Reinstall this version"
+                            >
+                              {isDownloadingThis ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  Downloading...
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                                  Installed
+                                </>
+                              )}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              disabled={isDownloadingThis}
+                              onClick={() => void handleInstallVersion(primaryFile, selectedProject.title)}
+                              className="shrink-0 gap-1.5"
+                            >
+                              {isDownloadingThis ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  Downloading...
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="h-3.5 w-3.5" />
+                                  Install
+                                </>
+                              )}
+                            </Button>
+                          )}
                         </div>
                       );
                     })}

@@ -193,13 +193,16 @@ describe('ModrinthBrowser component', () => {
     });
   });
 
-  it('opens details modal when clicking Details', async () => {
+  it('opens details modal and displays installed jar on server and marks version as installed', async () => {
     const user = userEvent.setup();
+    const installed: Mod[] = [
+      { name: 'Chunky', file: 'Chunky-1.4.28.jar', enabled: true },
+    ];
 
     render(
       <ModrinthBrowser
         server={mockServer}
-        installedMods={[]}
+        installedMods={installed}
         onModInstalled={vi.fn()}
       />,
     );
@@ -208,13 +211,19 @@ describe('ModrinthBrowser component', () => {
       expect(screen.getByText('Chunky')).toBeInTheDocument();
     });
 
+    // Card should also show the installed jar
+    expect(screen.getByText(/Installed: Chunky-1.4.28.jar/i)).toBeInTheDocument();
+
     const detailButtons = screen.getAllByRole('button', { name: /Details/i });
     await user.click(detailButtons[1]);
 
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByText('Available Releases (1)')).toBeInTheDocument();
-      expect(screen.getByText('Chunky 1.4.28')).toBeInTheDocument();
+      // Verifies installed jar banner is shown
+      expect(screen.getByText('Installed Jar on Server:')).toBeInTheDocument();
+      expect(screen.getAllByText('Chunky-1.4.28.jar').length).toBeGreaterThan(0);
+      // Verifies the version row is marked with "Installed Jar" badge
+      expect(screen.getByText('Installed Jar')).toBeInTheDocument();
     });
   });
 });

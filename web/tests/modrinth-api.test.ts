@@ -1,10 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
+  findInstalledMod,
   formatCount,
   formatFileSize,
   getLoaderLabel,
   getServerLoaders,
   isModInstalled,
+  isVersionFileInstalled,
   searchModrinth,
   getProjectVersions,
 } from '../src/api/modrinth';
@@ -52,7 +54,58 @@ describe('modrinth api & matching utilities', () => {
     expect(isModInstalled({ slug: 'fabric-api', title: 'Fabric API' }, installed)).toBe(true);
     expect(isModInstalled({ slug: 'luckperms', title: 'LuckPerms' }, installed)).toBe(true);
     expect(isModInstalled({ slug: 'worldedit', title: 'WorldEdit' }, installed)).toBe(false);
+
+    expect(findInstalledMod({ slug: 'essentialsx', title: 'EssentialsX' }, installed)?.file).toBe(
+      'EssentialsX-2.20.1.jar',
+    );
+    expect(findInstalledMod({ slug: 'worldedit', title: 'WorldEdit' }, installed)).toBeUndefined();
+
+    expect(
+      isVersionFileInstalled({ filename: 'EssentialsX-2.20.1.jar' }, installed),
+    ).toBe(true);
+    expect(
+      isVersionFileInstalled({ filename: 'EssentialsX-2.21.0.jar' }, installed),
+    ).toBe(false);
   });
+
+  it('distinguishes between similar mod names (e.g. AppleSkin vs Appleskin+- and Sodium vs Sodium Extra)', () => {
+    const regularAppleSkin: Mod[] = [
+      { name: 'appleskin-fabric-mc26.2-3.0.10', file: 'appleskin-fabric-mc26.2-3.0.10.jar', enabled: true },
+    ];
+
+    const appleSkinProject = { title: 'AppleSkin', slug: 'appleskin' };
+    const appleSkinPlusMinusProject = { title: 'Appleskin+-', slug: 'appleskinplusminus' };
+
+    // When regular appleskin is installed, Appleskin+- must NOT be marked as installed
+    expect(isModInstalled(appleSkinProject, regularAppleSkin)).toBe(true);
+    expect(isModInstalled(appleSkinPlusMinusProject, regularAppleSkin)).toBe(false);
+    expect(findInstalledMod(appleSkinProject, regularAppleSkin)?.file).toBe(
+      'appleskin-fabric-mc26.2-3.0.10.jar',
+    );
+    expect(findInstalledMod(appleSkinPlusMinusProject, regularAppleSkin)).toBeUndefined();
+
+    // When Appleskin+- is installed, regular AppleSkin must NOT be marked as installed
+    const plusMinusAppleSkin: Mod[] = [
+      { name: 'appleskin+--1.0.3', file: 'appleskin+--1.0.3.jar', enabled: true },
+    ];
+    expect(isModInstalled(appleSkinProject, plusMinusAppleSkin)).toBe(false);
+    expect(isModInstalled(appleSkinPlusMinusProject, plusMinusAppleSkin)).toBe(true);
+    expect(findInstalledMod(appleSkinPlusMinusProject, plusMinusAppleSkin)?.file).toBe(
+      'appleskin+--1.0.3.jar',
+    );
+    expect(findInstalledMod(appleSkinProject, plusMinusAppleSkin)).toBeUndefined();
+
+    // Sodium vs Sodium Extra
+    const sodiumInstalled: Mod[] = [
+      { name: 'sodium-fabric-0.6.0', file: 'sodium-fabric-0.6.0.jar', enabled: true },
+    ];
+    const sodiumProject = { title: 'Sodium', slug: 'sodium' };
+    const sodiumExtraProject = { title: 'Sodium Extra', slug: 'sodium-extra' };
+
+    expect(isModInstalled(sodiumProject, sodiumInstalled)).toBe(true);
+    expect(isModInstalled(sodiumExtraProject, sodiumInstalled)).toBe(false);
+  });
+
 
   describe('searchModrinth API client', () => {
     beforeEach(() => {

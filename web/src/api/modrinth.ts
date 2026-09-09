@@ -4,6 +4,7 @@ import type {
   ModrinthSearchHit,
   ModrinthSearchResult,
   ModrinthVersion,
+  ModrinthVersionFile,
   ServerType,
 } from './types';
 
@@ -85,25 +86,82 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
+ * Extracts canonical mod identifier from a jar filename or display name,
+ * stripping version, loader, and Minecraft version suffixes.
+ */
+export function extractModId(filename: string): string {
+  let base = filename.replace(/\.jar(\.disabled)?$/i, '').toLowerCase();
+
+  // 1. Remove loader + version/remaining: -fabric-..., _forge_...
+  const loaderPattern = /[-_](fabric|forge|neoforge|quilt|bukkit|spigot|paper|folia|purpur|sponge|bungee|velocity|mod)([-_].*)?$/i;
+  base = base.replace(loaderPattern, '');
+
+  // 2. Remove mc version prefix if any: -mc1.20..., _mc1.21...
+  base = base.replace(/[-_]mc\d+.*$/i, '');
+
+  // 3. Remove version suffix starting with - or _: -1.0.0, _v2.3, +1.0, -build.45
+  base = base.replace(/[-_](v?\d|build).*$/i, '');
+
+  return base.trim();
+}
+
+/**
  * Checks if a Modrinth project is already installed in the server.
  */
 export function isModInstalled(
   project: Pick<ModrinthSearchHit, 'slug' | 'title'>,
   installedMods: Mod[],
 ): boolean {
-  const normSlug = project.slug.toLowerCase().replace(/[-_]/g, '');
-  const normTitle = project.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return findInstalledMod(project, installedMods) !== undefined;
+}
 
-  return installedMods.some((m) => {
-    const fn = m.file.toLowerCase().replace(/[-_.]/g, '');
-    const mn = m.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+/**
+ * Finds the installed mod on the server that matches a Modrinth project precisely.
+ */
+export function findInstalledMod(
+  project: Pick<ModrinthSearchHit, 'slug' | 'title'>,
+  installedMods: Mod[],
+): Mod | undefined {
+  const targetSlug = project.slug.toLowerCase().trim().replace(/_/g, '-');
+  const targetTitle = project.title.toLowerCase().trim().replace(/[\s_]+/g, '-');
+
+  return installedMods.find((m) => {
+    // 1. Exact match on raw filename or name
+    const rawFile = m.file.replace(/\.jar(\.disabled)?$/i, '').toLowerCase();
+    const rawName = m.name.toLowerCase();
+    if (
+      rawFile === targetSlug ||
+      rawFile === targetTitle ||
+      rawName === targetSlug ||
+      rawName === targetTitle
+    ) {
+      return true;
+    }
+
+    // 2. Canonical mod identifier match
+    const fileModId = extractModId(m.file).replace(/_/g, '-');
+    const nameModId = extractModId(m.name).replace(/_/g, '-');
 
     return (
-      fn.includes(normSlug) ||
-      mn.includes(normSlug) ||
-      fn.includes(normTitle) ||
-      mn.includes(normTitle)
+      fileModId === targetSlug ||
+      fileModId === targetTitle ||
+      nameModId === targetSlug ||
+      nameModId === targetTitle
     );
+  });
+}
+
+/**
+ * Checks if a specific version file matches any installed mod jar on the server.
+ */
+export function isVersionFileInstalled(
+  file: Pick<ModrinthVersionFile, 'filename'>,
+  installedMods: Mod[],
+): boolean {
+  const targetName = file.filename.toLowerCase();
+  return installedMods.some((m) => {
+    const fn = m.file.toLowerCase();
+    return fn === targetName || fn === `${targetName}.disabled` || targetName === `${fn}.disabled`;
   });
 }
 
