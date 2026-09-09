@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
@@ -225,6 +225,146 @@ describe('ModrinthBrowser component', () => {
       // Verifies the version row is marked with "Installed Jar" badge
       expect(screen.getByText('Installed Jar')).toBeInTheDocument();
     });
+  });
+
+  it('supports infinite lazy load pagination via fallback button when IntersectionObserver is not available', async () => {
+    const user = userEvent.setup();
+    const mockHit3: ModrinthSearchHit = {
+      ...mockHit1,
+      project_id: 'hit-3',
+      title: 'WorldEdit',
+      slug: 'worldedit',
+    };
+
+    vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/search')) {
+        if (urlStr.includes('offset=0')) {
+          return {
+            ok: true,
+            json: async () => ({
+              hits: [mockHit1, mockHit2],
+              offset: 0,
+              limit: 20,
+              total_hits: 3,
+            }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            hits: [mockHit3],
+            offset: 2,
+            limit: 20,
+            total_hits: 3,
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    });
+
+    render(
+      <ModrinthBrowser
+        server={mockServer}
+        installedMods={[]}
+        onModInstalled={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('LuckPerms')).toBeInTheDocument();
+      expect(screen.getByText('Chunky')).toBeInTheDocument();
+    });
+
+    // In standard jsdom without IntersectionObserver, fallback button is rendered
+    const loadMoreButton = screen.getByRole('button', { name: /Load More/i });
+    expect(loadMoreButton).toBeInTheDocument();
+
+    await user.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('WorldEdit')).toBeInTheDocument();
+      expect(screen.getByText('LuckPerms')).toBeInTheDocument();
+      expect(screen.getByText('Chunky')).toBeInTheDocument();
+    });
+
+    // Catalog end message should now appear
+    expect(screen.getByText(/You've reached the end of the catalog/i)).toBeInTheDocument();
+  });
+
+  it('automatically triggers infinite lazy load via IntersectionObserver when sentinel intersects', async () => {
+    let observerCallback: ((entries: IntersectionObserverEntry[]) => void) | null = null;
+
+    class MockIntersectionObserver {
+      constructor(callback: (entries: IntersectionObserverEntry[]) => void) {
+        observerCallback = callback;
+      }
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    }
+
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+
+    const mockHit3: ModrinthSearchHit = {
+      ...mockHit1,
+      project_id: 'hit-3',
+      title: 'Geyser',
+      slug: 'geyser',
+    };
+
+    vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/search')) {
+        if (urlStr.includes('offset=0')) {
+          return {
+            ok: true,
+            json: async () => ({
+              hits: [mockHit1, mockHit2],
+              offset: 0,
+              limit: 20,
+              total_hits: 3,
+            }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            hits: [mockHit3],
+            offset: 2,
+            limit: 20,
+            total_hits: 3,
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    });
+
+    render(
+      <ModrinthBrowser
+        server={mockServer}
+        installedMods={[]}
+        onModInstalled={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('LuckPerms')).toBeInTheDocument();
+      expect(screen.getByTestId('infinite-scroll-sentinel')).toBeInTheDocument();
+    });
+
+    // Simulate the sentinel scrolling into view
+    expect(observerCallback).not.toBeNull();
+    act(() => {
+      observerCallback!([{ isIntersecting: true } as IntersectionObserverEntry]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Geyser')).toBeInTheDocument();
+      expect(screen.getByText('LuckPerms')).toBeInTheDocument();
+    });
+
+    vi.unstubAllGlobals();
   });
 });
 

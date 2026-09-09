@@ -83,7 +83,6 @@ export function ModrinthBrowser({
   // Results & pagination
   const [results, setResults] = useState<ModrinthSearchHit[]>([]);
   const [totalHits, setTotalHits] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,19 +109,26 @@ export function ModrinthBrowser({
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const isFetchingRef = useRef(false);
+  const offsetRef = useRef(0);
 
   const performSearch = useCallback(
     async (resetOffset = true) => {
+      if (isFetchingRef.current && !resetOffset) return;
+      isFetchingRef.current = true;
+
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const currentOffset = resetOffset ? 0 : offset;
+      const currentOffset = resetOffset ? 0 : offsetRef.current;
       if (resetOffset) {
         setLoading(true);
         setError(null);
+        offsetRef.current = 0;
       } else {
         setLoadingMore(true);
       }
@@ -144,21 +150,22 @@ export function ModrinthBrowser({
 
         if (resetOffset) {
           setResults(data.hits);
-          setOffset(20);
+          offsetRef.current = data.hits.length;
         } else {
           setResults((prev) => [...prev, ...data.hits]);
-          setOffset((prev) => prev + 20);
+          offsetRef.current = currentOffset + data.hits.length;
         }
         setTotalHits(data.total_hits);
       } catch (err: unknown) {
         if (err instanceof Error && err.name === 'AbortError') return;
         setError(err instanceof Error ? err.message : 'Failed to search Modrinth');
       } finally {
+        isFetchingRef.current = false;
         setLoading(false);
         setLoadingMore(false);
       }
     },
-    [query, activeLoaders, activeVersion, category, serverSideOnly, sort, offset],
+    [query, activeLoaders, activeVersion, category, serverSideOnly, sort],
   );
 
   // Trigger search on filter changes with debounce for query
@@ -174,6 +181,34 @@ export function ModrinthBrowser({
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, [performSearch]);
+
+  const hasMore = results.length < totalHits && results.length > 0;
+  const supportsIntersectionObserver =
+    typeof window !== 'undefined' && 'IntersectionObserver' in window;
+
+  // Infinite scroll lazy loading
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasMore || loading || loadingMore || !supportsIntersectionObserver) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && !isFetchingRef.current) {
+          void performSearch(false);
+        }
+      },
+      {
+        rootMargin: '400px',
+        threshold: 0,
+      },
+    );
+
+    observer.observe(sentinel);
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasMore, loading, loadingMore, supportsIntersectionObserver, performSearch]);
 
 
   // Dismiss notification after 4s
@@ -692,24 +727,37 @@ export function ModrinthBrowser({
         </div>
       )}
 
-      {/* Pagination: Load More */}
-      {results.length > 0 && results.length < totalHits && !loading && (
-        <div className="flex justify-center pt-2">
-          <Button
-            variant="outline"
-            onClick={() => void performSearch(false)}
-            disabled={loadingMore}
-            className="gap-2"
-          >
-            {loadingMore ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading more...
-              </>
-            ) : (
-              `Load More (${results.length} of ${totalHits.toLocaleString()})`
-            )}
-          </Button>
+      {/* Infinite Scroll Sentinel & Loading Indicator */}
+      {hasMore && (
+        <div
+          ref={sentinelRef}
+          data-testid="infinite-scroll-sentinel"
+          className="flex flex-col items-center justify-center py-6 text-xs text-muted-foreground"
+        >
+          {loadingMore ? (
+            <div className="flex items-center gap-2 rounded-full border border-primary/20 bg-secondary/70 px-4 py-2 shadow-2xs backdrop-blur-xs animate-in fade-in">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="font-medium text-foreground">Loading more mods...</span>
+            </div>
+          ) : !supportsIntersectionObserver ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void performSearch(false)}
+              disabled={loadingMore}
+            >
+              Load More ({results.length} of {totalHits.toLocaleString()})
+            </Button>
+          ) : (
+            <div className="h-10 w-full" aria-hidden="true" />
+          )}
+        </div>
+      )}
+
+      {/* End of catalog notice */}
+      {!hasMore && results.length > 0 && !loading && (
+        <div className="border-t border-border/40 py-6 text-center text-xs text-muted-foreground">
+          You&apos;ve reached the end of the catalog ({totalHits.toLocaleString()} mods loaded).
         </div>
       )}
 
