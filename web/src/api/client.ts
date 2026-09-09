@@ -67,6 +67,9 @@ function isMock(): boolean {
   );
 }
 
+let mockPropertiesContent =
+  '# Minecraft server properties\nserver-port=25565\nmotd=§aMega SMP Server §7| §e100 Players Online!\nmax-players=150\npvp=true\nview-distance=10\nsimulation-distance=8\nwhite-list=true\nenforce-whitelist=false\ndifficulty=hard\nenable-rcon=true\nrcon.port=25575';
+
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
 
@@ -130,11 +133,21 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
       ],
     } as T;
   }
+
   if (path.startsWith('/api/servers/') && path.endsWith('/properties')) {
+    if (init.method === 'PUT' && init.body) {
+      try {
+        const parsed = JSON.parse(init.body as string);
+        if (typeof parsed.content === 'string') {
+          mockPropertiesContent = parsed.content;
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
     return {
       exists: true,
-      content:
-        '# Minecraft server properties\nserver-port=25565\nmotd=Mega SMP Server | 100 Players Online!\nmax-players=150\npvp=true\nview-distance=10\nsimulation-distance=8\nwhite-list=true\nenforce-whitelist=false\ndifficulty=hard\nenable-rcon=true\nrcon.port=25575',
+      content: mockPropertiesContent,
     } as T;
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/mods')) {
