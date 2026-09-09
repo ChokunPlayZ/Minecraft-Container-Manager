@@ -59,7 +59,150 @@ async function ensureCsrf(): Promise<string> {
   return csrfPromise;
 }
 
+function isMock(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.location.search.includes('mock=true') ||
+    window.localStorage?.getItem('mcm-mock') === 'true'
+  );
+}
+
+function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
+  if (!isMock()) return null;
+
+  if (path === '/api/auth/me') {
+    return { id: 'admin-1', email: 'admin@mcm.panel' } as T;
+  }
+  if (path === '/api/auth/csrf') {
+    return { csrf_token: 'mock-csrf-token' } as T;
+  }
+  if (path === '/api/onboarding/status') {
+    return { onboarding_required: false } as T;
+  }
+  if (path === '/api/servers' && (!init.method || init.method === 'GET')) {
+    return {
+      servers: [
+        {
+          id: 'demo',
+          name: 'Mega SMP Server',
+          server_type: 'paper',
+          version: '1.21.4',
+          build: '145',
+          ram_mb: 8192,
+          cpu_limit: 4,
+          memory_limit_mb: 8192,
+          host_port: 25565,
+          extra_ports: [],
+          container_id: 'mcm-srv-demo',
+          state: 'running',
+          backup_enabled: true,
+          backup_interval_minutes: 60,
+          spin_down_enabled: false,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/status')) {
+    return { id: 'demo', state: 'running', ram_mb: 8192, host_port: 25565, container_id: 'mcm-srv-demo' } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/players')) {
+    const players = Array.from({ length: 100 }, (_, i) => ({
+      name: `Player_${String(i + 1).padStart(3, '0')}`,
+    }));
+    return { source: 'rcon', players } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/ops')) {
+    return {
+      ops: [
+        { uuid: 'u-1', name: 'Player_001', level: 4, bypassesPlayerLimit: true },
+        { uuid: 'u-2', name: 'Player_005', level: 4 },
+      ],
+    } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/whitelist')) {
+    return {
+      whitelist: [
+        { uuid: 'w-1', name: 'Player_001' },
+        { uuid: 'w-2', name: 'Player_002' },
+        { uuid: 'w-3', name: 'Player_003' },
+      ],
+    } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/properties')) {
+    return {
+      exists: true,
+      content:
+        '# Minecraft server properties\nserver-port=25565\nmotd=Mega SMP Server | 100 Players Online!\nmax-players=150\npvp=true\nview-distance=10\nsimulation-distance=8\nwhite-list=true\nenforce-whitelist=false\ndifficulty=hard\nenable-rcon=true\nrcon.port=25575',
+    } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/mods')) {
+    return {
+      type: 'plugins',
+      items: [
+        { name: 'EssentialsX', file: 'EssentialsX-2.20.1.jar', enabled: true },
+        { name: 'Vault', file: 'Vault.jar', enabled: true },
+        { name: 'CoreProtect', file: 'CoreProtect-22.4.jar', enabled: true },
+        { name: 'LuckPerms', file: 'LuckPerms-5.4.102.jar', enabled: true },
+      ],
+    } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/backups')) {
+    return {
+      backups: [
+        {
+          id: 'b-1',
+          server_id: 'demo',
+          name: 'daily-snapshot-2026-09-09',
+          size_bytes: 524288000,
+          location: 's3://backups',
+          status: 'completed',
+          created_at: '2026-09-09T04:00:00Z',
+        },
+      ],
+    } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/install')) {
+    return {
+      server_id: 'demo',
+      installed: true,
+      version: '1.21.4',
+      build: '145',
+    } as T;
+  }
+  if (path.includes('/command')) {
+    return { ok: true, response: 'Command executed successfully.' } as T;
+  }
+  if (path.startsWith('/api/servers/')) {
+    return {
+      id: 'demo',
+      name: 'Mega SMP Server',
+      server_type: 'paper',
+      version: '1.21.4',
+      build: '145',
+      ram_mb: 8192,
+      cpu_limit: 4,
+      memory_limit_mb: 8192,
+      host_port: 25565,
+      extra_ports: [],
+      container_id: 'mcm-srv-demo',
+      state: 'running',
+      backup_enabled: true,
+      backup_interval_minutes: 60,
+      spin_down_enabled: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    } as T;
+  }
+
+  return null;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const mockResult = handleMockRequest<T>(path, init);
+  if (mockResult !== null) return mockResult;
+
   const method = init.method ?? 'GET';
   const headers: Record<string, string> = {
     ...(init.headers as Record<string, string> | undefined),
@@ -90,6 +233,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
 
 export const api = {
   onboardingStatus: () => request<{ onboarding_required: boolean }>('/api/onboarding/status'),
@@ -126,6 +270,23 @@ export const api = {
   serverStatus: (id: string) => request<ServerStatus>(`/api/servers/${id}/status`),
 
   openConsoleStream: (id: string, onLine: (line: ConsoleLine) => void): (() => void) => {
+    if (isMock()) {
+      const mockLines: ConsoleLine[] = [
+        { timestamp: '12:00:01', level: 'INFO', message: 'Starting minecraft server version 1.21.4 (Paper #145)' },
+        { timestamp: '12:00:03', level: 'INFO', message: 'Loading server.properties' },
+        { timestamp: '12:00:05', level: 'INFO', message: 'Default game type: SURVIVAL' },
+        { timestamp: '12:00:08', level: 'INFO', message: 'Preparing start region for dimension minecraft:overworld' },
+        { timestamp: '12:00:12', level: 'INFO', message: 'Done (11.84s)! For help, type "help"' },
+        { timestamp: '12:00:13', level: 'INFO', message: '[Essentials] Enabling Essentials v2.20.1' },
+        { timestamp: '12:00:14', level: 'INFO', message: '[LuckPerms] Enabling LuckPerms v5.4.102' },
+        { timestamp: '12:00:30', level: 'INFO', message: 'Player_001 joined the game' },
+        { timestamp: '12:00:45', level: 'INFO', message: 'There are 100 of a max 150 players online' },
+      ];
+      const timer = setTimeout(() => {
+        mockLines.forEach((l) => onLine(l));
+      }, 50);
+      return () => clearTimeout(timer);
+    }
     const source = new EventSource(`/api/servers/${id}/console`, { withCredentials: true });
     source.onmessage = (event) => {
       try {
@@ -139,6 +300,7 @@ export const api = {
     };
     return () => source.close();
   },
+
 
   consoleCommand: (id: string, command: string) =>
     request<{ ok: boolean }>(`/api/servers/${id}/console/command`, {
