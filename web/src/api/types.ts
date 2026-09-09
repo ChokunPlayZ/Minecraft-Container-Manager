@@ -108,6 +108,7 @@ export interface PlayerCommandArgs {
   amount?: number;
   mode?: string;
   command?: string;
+  nbt?: string;
 }
 
 export type PlayerCommandAction =

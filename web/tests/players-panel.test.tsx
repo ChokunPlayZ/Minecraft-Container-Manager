@@ -301,4 +301,61 @@ describe('PlayersPanel with Large Player Counts', () => {
 
     expect(screen.getByText('Control which players are allowed to join.')).toBeInTheDocument();
   });
+
+  it('opens GiveItemModal from player row and gives pre-enchanted item', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'players').mockResolvedValue({
+      players: [{ name: 'Steve' }],
+      source: 'rcon',
+    });
+    vi.spyOn(api, 'ops').mockResolvedValue({ ops: [] });
+    const runCommandSpy = vi.spyOn(api, 'runPlayerCommand').mockResolvedValue({ ok: true, response: 'Success' });
+
+    render(<PlayersPanel server={mockServer} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Steve')).toBeInTheDocument();
+    });
+
+    // Click Actions dropdown menu
+    const actionsBtn = screen.getByRole('button', { name: 'Commands for Steve' });
+    await user.click(actionsBtn);
+
+    // Click Give Items in dropdown
+    const giveOption = screen.getByRole('menuitem', { name: /Give Items/i });
+    await user.click(giveOption);
+
+    // Give Item Modal opens
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/Give Items/i)).toBeInTheDocument();
+
+    // Toggle NBT switch
+    const nbtSwitch = screen.getByRole('switch');
+    await user.click(nbtSwitch);
+
+    // Click God Sword preset
+    const godSwordPreset = screen.getByRole('button', { name: /God Sword/i });
+    await user.click(godSwordPreset);
+
+    // Click Give button
+    const submitBtn = screen.getByRole('button', { name: /Give to Steve/i });
+    await user.click(submitBtn);
+
+    expect(runCommandSpy).toHaveBeenCalledWith(
+      'test-server-id',
+      'Steve',
+      'give',
+      expect.objectContaining({
+        item: 'minecraft:diamond_sword',
+        amount: 1,
+        nbt: expect.stringContaining("sharpness':5"),
+      }),
+    );
+
+    // Modal closes and success banner appears
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByText(/Successfully gave 1x minecraft:diamond_sword to Steve/i)).toBeInTheDocument();
+    });
+  });
 });

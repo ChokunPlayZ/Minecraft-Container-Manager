@@ -27,6 +27,8 @@ import { api, ApiError } from '../api/client';
 import type { Op, Player, PlayerCommandAction, PlayerCommandArgs, Server } from '../api/types';
 import { OpsPanel } from './ops-panel';
 import { WhitelistPanel } from './whitelist-panel';
+import { GiveItemModal } from './give-item-modal';
+import { PlayerAvatar } from './player-avatar';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -681,8 +683,38 @@ export function PlayersPanel({ server }: { server: Server }) {
         </Card>
       )}
 
+      {/* Give Item Dialog */}
+      {active && active.action === 'give' && (
+        <GiveItemModal
+          open={true}
+          onClose={() => setActive(null)}
+          player={active.player}
+          serverVersion={server.version}
+          busy={formBusy}
+          onSubmit={async ({ item: givenItem, amount: givenAmount, nbt }) => {
+            setFormBusy(true);
+            setError(null);
+            setNotice(null);
+            try {
+              await api.runPlayerCommand(server.id, active.player, 'give', {
+                item: givenItem,
+                amount: givenAmount,
+                nbt,
+              });
+              setNotice(`Successfully gave ${givenAmount}x ${givenItem} to ${active.player}.`);
+              setActive(null);
+              void load();
+            } catch (err) {
+              setError(err instanceof ApiError ? err.detail : 'Failed to run command');
+              setFormBusy(false);
+              throw err;
+            }
+          }}
+        />
+      )}
+
       {/* Action Dialog Modal */}
-      {active && activeDef && (
+      {active && activeDef && active.action !== 'give' && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in"
           role="presentation"
@@ -829,34 +861,6 @@ export function PlayersPanel({ server }: { server: Server }) {
         </div>
       )}
     </div>
-  );
-}
-
-function PlayerAvatar({ name, size = 32 }: { name: string; size?: number }) {
-  const [loadError, setLoadError] = useState(false);
-  const avatarUrl = `https://mc-heads.net/avatar/${encodeURIComponent(name)}/${size}`;
-
-  if (loadError) {
-    return (
-      <div
-        style={{ width: size, height: size }}
-        className="flex shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground font-semibold text-xs select-none"
-      >
-        <User className="h-4 w-4" />
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={avatarUrl}
-      alt={name}
-      width={size}
-      height={size}
-      loading="lazy"
-      onError={() => setLoadError(true)}
-      className="shrink-0 rounded-md bg-muted object-contain shadow-2xs"
-    />
   );
 }
 

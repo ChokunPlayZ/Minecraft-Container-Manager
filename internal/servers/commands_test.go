@@ -27,6 +27,9 @@ func TestBuildPlayerCommand(t *testing.T) {
 		{name: "Steve", action: "deop", want: "deop Steve"},
 		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "minecraft:diamond", Amount: 5}, want: "give Steve minecraft:diamond 5"},
 		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "diamond_sword"}, want: "give Steve diamond_sword 1"},
+		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "minecraft:diamond_sword", Nbt: "[enchantments={levels:{'minecraft:sharpness':5}}]", Amount: 1}, want: "give Steve minecraft:diamond_sword[enchantments={levels:{'minecraft:sharpness':5}}] 1"},
+		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "diamond_sword{Enchantments:[{id:\"sharpness\",lvl:5s}]}"}, want: "give Steve diamond_sword{Enchantments:[{id:\"sharpness\",lvl:5s}]} 1"},
+		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "minecraft:bow[unbreakable={}]", Amount: 2}, want: "give Steve minecraft:bow[unbreakable={}] 2"},
 		{name: "Steve", action: "gamemode", args: PlayerCommandArgs{Mode: "creative"}, want: "gamemode creative Steve"},
 		{name: "Steve", action: "gamemode", args: PlayerCommandArgs{Mode: "1"}, want: "gamemode 1 Steve"},
 		{name: "Steve", action: "tp", args: PlayerCommandArgs{Target: "Alex"}, want: "tp Steve Alex"},
@@ -62,6 +65,10 @@ func TestBuildPlayerCommandInvalid(t *testing.T) {
 		{name: "Steve", action: "pardon"}, // missing target
 		{name: "Steve", action: "give"},   // missing item
 		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "../bomb"}},
+		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "minecraft:diamond_sword[unclosed"}},
+		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "minecraft:diamond_sword{unclosed"}},
+		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "minecraft:diamond_sword\nkill Steve"}},
+		{name: "Steve", action: "give", args: PlayerCommandArgs{Item: "minecraft:diamond_sword", Nbt: "[foo\nbar]"}},
 		{name: "Steve", action: "gamemode", args: PlayerCommandArgs{Mode: "hamster"}},
 		{name: "Steve", action: "tp"},     // missing target
 		{name: "Steve", action: "fly"},    // unknown action

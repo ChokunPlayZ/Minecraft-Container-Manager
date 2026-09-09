@@ -44,6 +44,96 @@ type PlayerCommandArgs struct {
 	Amount  int    `json:"amount,omitempty"`  // give
 	Mode    string `json:"mode,omitempty"`    // gamemode
 	Command string `json:"command,omitempty"` // custom free-form
+	Nbt     string `json:"nbt,omitempty"`     // give NBT / item components
+}
+
+// validateAndBuildGiveItem combines and validates item identifier and NBT/components.
+func validateAndBuildGiveItem(item, nbt string) (string, error) {
+	full := strings.TrimSpace(item)
+	nbtTrim := strings.TrimSpace(nbt)
+	if full == "" {
+		return "", errors.New("missing item identifier")
+	}
+	if nbtTrim != "" && !strings.ContainsAny(full, "[{") {
+		full += nbtTrim
+	}
+
+	if len(full) > 4096 {
+		return "", errors.New("item specification exceeds maximum length of 4096 characters")
+	}
+
+	// Reject control characters (including newlines and carriage returns)
+	for i := 0; i < len(full); i++ {
+		b := full[i]
+		if b < 0x20 || b == 0x7f {
+			return "", errors.New("item specification contains invalid control characters")
+		}
+	}
+
+	bracketIdx := strings.IndexAny(full, "[{")
+	if bracketIdx == -1 {
+		if !itemRe.MatchString(full) {
+			return "", fmt.Errorf("invalid item %q", full)
+		}
+		return full, nil
+	}
+
+	baseItem := full[:bracketIdx]
+	if !itemRe.MatchString(baseItem) {
+		return "", fmt.Errorf("invalid base item identifier %q", baseItem)
+	}
+
+	tag := full[bracketIdx:]
+	isBracket := strings.HasPrefix(tag, "[") && strings.HasSuffix(tag, "]")
+	isBrace := strings.HasPrefix(tag, "{") && strings.HasSuffix(tag, "}")
+	if !isBracket && !isBrace {
+		return "", errors.New("NBT/components must be enclosed in [] or {}")
+	}
+
+	// Validate balanced brackets and quotes
+	var square, curly int
+	var inQuote rune
+	var escape bool
+
+	for _, r := range tag {
+		if escape {
+			escape = false
+			continue
+		}
+		if r == '\\' {
+			escape = true
+			continue
+		}
+		if inQuote != 0 {
+			if r == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		if r == '"' || r == '\'' {
+			inQuote = r
+			continue
+		}
+		switch r {
+		case '[':
+			square++
+		case ']':
+			square--
+		case '{':
+			curly++
+		case '}':
+			curly--
+		}
+		if square < 0 || curly < 0 {
+			return "", errors.New("mismatched brackets or braces in NBT/components")
+		}
+	}
+
+	if square != 0 || curly != 0 || inQuote != 0 {
+		return "", errors.New("unclosed bracket, brace, or quote in NBT/components")
+	}
+
+	return full, nil
 }
 
 // BuildPlayerCommand validates an action and turns it (plus the target player
@@ -68,13 +158,14 @@ func BuildPlayerCommand(name, action string, args PlayerCommandArgs) (string, er
 	case "deop":
 		return "deop " + name, nil
 	case "give":
-		if !itemRe.MatchString(args.Item) {
-			return "", fmt.Errorf("invalid item %q", args.Item)
+		fullItem, err := validateAndBuildGiveItem(args.Item, args.Nbt)
+		if err != nil {
+			return "", err
 		}
 		if args.Amount < 1 {
 			args.Amount = 1
 		}
-		return fmt.Sprintf("give %s %s %d", name, args.Item, args.Amount), nil
+		return fmt.Sprintf("give %s %s %d", name, fullItem, args.Amount), nil
 	case "gamemode":
 		mode := strings.ToLower(strings.TrimSpace(args.Mode))
 		if !validGamemodes[mode] {
