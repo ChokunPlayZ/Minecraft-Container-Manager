@@ -295,6 +295,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     let name = 'Downloaded-Mod';
     let file = 'downloaded-mod.jar';
     let deleteOldName = '';
+    let projectId: string | undefined;
+    let projectSlug: string | undefined;
+    let provider: ModProvider | undefined;
     if (init.body) {
       try {
         const parsed = JSON.parse(init.body as string);
@@ -305,6 +308,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
         if (parsed.delete_old_name) {
           deleteOldName = parsed.delete_old_name;
         }
+        if (parsed.project_id) projectId = parsed.project_id;
+        if (parsed.project_slug) projectSlug = parsed.project_slug;
+        if (parsed.provider) provider = parsed.provider;
       } catch {
         // ignore
       }
@@ -318,7 +324,22 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
           m.name !== deleteOldName.replace(/\.jar$/i, ''),
       );
     }
-    const newMod: Mod = { name, file, enabled: true };
+    const newMod: Mod = {
+      name,
+      file,
+      enabled: true,
+      project_id: projectId,
+      project_slug: projectSlug,
+      provider,
+      ...(file.includes('graves-3.12.0')
+        ? {
+            mod_id: 'universal-graves',
+            title: 'Universal Graves',
+            version: '3.12.0+26.2',
+            sha1: '56c26a9318c739908dbd0c66cee85b842567c276',
+          }
+        : {}),
+    };
     mockMods = [...mockMods.filter((m) => m.name !== name && m.file !== file), newMod];
     return newMod as T;
   }
@@ -650,10 +671,23 @@ export const api = {
 
   mods: (serverId: string) => request<ModList>(`/api/servers/${serverId}/mods`),
 
-  downloadMod: (serverId: string, url: string, filename: string, deleteOldName?: string) =>
+  downloadMod: (
+    serverId: string,
+    url: string,
+    filename: string,
+    deleteOldName?: string,
+    meta?: { projectId?: string; projectSlug?: string; provider?: ModProvider },
+  ) =>
     request<Mod>(`/api/servers/${serverId}/mods/download`, {
       method: 'POST',
-      body: JSON.stringify({ url, filename, delete_old_name: deleteOldName }),
+      body: JSON.stringify({
+        url,
+        filename,
+        delete_old_name: deleteOldName,
+        project_id: meta?.projectId,
+        project_slug: meta?.projectSlug,
+        provider: meta?.provider,
+      }),
     }),
 
   uploadMod: (

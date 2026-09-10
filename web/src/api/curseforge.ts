@@ -202,34 +202,65 @@ export async function getCurseForgeDownloadUrl(
  * Checks if a CurseForge mod matches an installed mod.
  */
 export function findInstalledCurseForgeMod(
-  mod: Pick<CurseForgeMod, 'name' | 'slug'>,
+  mod: Pick<CurseForgeMod, 'name' | 'slug'> & { id?: number },
   installedMods: Mod[],
 ): Mod | undefined {
   const targetSlug = mod.slug.toLowerCase().trim().replace(/_/g, '-');
   const targetName = mod.name.toLowerCase().trim().replace(/[\s_]+/g, '-');
+  const targetIdStr = mod.id ? String(mod.id) : undefined;
 
-  return installedMods.find((m) => {
-    const rawFile = m.file.replace(/\.jar(\.disabled)?$/i, '').toLowerCase();
-    const rawName = m.name.toLowerCase();
-    if (
-      rawFile === targetSlug ||
-      rawFile === targetName ||
-      rawName === targetSlug ||
-      rawName === targetName
-    ) {
-      return true;
+  // 1. Exact catalog project match
+  for (const m of installedMods) {
+    if (targetIdStr && m.project_id && m.project_id === targetIdStr) {
+      return m;
+    }
+    if (m.project_slug && m.project_slug.toLowerCase() === targetSlug) {
+      return m;
+    }
+  }
+
+  // 2. Canonical mod identifier from jar manifest
+  for (const m of installedMods) {
+    if (m.mod_id) {
+      const cleanModId = m.mod_id.toLowerCase().trim().replace(/_/g, '-');
+      if (cleanModId === targetSlug || cleanModId === targetName) {
+        return m;
+      }
+      if (m.title) {
+        const cleanModTitle = m.title.toLowerCase().trim().replace(/[\s_]+/g, '-');
+        if (cleanModTitle === targetSlug || cleanModTitle === targetName) {
+          return m;
+        }
+      }
+      continue;
     }
 
+    // 3. Exact match on raw filename or name
+    const rawFile = m.file.replace(/\.jar(\.disabled)?$/i, '').toLowerCase();
+    const rawName = m.name.toLowerCase();
+    if (rawFile === targetSlug || rawName === targetSlug) {
+      return m;
+    }
+    if (rawFile === targetName || rawName === targetName) {
+      if (targetName === targetSlug || targetName.includes('-')) {
+        return m;
+      }
+    }
+
+    // 4. Filename mod identifier
     const fileModId = extractModId(m.file).replace(/_/g, '-');
     const nameModId = extractModId(m.name).replace(/_/g, '-');
 
-    return (
-      fileModId === targetSlug ||
-      fileModId === targetName ||
-      nameModId === targetSlug ||
-      nameModId === targetName
-    );
-  });
+    if (fileModId === targetSlug || nameModId === targetSlug) {
+      return m;
+    }
+
+    if (targetName === targetSlug && fileModId === targetName) {
+      return m;
+    }
+  }
+
+  return undefined;
 }
 
 export function isCurseForgeModInstalled(

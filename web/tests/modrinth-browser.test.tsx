@@ -187,6 +187,8 @@ describe('ModrinthBrowser component', () => {
         'server-1',
         'https://cdn.modrinth.com/data/chunky.jar',
         'Chunky-1.4.28.jar',
+        undefined,
+        expect.objectContaining({ projectId: 'hit-2', projectSlug: 'chunky', provider: 'modrinth' }),
       );
       expect(onModInstalled).toHaveBeenCalled();
     });
@@ -426,6 +428,7 @@ describe('ModrinthBrowser component', () => {
         'https://cdn.modrinth.com/data/chunky.jar',
         'Chunky-1.4.28.jar',
         'Chunky',
+        expect.objectContaining({ projectId: 'hit-2', projectSlug: 'chunky', provider: 'modrinth' }),
       );
       expect(onModInstalled).toHaveBeenCalled();
       expect(onModDeleted).toHaveBeenCalledWith('Chunky');
@@ -487,6 +490,8 @@ describe('ModrinthBrowser component', () => {
         'server-1',
         'https://cdn.modrinth.com/data/chunky.jar',
         'Chunky-1.4.28.jar',
+        undefined,
+        expect.objectContaining({ projectId: 'hit-2', projectSlug: 'chunky', provider: 'modrinth' }),
       );
       expect(onModInstalled).toHaveBeenCalled();
       expect(onModDeleted).not.toHaveBeenCalled();

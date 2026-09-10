@@ -138,19 +138,49 @@ export function findInstalledSpigetResource(
   installedMods: Mod[],
 ): Mod | undefined {
   const targetName = resource.name.toLowerCase().trim().replace(/[\s_]+/g, '-');
+  const targetIdStr = String(resource.id);
 
-  return installedMods.find((m) => {
+  // 1. Exact catalog resource ID match
+  for (const m of installedMods) {
+    if (m.project_id && m.project_id === targetIdStr) {
+      return m;
+    }
+  }
+
+  // 2. Canonical mod identifier from jar manifest
+  for (const m of installedMods) {
+    if (m.mod_id) {
+      const cleanModId = m.mod_id.toLowerCase().trim().replace(/_/g, '-');
+      if (cleanModId === targetName) {
+        return m;
+      }
+      if (m.title) {
+        const cleanModTitle = m.title.toLowerCase().trim().replace(/[\s_]+/g, '-');
+        if (cleanModTitle === targetName) {
+          return m;
+        }
+      }
+      // If mod_id is known and does not match this resource, do not loosely match
+      continue;
+    }
+
+    // 3. Exact match on raw filename or name
     const rawFile = m.file.replace(/\.jar(\.disabled)?$/i, '').toLowerCase();
     const rawName = m.name.toLowerCase();
     if (rawFile === targetName || rawName === targetName) {
-      return true;
+      return m;
     }
 
+    // 4. Filename mod identifier
     const fileModId = extractModId(m.file).replace(/_/g, '-');
     const nameModId = extractModId(m.name).replace(/_/g, '-');
 
-    return fileModId === targetName || nameModId === targetName;
-  });
+    if (fileModId === targetName || nameModId === targetName) {
+      return m;
+    }
+  }
+
+  return undefined;
 }
 
 export function isSpigetResourceInstalled(

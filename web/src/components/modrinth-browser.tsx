@@ -27,6 +27,7 @@ import {
   getProjectVersions,
   isModInstalled,
   isVersionFileInstalled,
+  lookupModrinthVersionFiles,
   searchModrinth,
 } from '../api/modrinth';
 import type {
@@ -97,7 +98,43 @@ export function ModrinthBrowser({
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installedIds, setInstalledIds] = useState<Set<string>>(new Set());
   const [installedFiles, setInstalledFiles] = useState<Set<string>>(new Set());
+  const [hashProjectMap, setHashProjectMap] = useState<Map<string, string>>(new Map());
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Batch query Modrinth for installed mod SHA1 hashes
+  useEffect(() => {
+    const hashes = installedMods
+      .map((m) => m.sha1)
+      .filter((h): h is string => Boolean(h && h.length > 0));
+
+    if (hashes.length === 0) return;
+
+    let isMounted = true;
+    const controller = new AbortController();
+
+    lookupModrinthVersionFiles(hashes, 'sha1', controller.signal)
+      .then((data) => {
+        if (!isMounted) return;
+        const newMap = new Map<string, string>();
+        const newProjectIds = new Set<string>();
+        for (const [hash, ver] of Object.entries(data)) {
+          if (ver.project_id) {
+            newMap.set(hash, ver.project_id);
+            newProjectIds.add(ver.project_id);
+          }
+        }
+        setHashProjectMap(newMap);
+        setInstalledIds((prev) => new Set([...prev, ...newProjectIds]));
+      })
+      .catch(() => {
+        // network error / offline - fallback works seamlessly
+      });
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, [installedMods]);
 
   // Project details & versions dialog
   const [selectedProject, setSelectedProject] = useState<ModrinthSearchHit | null>(null);
@@ -269,13 +306,16 @@ export function ModrinthBrowser({
 
   function findExistingOldJar(
     targetFilename: string,
-    project?: Pick<ModrinthSearchHit, 'slug' | 'title'>,
+    project?: Pick<ModrinthSearchHit, 'slug' | 'title'> & { project_id?: string },
   ): Mod | undefined {
-    let existingMod = project ? findInstalledMod(project, installedMods) : undefined;
+    let existingMod = project ? findInstalledMod(project, installedMods, hashProjectMap) : undefined;
     if (!existingMod) {
       const baseId = extractModId(targetFilename).replace(/_/g, '-');
       if (baseId.length > 0) {
         existingMod = installedMods.find((m) => {
+          if (m.mod_id) {
+            return m.mod_id.toLowerCase().replace(/_/g, '-') === baseId;
+          }
           const mId = extractModId(m.file).replace(/_/g, '-');
           return mId === baseId;
         });
@@ -317,11 +357,14 @@ export function ModrinthBrowser({
             url,
             filename,
             deleteOldMod.name,
+            { projectId, projectSlug, provider: 'modrinth' },
           )
         : await api.downloadMod(
             server.id,
             url,
             filename,
+            undefined,
+            { projectId, projectSlug, provider: 'modrinth' },
           );
       onModInstalled(mod);
       if (deleteOldMod) {
@@ -489,7 +532,7 @@ export function ModrinthBrowser({
     if (installedIds.has(project.project_id) || installedIds.has(project.slug)) {
       return true;
     }
-    return isModInstalled(project, installedMods);
+    return isModInstalled(project, installedMods, hashProjectMap);
   }
 
   return (
@@ -773,7 +816,7 @@ export function ModrinthBrowser({
       ) : (
         <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
           {results.map((project) => {
-            const installedMod = findInstalledMod(project, installedMods);
+            const installedMod = findInstalledMod(project, installedMods, hashProjectMap);
             const isInstalled = Boolean(installedMod) || checkInstalled(project);
             const isInstalling = installingId === project.project_id;
             const isClientOnly = project.server_side === 'unsupported';
@@ -1064,7 +1107,7 @@ export function ModrinthBrowser({
 
               {/* Installed jar on server banner if detected */}
               {(() => {
-                const selectedInstalledMod = findInstalledMod(selectedProject, installedMods);
+                const selectedInstalledMod = findInstalledMod(selectedProject, installedMods, hashProjectMap);
                 if (!selectedInstalledMod) return null;
                 return (
                   <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-900 dark:text-emerald-200">

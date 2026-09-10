@@ -244,8 +244,14 @@ export function CurseForgeBrowser({
       }
 
       const installed = deleteOldMod
-        ? await api.downloadMod(server.id, downloadUrl, filename, deleteOldMod.name)
-        : await api.downloadMod(server.id, downloadUrl, filename);
+        ? await api.downloadMod(server.id, downloadUrl, filename, deleteOldMod.name, {
+            projectSlug: modSlug,
+            provider: 'curseforge',
+          })
+        : await api.downloadMod(server.id, downloadUrl, filename, undefined, {
+            projectSlug: modSlug,
+            provider: 'curseforge',
+          });
       onModInstalled(installed);
       if (deleteOldMod) {
         onModDeleted?.(deleteOldMod.name);

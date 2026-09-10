@@ -1,6 +1,8 @@
 package servers
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -151,4 +153,58 @@ func TestDeleteModAndDownloadNew(t *testing.T) {
 		t.Fatalf("new jar missing: %v", err)
 	}
 }
+
+func TestDownloadAndListUniversalGravesWithManifest(t *testing.T) {
+	// Create zip with fabric.mod.json
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, _ := zw.Create("fabric.mod.json")
+	_, _ = w.Write([]byte(`{"id":"universal-graves","name":"Universal Graves","version":"3.12.0+26.2"}`))
+	_ = zw.Close()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/java-archive")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer ts.Close()
+
+	s, serverID := newModTestStore(t, "fabric")
+	ctx := context.Background()
+
+	mod, err := s.DownloadMod(ctx, serverID, "graves-3.12.0+26.2.jar", ts.URL+"/graves.jar", ModDownloadMeta{
+		ProjectID:   "yn9u3ypm",
+		ProjectSlug: "universal-graves",
+		Provider:    "modrinth",
+	})
+	if err != nil {
+		t.Fatalf("DownloadMod returned error: %v", err)
+	}
+
+	if mod.ModID != "universal-graves" {
+		t.Errorf("got ModID %q, want 'universal-graves'", mod.ModID)
+	}
+	if mod.Title != "Universal Graves" {
+		t.Errorf("got Title %q, want 'Universal Graves'", mod.Title)
+	}
+	if mod.ProjectID != "yn9u3ypm" {
+		t.Errorf("got ProjectID %q, want 'yn9u3ypm'", mod.ProjectID)
+	}
+	if mod.SHA1 == "" {
+		t.Errorf("expected non-empty SHA1")
+	}
+
+	list, err := s.ListMods(ctx, serverID)
+	if err != nil {
+		t.Fatalf("ListMods returned error: %v", err)
+	}
+	if len(list.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(list.Items))
+	}
+	item := list.Items[0]
+	if item.ModID != "universal-graves" || item.ProjectID != "yn9u3ypm" || item.Title != "Universal Graves" {
+		t.Errorf("unexpected item fields in ListMods: %+v", item)
+	}
+}
+
 

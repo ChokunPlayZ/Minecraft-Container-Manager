@@ -105,50 +105,135 @@ export function extractModId(filename: string): string {
   return base.trim();
 }
 
+export interface ModrinthVersionFileLookup {
+  id: string;
+  project_id: string;
+  author_id: string;
+  name: string;
+  version_number: string;
+  files: ModrinthVersionFile[];
+}
+
+/**
+ * Looks up multiple version files from Modrinth by their hash.
+ * Endpoint: POST /v2/version_files
+ */
+export async function lookupModrinthVersionFiles(
+  hashes: string[],
+  algorithm: 'sha1' | 'sha512' = 'sha1',
+  signal?: AbortSignal,
+): Promise<Record<string, ModrinthVersionFileLookup>> {
+  if (hashes.length === 0) return {};
+  try {
+    const res = await fetch(`${MODRINTH_API_BASE}/version_files`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'mcm-panel/1.0 (https://github.com/mcm-panel/mcm)',
+      },
+      body: JSON.stringify({
+        hashes,
+        algorithm,
+      }),
+      signal,
+    });
+    if (!res.ok) {
+      return {};
+    }
+    return (await res.json()) as Record<string, ModrinthVersionFileLookup>;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Checks if a Modrinth project is already installed in the server.
  */
 export function isModInstalled(
-  project: Pick<ModrinthSearchHit, 'slug' | 'title'>,
+  project: Pick<ModrinthSearchHit, 'slug' | 'title'> & { project_id?: string },
   installedMods: Mod[],
+  hashProjectMap?: Map<string, string>,
 ): boolean {
-  return findInstalledMod(project, installedMods) !== undefined;
+  return findInstalledMod(project, installedMods, hashProjectMap) !== undefined;
 }
 
 /**
  * Finds the installed mod on the server that matches a Modrinth project precisely.
  */
 export function findInstalledMod(
-  project: Pick<ModrinthSearchHit, 'slug' | 'title'>,
+  project: Pick<ModrinthSearchHit, 'slug' | 'title'> & { project_id?: string },
   installedMods: Mod[],
+  hashProjectMap?: Map<string, string>, // sha1 -> project_id or slug
 ): Mod | undefined {
   const targetSlug = project.slug.toLowerCase().trim().replace(/_/g, '-');
   const targetTitle = project.title.toLowerCase().trim().replace(/[\s_]+/g, '-');
+  const targetId = project.project_id;
 
-  return installedMods.find((m) => {
-    // 1. Exact match on raw filename or name
-    const rawFile = m.file.replace(/\.jar(\.disabled)?$/i, '').toLowerCase();
-    const rawName = m.name.toLowerCase();
-    if (
-      rawFile === targetSlug ||
-      rawFile === targetTitle ||
-      rawName === targetSlug ||
-      rawName === targetTitle
-    ) {
-      return true;
+  // 1. Exact catalog / hash-based project ID match
+  for (const m of installedMods) {
+    if (targetId && m.project_id && m.project_id === targetId) {
+      return m;
+    }
+    if (m.project_slug && m.project_slug.toLowerCase() === targetSlug) {
+      return m;
+    }
+    if (m.sha1 && hashProjectMap && targetId) {
+      const mappedId = hashProjectMap.get(m.sha1);
+      if (mappedId && (mappedId === targetId || mappedId === targetSlug)) {
+        return m;
+      }
+    }
+  }
+
+  // 2. Canonical mod identifier match from jar manifest (e.g. fabric.mod.json, plugin.yml)
+  for (const m of installedMods) {
+    if (m.mod_id) {
+      const cleanModId = m.mod_id.toLowerCase().trim().replace(/_/g, '-');
+      if (cleanModId === targetSlug || cleanModId === targetTitle) {
+        return m;
+      }
+      if (m.title) {
+        const cleanModTitle = m.title.toLowerCase().trim().replace(/[\s_]+/g, '-');
+        if (cleanModTitle === targetSlug || cleanModTitle === targetTitle) {
+          return m;
+        }
+      }
+      // If the mod_id is explicitly known from jar manifest, NEVER allow loose filename
+      // matching to hijack this jar for an unrelated project (e.g. graves jar for ly-graves)
+      continue;
     }
 
-    // 2. Canonical mod identifier match
+    // 3. Exact match on raw filename or name
+    const rawFile = m.file.replace(/\.jar(\.disabled)?$/i, '').toLowerCase();
+    const rawName = m.name.toLowerCase();
+    if (rawFile === targetSlug || rawName === targetSlug) {
+      return m;
+    }
+    if (rawFile === targetTitle || rawName === targetTitle) {
+      // Only match on targetTitle if targetTitle is specific (matches targetSlug or contains hyphen)
+      if (targetTitle === targetSlug || targetTitle.includes('-')) {
+        return m;
+      }
+    }
+
+    // 4. Canonical mod identifier match from filename
     const fileModId = extractModId(m.file).replace(/_/g, '-');
     const nameModId = extractModId(m.name).replace(/_/g, '-');
 
-    return (
-      fileModId === targetSlug ||
-      fileModId === targetTitle ||
-      nameModId === targetSlug ||
-      nameModId === targetTitle
-    );
-  });
+    if (fileModId === targetSlug || nameModId === targetSlug) {
+      return m;
+    }
+
+    // Match on targetTitle, but NEVER if targetSlug has a prefix before targetTitle
+    // (e.g. fileModId "graves" must NOT match project with slug "ly-graves" and title "Graves")
+    if (fileModId === targetTitle || nameModId === targetTitle) {
+      if (!targetSlug.endsWith(`-${targetTitle}`)) {
+        return m;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 /**

@@ -141,6 +141,8 @@ describe('CatalogBrowser multi-provider component', () => {
         mockServer.id,
         'https://hangarcdn.papermc.io/plugins/pop4959/Chunky/versions/1.4.10/PAPER/Chunky-1.4.10.jar',
         'Chunky-1.4.10.jar',
+        undefined,
+        expect.objectContaining({ projectSlug: 'Chunky', provider: 'hangar' }),
       );
       expect(onInstalled).toHaveBeenCalled();
     });
@@ -204,6 +206,8 @@ describe('CatalogBrowser multi-provider component', () => {
         mockServer.id,
         'https://cdn.spiget.org/file/spiget-resources/28140.jar',
         'LuckPerms.jar',
+        undefined,
+        expect.objectContaining({ projectId: '28140', provider: 'spiget' }),
       );
       expect(onInstalled).toHaveBeenCalled();
     });

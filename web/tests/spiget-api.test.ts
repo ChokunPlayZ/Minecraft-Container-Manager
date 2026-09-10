@@ -113,4 +113,17 @@ describe('Spiget (SpigotMC) API client', () => {
     expect(isSpigetResourceInstalled({ id: 28140, name: 'LuckPerms' }, installedMods)).toBe(true);
     expect(isSpigetResourceInstalled({ id: 12345, name: 'Vault' }, installedMods)).toBe(false);
   });
+
+  it('does not match Spigot Graves resource to Universal Graves jar', () => {
+    const universalGravesMod: Mod = {
+      name: 'graves-3.12.0+26.2',
+      file: 'graves-3.12.0+26.2.jar',
+      enabled: true,
+      mod_id: 'universal-graves',
+      title: 'Universal Graves',
+    };
+    const spigotGravesResource = { id: 18848, name: 'Graves' };
+    expect(isSpigetResourceInstalled(spigotGravesResource, [universalGravesMod])).toBe(false);
+    expect(findInstalledSpigetResource(spigotGravesResource, [universalGravesMod])).toBeUndefined();
+  });
 });

@@ -106,6 +106,77 @@ describe('modrinth api & matching utilities', () => {
     expect(isModInstalled(sodiumExtraProject, sodiumInstalled)).toBe(false);
   });
 
+  it('accurately matches Universal Graves jar and rejects other grave plugins', () => {
+    const universalGravesMod: Mod = {
+      name: 'graves-3.12.0+26.2',
+      file: 'graves-3.12.0+26.2.jar',
+      enabled: true,
+      mod_id: 'universal-graves',
+      title: 'Universal Graves',
+      version: '3.12.0+26.2',
+      sha1: '56c26a9318c739908dbd0c66cee85b842567c276',
+    };
+    const installed = [universalGravesMod];
+
+    const universalGravesProject = {
+      project_id: 'yn9u3ypm',
+      title: 'Universal Graves',
+      slug: 'universal-graves',
+    };
+    const lyGravesProject = {
+      project_id: 'kieAM9Us',
+      title: 'Graves',
+      slug: 'ly-graves',
+    };
+    const playerGravesProject = {
+      project_id: 'Lz6s3KKO',
+      title: 'Graves',
+      slug: 'player-graves',
+    };
+    const ketketGravesProject = {
+      project_id: 'bYcfmIoG',
+      title: 'Graves',
+      slug: 'ketket-graves',
+    };
+
+    // 1. Universal Graves must be matched
+    expect(isModInstalled(universalGravesProject, installed)).toBe(true);
+    expect(findInstalledMod(universalGravesProject, installed)?.file).toBe('graves-3.12.0+26.2.jar');
+
+    // 2. Other grave plugins must NOT be matched
+    expect(isModInstalled(lyGravesProject, installed)).toBe(false);
+    expect(findInstalledMod(lyGravesProject, installed)).toBeUndefined();
+
+    expect(isModInstalled(playerGravesProject, installed)).toBe(false);
+    expect(findInstalledMod(playerGravesProject, installed)).toBeUndefined();
+
+    expect(isModInstalled(ketketGravesProject, installed)).toBe(false);
+    expect(findInstalledMod(ketketGravesProject, installed)).toBeUndefined();
+
+    // 3. Fallback without mod_id: author-prefixed slugs (ly-graves) must still reject graves-3.12.0.jar
+    const uninspectedJar: Mod = {
+      name: 'graves-3.12.0+26.2',
+      file: 'graves-3.12.0+26.2.jar',
+      enabled: true,
+    };
+    expect(isModInstalled(lyGravesProject, [uninspectedJar])).toBe(false);
+    expect(findInstalledMod(lyGravesProject, [uninspectedJar])).toBeUndefined();
+    expect(isModInstalled(playerGravesProject, [uninspectedJar])).toBe(false);
+
+    // 4. SHA1 hash map match
+    const hashProjectMap = new Map<string, string>([
+      ['56c26a9318c739908dbd0c66cee85b842567c276', 'yn9u3ypm'],
+    ]);
+    const hashOnlyMod: Mod = {
+      name: 'custom-file-name',
+      file: 'custom-file-name.jar',
+      enabled: true,
+      sha1: '56c26a9318c739908dbd0c66cee85b842567c276',
+    };
+    expect(isModInstalled(universalGravesProject, [hashOnlyMod], hashProjectMap)).toBe(true);
+    expect(isModInstalled(lyGravesProject, [hashOnlyMod], hashProjectMap)).toBe(false);
+  });
+
 
   describe('searchModrinth API client', () => {
     beforeEach(() => {

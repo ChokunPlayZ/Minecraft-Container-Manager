@@ -46,6 +46,9 @@ func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 		URL           string `json:"url"`
 		Filename      string `json:"filename"`
 		DeleteOldName string `json:"delete_old_name"`
+		ProjectID     string `json:"project_id"`
+		ProjectSlug   string `json:"project_slug"`
+		Provider      string `json:"provider"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -58,7 +61,11 @@ func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 	if in.DeleteOldName != "" {
 		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), in.DeleteOldName)
 	}
-	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL)
+	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL, servers.ModDownloadMeta{
+		ProjectID:   in.ProjectID,
+		ProjectSlug: in.ProjectSlug,
+		Provider:    in.Provider,
+	})
 	if err != nil {
 		if errors.Is(err, servers.ErrDownloadFailed) {
 			writeError(w, http.StatusBadGateway, "download_failed", "Failed to download mod from remote URL.")

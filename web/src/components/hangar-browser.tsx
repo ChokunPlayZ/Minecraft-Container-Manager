@@ -254,8 +254,14 @@ export function HangarBrowser({
       }
 
       const mod = deleteOldMod
-        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name)
-        : await api.downloadMod(server.id, url, filename);
+        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name, {
+            projectSlug,
+            provider: 'hangar',
+          })
+        : await api.downloadMod(server.id, url, filename, undefined, {
+            projectSlug,
+            provider: 'hangar',
+          });
       onModInstalled(mod);
       if (deleteOldMod) {
         onModDeleted?.(deleteOldMod.name);

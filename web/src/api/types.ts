@@ -201,6 +201,14 @@ export interface Mod {
   name: string;
   file: string;
   enabled: boolean;
+  mod_id?: string;
+  title?: string;
+  version?: string;
+  sha1?: string;
+  description?: string;
+  project_id?: string;
+  project_slug?: string;
+  provider?: ModProvider;
 }
 
 export interface ModList {

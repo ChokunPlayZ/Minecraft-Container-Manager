@@ -220,8 +220,14 @@ export function SpigetBrowser({
       }
 
       const mod = deleteOldMod
-        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name)
-        : await api.downloadMod(server.id, url, filename);
+        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name, {
+            projectId: resourceId !== undefined ? String(resourceId) : undefined,
+            provider: 'spiget',
+          })
+        : await api.downloadMod(server.id, url, filename, undefined, {
+            projectId: resourceId !== undefined ? String(resourceId) : undefined,
+            provider: 'spiget',
+          });
       onModInstalled(mod);
       if (deleteOldMod) {
         onModDeleted?.(deleteOldMod.name);

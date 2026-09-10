@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,9 +34,66 @@ var ErrUnsupportedMods = errors.New("server type does not support mods/plugins")
 
 // Mod describes a single installed artifact file.
 type Mod struct {
-	Name    string `json:"name"` // display name without extension
-	File    string `json:"file"` // on-disk filename (may carry .disabled)
-	Enabled bool   `json:"enabled"`
+	Name        string `json:"name"`                   // display name without extension
+	File        string `json:"file"`                   // on-disk filename (may carry .disabled)
+	Enabled     bool   `json:"enabled"`                // whether file is enabled
+	ModID       string `json:"mod_id,omitempty"`       // canonical mod/plugin id from jar manifest
+	Title       string `json:"title,omitempty"`        // human friendly name from jar manifest
+	Version     string `json:"version,omitempty"`      // version from jar manifest
+	SHA1        string `json:"sha1,omitempty"`         // SHA1 file hash
+	Description string `json:"description,omitempty"`  // description from jar manifest
+	ProjectID   string `json:"project_id,omitempty"`   // catalog project ID if known
+	ProjectSlug string `json:"project_slug,omitempty"` // catalog project slug if known
+	Provider    string `json:"provider,omitempty"`     // catalog provider (e.g. "modrinth")
+}
+
+// ModDownloadMeta stores catalog metadata associated with an installed mod.
+type ModDownloadMeta struct {
+	ProjectID   string `json:"project_id,omitempty"`
+	ProjectSlug string `json:"project_slug,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+}
+
+func modsMetaFile(modsDir string) string {
+	return filepath.Join(modsDir, ".mcm_mods_meta.json")
+}
+
+func readModsMeta(modsDir string) map[string]ModDownloadMeta {
+	data, err := os.ReadFile(modsMetaFile(modsDir))
+	if err != nil {
+		return make(map[string]ModDownloadMeta)
+	}
+	var res map[string]ModDownloadMeta
+	if err := json.Unmarshal(data, &res); err != nil {
+		return make(map[string]ModDownloadMeta)
+	}
+	return res
+}
+
+func writeModMeta(modsDir, filename string, meta ModDownloadMeta) {
+	if meta.ProjectID == "" && meta.ProjectSlug == "" && meta.Provider == "" {
+		return
+	}
+	m := readModsMeta(modsDir)
+	base := modDisplayBase(filename)
+	m[filename] = meta
+	m[base] = meta
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err == nil {
+		_ = os.WriteFile(modsMetaFile(modsDir), data, 0o644)
+	}
+}
+
+func deleteModMeta(modsDir, filename string) {
+	m := readModsMeta(modsDir)
+	base := modDisplayBase(filename)
+	delete(m, filename)
+	delete(m, filename+".disabled")
+	delete(m, base)
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err == nil {
+		_ = os.WriteFile(modsMetaFile(modsDir), data, 0o644)
+	}
 }
 
 // ModListResult is a listing of a server's mods or plugins.
@@ -131,8 +189,26 @@ func (s *Store) ListMods(ctx context.Context, id string) (ModListResult, error) 
 		}
 		byName[base] = &Mod{Name: base, File: fname, Enabled: enabled}
 	}
+	metaMap := readModsMeta(dir)
 	items := make([]Mod, 0, len(byName))
 	for _, m := range byName {
+		fullPath := filepath.Join(dir, m.File)
+		if manifest, err := inspectModJar(fullPath); err == nil {
+			m.ModID = manifest.ModID
+			m.Title = manifest.Title
+			m.Version = manifest.Version
+			m.SHA1 = manifest.SHA1
+			m.Description = manifest.Description
+		}
+		if meta, ok := metaMap[m.File]; ok {
+			m.ProjectID = meta.ProjectID
+			m.ProjectSlug = meta.ProjectSlug
+			m.Provider = meta.Provider
+		} else if meta, ok := metaMap[modDisplayBase(m.File)]; ok {
+			m.ProjectID = meta.ProjectID
+			m.ProjectSlug = meta.ProjectSlug
+			m.Provider = meta.Provider
+		}
 		items = append(items, *m)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
@@ -168,7 +244,17 @@ func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader)
 	if cerr != nil {
 		return Mod{}, cerr
 	}
-	return Mod{Name: modDisplayBase(filename), File: filename, Enabled: true}, nil
+	manifest, _ := inspectModJar(target)
+	return Mod{
+		Name:        modDisplayBase(filename),
+		File:        filename,
+		Enabled:     true,
+		ModID:       manifest.ModID,
+		Title:       manifest.Title,
+		Version:     manifest.Version,
+		SHA1:        manifest.SHA1,
+		Description: manifest.Description,
+	}, nil
 }
 
 // SetModEnabled enables or disables a mod/plugin by renaming the underlying file
@@ -188,7 +274,29 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 	}
 	if enabled != !strings.HasSuffix(base, ".disabled") {
 		// Nothing to change.
-		return Mod{Name: modDisplayBase(base), File: base, Enabled: enabled}, nil
+		targetPath := filepath.Join(dir, base)
+		manifest, _ := inspectModJar(targetPath)
+		metaMap := readModsMeta(dir)
+		m := Mod{
+			Name:        modDisplayBase(base),
+			File:        base,
+			Enabled:     enabled,
+			ModID:       manifest.ModID,
+			Title:       manifest.Title,
+			Version:     manifest.Version,
+			SHA1:        manifest.SHA1,
+			Description: manifest.Description,
+		}
+		if meta, ok := metaMap[base]; ok {
+			m.ProjectID = meta.ProjectID
+			m.ProjectSlug = meta.ProjectSlug
+			m.Provider = meta.Provider
+		} else if meta, ok := metaMap[modDisplayBase(base)]; ok {
+			m.ProjectID = meta.ProjectID
+			m.ProjectSlug = meta.ProjectSlug
+			m.Provider = meta.Provider
+		}
+		return m, nil
 	}
 	var target string
 	if enabled {
@@ -199,7 +307,29 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 	if err := os.Rename(filepath.Join(dir, base), filepath.Join(dir, target)); err != nil {
 		return Mod{}, err
 	}
-	return Mod{Name: modDisplayBase(target), File: target, Enabled: enabled}, nil
+	targetPath := filepath.Join(dir, target)
+	manifest, _ := inspectModJar(targetPath)
+	metaMap := readModsMeta(dir)
+	m := Mod{
+		Name:        modDisplayBase(target),
+		File:        target,
+		Enabled:     enabled,
+		ModID:       manifest.ModID,
+		Title:       manifest.Title,
+		Version:     manifest.Version,
+		SHA1:        manifest.SHA1,
+		Description: manifest.Description,
+	}
+	if meta, ok := metaMap[target]; ok {
+		m.ProjectID = meta.ProjectID
+		m.ProjectSlug = meta.ProjectSlug
+		m.Provider = meta.Provider
+	} else if meta, ok := metaMap[modDisplayBase(target)]; ok {
+		m.ProjectID = meta.ProjectID
+		m.ProjectSlug = meta.ProjectSlug
+		m.Provider = meta.Provider
+	}
+	return m, nil
 }
 
 // DeleteMod removes an installed mod/plugin file.
@@ -216,6 +346,7 @@ func (s *Store) DeleteMod(ctx context.Context, id, name string) error {
 	if !ok {
 		return fmt.Errorf("mod not found: %s", name)
 	}
+	deleteModMeta(dir, base)
 	return os.Remove(filepath.Join(dir, base))
 }
 
@@ -245,7 +376,7 @@ func resolveModDirEntry(dir, name string) (string, bool) {
 
 // DownloadMod fetches an artifact file from a remote URL (e.g. Modrinth CDN) and saves it
 // into the server's mod/plugin directory.
-func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL string) (Mod, error) {
+func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL string, meta ...ModDownloadMeta) (Mod, error) {
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Mod{}, err
@@ -312,5 +443,24 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 		return Mod{}, err
 	}
 
-	return Mod{Name: modDisplayBase(filename), File: filename, Enabled: true}, nil
+	if len(meta) > 0 {
+		writeModMeta(dir, filename, meta[0])
+	}
+	manifest, _ := inspectModJar(target)
+	result := Mod{
+		Name:        modDisplayBase(filename),
+		File:        filename,
+		Enabled:     true,
+		ModID:       manifest.ModID,
+		Title:       manifest.Title,
+		Version:     manifest.Version,
+		SHA1:        manifest.SHA1,
+		Description: manifest.Description,
+	}
+	if len(meta) > 0 {
+		result.ProjectID = meta[0].ProjectID
+		result.ProjectSlug = meta[0].ProjectSlug
+		result.Provider = meta[0].Provider
+	}
+	return result, nil
 }
