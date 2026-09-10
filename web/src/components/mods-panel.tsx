@@ -19,6 +19,8 @@ import { Input } from './ui/input';
 import { useModal } from './ui/modal';
 import { CatalogBrowser } from './catalog-browser';
 
+import { extractModId } from '../api/modrinth';
+
 export function ModsPanel({ server }: { server: Server }) {
   const [activeTab, setActiveTab] = useState<'installed' | 'browse'>('installed');
   const [items, setItems] = useState<Mod[]>([]);
@@ -52,11 +54,39 @@ export function ModsPanel({ server }: { server: Server }) {
 
   async function upload(file: File) {
     setError(null);
+
+    const baseId = extractModId(file.name).replace(/_/g, '-');
+    const existingOld = items.find((m) => {
+      if (m.file.toLowerCase() === file.name.toLowerCase()) return false;
+      const mId = extractModId(m.file).replace(/_/g, '-');
+      return mId === baseId && mId.length > 0;
+    });
+
+    let deleteOldName: string | undefined;
+    if (existingOld) {
+      const shouldDelete = await confirm(
+        `An older version (${existingOld.file}) is installed on your server. Would you like to delete the old jar file to prevent conflicts?`,
+        {
+          title: 'Older Jar Version Detected',
+          confirmLabel: 'Delete Old Jar & Upload',
+          cancelLabel: 'Keep Both',
+        },
+      );
+      if (shouldDelete) {
+        deleteOldName = existingOld.name;
+      }
+    }
+
     setUploadProgress(0);
     try {
-      await api.uploadMod(server.id, file, (loaded, total) => {
-        setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
-      });
+      await api.uploadMod(
+        server.id,
+        file,
+        (loaded, total) => {
+          setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
+        },
+        deleteOldName,
+      );
       setUploadProgress(null);
       await load();
     } catch (err) {
@@ -349,6 +379,9 @@ export function ModsPanel({ server }: { server: Server }) {
             server={server}
             installedMods={items}
             onModInstalled={() => {
+              void load();
+            }}
+            onModDeleted={() => {
               void load();
             }}
           />

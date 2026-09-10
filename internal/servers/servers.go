@@ -77,12 +77,9 @@ type Server struct {
 	// Backup settings. BackupEnabled defaults to true; BackupIntervalMinutes
 	// is the minutes between automatic backups (default 720).
 	BackupEnabled         bool `json:"backup_enabled"`
-	BackupIntervalMinutes int  `json:"backup_interval_minutes"`
-	// SpinDownEnabled opts this server in to idle spin-down. When false (the
-	// default), the scheduler never stops this server for being idle.
-	SpinDownEnabled bool   `json:"spin_down_enabled"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	BackupIntervalMinutes int    `json:"backup_interval_minutes"`
+	CreatedAt             string `json:"created_at"`
+	UpdatedAt             string `json:"updated_at"`
 }
 
 // ExtraPort describes an additional port published for a server beyond the
@@ -119,7 +116,6 @@ type UpdateInput struct {
 	MemoryLimitMB         *int          `json:"memory_limit_mb"`
 	BackupEnabled         *bool         `json:"backup_enabled"`
 	BackupIntervalMinutes *int          `json:"backup_interval_minutes"`
-	SpinDownEnabled       *bool         `json:"spin_down_enabled"`
 	ExtraPorts            *[]ExtraPort  `json:"extra_ports"`
 }
 
@@ -208,7 +204,7 @@ func (s *Store) Pool() *ports.Pool {
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, spin_down_enabled, created_at, updated_at FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +216,7 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 	for rows.Next() {
 		var srv Server
 		var extra string
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.SpinDownEnabled, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
 			return nil, err
 		}
 		srv.ExtraPorts = decodeExtraPorts(extra)
@@ -234,8 +230,8 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var srv Server
 	var extra string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, spin_down_enabled, created_at, updated_at FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.SpinDownEnabled, &srv.CreatedAt, &srv.UpdatedAt)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}
@@ -345,17 +341,14 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 	if in.BackupIntervalMinutes != nil {
 		srv.BackupIntervalMinutes = *in.BackupIntervalMinutes
 	}
-	if in.SpinDownEnabled != nil {
-		srv.SpinDownEnabled = *in.SpinDownEnabled
-	}
 	if in.ExtraPorts != nil {
 		srv.ExtraPorts = *in.ExtraPorts
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, spin_down_enabled=?, extra_ports=?, container_id=?, state=?, updated_at=? WHERE id=?`,
-		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, srv.SpinDownEnabled, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, id)
+		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, container_id=?, state=?, updated_at=? WHERE id=?`,
+		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, id)
 	if err != nil {
 		return Server{}, fmt.Errorf("update server: %w", err)
 	}

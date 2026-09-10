@@ -236,7 +236,7 @@ func resolveModDirEntry(dir, name string) (string, bool) {
 			!strings.HasSuffix(strings.ToLower(fname), ".jar.disabled") {
 			continue
 		}
-		if modDisplayBase(fname) == name {
+		if fname == name || modDisplayBase(fname) == name || strings.TrimSuffix(fname, ".disabled") == name {
 			return fname, true
 		}
 	}

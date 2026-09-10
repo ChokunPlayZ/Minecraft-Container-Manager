@@ -24,7 +24,6 @@ export interface Server {
   state: ServerState;
   backup_enabled: boolean;
   backup_interval_minutes: number;
-  spin_down_enabled: boolean;
   created_at: string;
   updated_at: string;
 }

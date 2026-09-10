@@ -20,7 +20,6 @@ const mockServer: Server = {
   state: 'running',
   backup_enabled: true,
   backup_interval_minutes: 60,
-  spin_down_enabled: false,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };

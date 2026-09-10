@@ -108,3 +108,47 @@ func TestDownloadModHTTPError(t *testing.T) {
 		t.Errorf("expected ErrDownloadFailed on 404, got %v", err)
 	}
 }
+
+func TestDeleteModAndDownloadNew(t *testing.T) {
+	jarContent := []byte("PK\x03\x04new-jar")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/java-archive")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(jarContent)
+	}))
+	defer ts.Close()
+
+	s, serverID := newModTestStore(t, "paper")
+	ctx := context.Background()
+
+	// Seed old version
+	oldPath := filepath.Join(s.dataPath(serverID), "plugins", "Chunky-1.4.28.jar")
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldPath, []byte("old-jar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete old version by filename
+	if err := s.DeleteMod(ctx, serverID, "Chunky-1.4.28.jar"); err != nil {
+		t.Fatalf("DeleteMod failed: %v", err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("expected old jar to be deleted")
+	}
+
+	// Download new version
+	newMod, err := s.DownloadMod(ctx, serverID, "Chunky-1.4.29.jar", ts.URL+"/chunky.jar")
+	if err != nil {
+		t.Fatalf("DownloadMod failed: %v", err)
+	}
+	if newMod.File != "Chunky-1.4.29.jar" {
+		t.Fatalf("expected Chunky-1.4.29.jar, got %q", newMod.File)
+	}
+	newPath := filepath.Join(s.dataPath(serverID), "plugins", "Chunky-1.4.29.jar")
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("new jar missing: %v", err)
+	}
+}
+

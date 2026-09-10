@@ -7,7 +7,7 @@ image with the community-maintained
 [`itzg/docker-minecraft-server`](https://github.com/itzg/docker-minecraft-server)
 image. The goal is to offload jar resolution, mod/plugin handling, EULA, and
 server launch to a battle-tested image while keeping MCM's web UI, port
-allocation, backups, spin-down, and DNS features intact.
+allocation, backups, and DNS features intact.
 
 ## Why switch
 
@@ -139,7 +139,7 @@ create-time env/image swap.
 unaffected. itzg still exposes `25565/tcp` by default and honors published
 ports via the same Docker HostConfig MCM already builds. **No change.**
 
-### 8. Backups / spin-down / DNS
+### 8. Backups / DNS
 
 All operate on the server data directory or the Docker lifecycle and are
 image-agnostic. **No change.**
@@ -161,7 +161,7 @@ Removed:
 No change (verify only):
 - `internal/servers/*` (mods, files, props, commands, players, lifecycle)
 - `internal/jars/*`
-- `internal/backups/*`, `internal/spindown/*`, `internal/dns/*`
+- `internal/backups/*`, `internal/dns/*`
 - `internal/ports/*`
 - `web/*`
 
@@ -242,7 +242,7 @@ itzg-based container. Validate one server end-to-end before rolling to the rest.
 
 ## Not in scope
 
-- Changing the panel image, auth, backups, spin-down, DNS, or frontend.
+- Changing the panel image, auth, backups, DNS, or frontend.
 - Implementing native RCON in MCM (future follow-up, enabled via itzg env if
   desired).
 - Loosening `internal/jars` validation to rely purely on itzg (`LATEST`).

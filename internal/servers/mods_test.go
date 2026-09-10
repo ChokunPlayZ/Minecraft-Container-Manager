@@ -123,3 +123,35 @@ func enable(t *testing.T, dir, name string) string {
 	}
 	return target
 }
+
+func TestResolveModDirEntry(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Chunky-1.4.28.jar"), []byte("jar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "LuckPerms-5.4.jar.disabled"), []byte("jar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Match by display base
+	if got, ok := resolveModDirEntry(dir, "Chunky-1.4.28"); !ok || got != "Chunky-1.4.28.jar" {
+		t.Fatalf("expected Chunky-1.4.28.jar, got %q (ok=%v)", got, ok)
+	}
+	// Match by full file name
+	if got, ok := resolveModDirEntry(dir, "Chunky-1.4.28.jar"); !ok || got != "Chunky-1.4.28.jar" {
+		t.Fatalf("expected Chunky-1.4.28.jar, got %q (ok=%v)", got, ok)
+	}
+
+	// Match disabled by display base
+	if got, ok := resolveModDirEntry(dir, "LuckPerms-5.4"); !ok || got != "LuckPerms-5.4.jar.disabled" {
+		t.Fatalf("expected LuckPerms-5.4.jar.disabled, got %q (ok=%v)", got, ok)
+	}
+	// Match disabled by full filename
+	if got, ok := resolveModDirEntry(dir, "LuckPerms-5.4.jar.disabled"); !ok || got != "LuckPerms-5.4.jar.disabled" {
+		t.Fatalf("expected LuckPerms-5.4.jar.disabled, got %q (ok=%v)", got, ok)
+	}
+	// Match disabled by jar filename without .disabled
+	if got, ok := resolveModDirEntry(dir, "LuckPerms-5.4.jar"); !ok || got != "LuckPerms-5.4.jar.disabled" {
+		t.Fatalf("expected LuckPerms-5.4.jar.disabled, got %q (ok=%v)", got, ok)
+	}
+}

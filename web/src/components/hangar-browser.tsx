@@ -9,10 +9,12 @@ import {
   RefreshCw,
   Search,
   Star,
+  Trash2,
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import {
+  findInstalledHangarProject,
   getHangarVersions,
   HANGAR_CATEGORIES,
   HANGAR_SORT_OPTIONS,
@@ -20,7 +22,7 @@ import {
   isHangarVersionInstalled,
   searchHangar,
 } from '../api/hangar';
-import { formatCount, formatFileSize } from '../api/modrinth';
+import { extractModId, formatCount, formatFileSize } from '../api/modrinth';
 import type {
   HangarProject,
   HangarVersion,
@@ -31,17 +33,21 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
+import { ModUpdateDialog } from './mod-update-dialog';
+import { useModal } from './ui/modal';
 
 interface HangarBrowserProps {
   server: Server;
   installedMods: Mod[];
   onModInstalled: (mod: Mod) => void;
+  onModDeleted?: (modName: string) => void;
 }
 
 export function HangarBrowser({
   server,
   installedMods,
   onModInstalled,
+  onModDeleted,
 }: HangarBrowserProps) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
@@ -193,6 +199,129 @@ export function HangarBrowser({
     };
   }, [selectedProject]);
 
+  const { confirm, dialog } = useModal();
+  const [updatePrompt, setUpdatePrompt] = useState<{
+    projectTitle: string;
+    existingMod: Mod;
+    targetUrl: string;
+    targetFilename: string;
+    projectSlug?: string;
+    projectName?: string;
+  } | null>(null);
+
+  function findExistingOldJar(
+    targetFilename: string,
+    project?: Pick<HangarProject, 'name' | 'namespace'>,
+  ): Mod | undefined {
+    let existingMod = project ? findInstalledHangarProject(project, installedMods) : undefined;
+    if (!existingMod) {
+      const baseId = extractModId(targetFilename).replace(/_/g, '-');
+      if (baseId.length > 0) {
+        existingMod = installedMods.find((m) => {
+          const mId = extractModId(m.file).replace(/_/g, '-');
+          return mId === baseId;
+        });
+      }
+    }
+    if (!existingMod) return undefined;
+
+    const isSameFile =
+      existingMod.file.toLowerCase() === targetFilename.toLowerCase() ||
+      existingMod.file.toLowerCase() === `${targetFilename.toLowerCase()}.disabled`;
+    if (isSameFile) return undefined;
+
+    return existingMod;
+  }
+
+  async function executeInstall(
+    url: string,
+    filename: string,
+    title: string,
+    projectSlug?: string,
+    projectName?: string,
+    deleteOldMod?: Mod,
+  ) {
+    setInstallingId(projectSlug || filename);
+    setError(null);
+
+    try {
+      if (deleteOldMod) {
+        try {
+          await api.deleteMod(server.id, deleteOldMod.name);
+        } catch {
+          // ignore
+        }
+      }
+
+      const mod = deleteOldMod
+        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name)
+        : await api.downloadMod(server.id, url, filename);
+      onModInstalled(mod);
+      if (deleteOldMod) {
+        onModDeleted?.(deleteOldMod.name);
+      }
+
+      if (projectSlug || projectName) {
+        setInstalledSlugs(
+          (prev) =>
+            new Set([
+              ...prev,
+              ...(projectSlug ? [projectSlug] : []),
+              ...(projectName ? [projectName.toLowerCase()] : []),
+            ]),
+        );
+      }
+      setNotification({
+        type: 'success',
+        text: deleteOldMod
+          ? `Installed ${title} (${filename}) and removed ${deleteOldMod.file}`
+          : `Installed ${title} (${filename}) from Hangar`,
+      });
+      setUpdatePrompt(null);
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
+      });
+    } finally {
+      setInstallingId(null);
+    }
+  }
+
+  async function handleDeleteMod(mod: Mod) {
+    if (
+      !(await confirm(`Delete ${mod.file} from the server? This cannot be undone.`, {
+        title: 'Delete Installed Jar',
+        confirmLabel: 'Delete',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+
+    try {
+      await api.deleteMod(server.id, mod.name);
+      onModDeleted?.(mod.name);
+      if (selectedProject) {
+        setInstalledSlugs((prev) => {
+          const next = new Set(prev);
+          next.delete(selectedProject.namespace.slug);
+          next.delete(selectedProject.name.toLowerCase());
+          return next;
+        });
+      }
+      setNotification({
+        type: 'success',
+        text: `Deleted ${mod.file} from server`,
+      });
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Delete failed',
+      });
+    }
+  }
+
   async function handleOneClickInstall(project: HangarProject) {
     setInstallingId(project.namespace.slug);
     setError(null);
@@ -215,19 +344,32 @@ export function HangarBrowser({
         throw new Error('No direct download jar available for this release.');
       }
 
-      const mod = await api.downloadMod(server.id, download.downloadUrl, download.fileInfo.name);
-      onModInstalled(mod);
-      setInstalledSlugs((prev) => new Set([...prev, project.namespace.slug, project.name.toLowerCase()]));
-      setNotification({
-        type: 'success',
-        text: `Installed ${project.name} (${download.fileInfo.name}) from Hangar`,
-      });
+      const existingMod = findExistingOldJar(download.fileInfo.name, project);
+      if (existingMod) {
+        setInstallingId(null);
+        setUpdatePrompt({
+          projectTitle: project.name,
+          existingMod,
+          targetUrl: download.downloadUrl,
+          targetFilename: download.fileInfo.name,
+          projectSlug: project.namespace.slug,
+          projectName: project.name,
+        });
+        return;
+      }
+
+      await executeInstall(
+        download.downloadUrl,
+        download.fileInfo.name,
+        project.name,
+        project.namespace.slug,
+        project.name,
+      );
     } catch (err: unknown) {
       setNotification({
         type: 'error',
         text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
       });
-    } finally {
       setInstallingId(null);
     }
   }
@@ -239,25 +381,26 @@ export function HangarBrowser({
       return;
     }
 
-    setInstallingId(version.name);
-    try {
-      const mod = await api.downloadMod(server.id, download.downloadUrl, download.fileInfo.name);
-      onModInstalled(mod);
-      if (selectedProject) {
-        setInstalledSlugs((prev) => new Set([...prev, selectedProject.namespace.slug, selectedProject.name.toLowerCase()]));
-      }
-      setNotification({
-        type: 'success',
-        text: `Installed ${projectTitle} (${download.fileInfo.name})`,
+    const existingMod = findExistingOldJar(download.fileInfo.name, selectedProject ?? undefined);
+    if (existingMod) {
+      setUpdatePrompt({
+        projectTitle,
+        existingMod,
+        targetUrl: download.downloadUrl,
+        targetFilename: download.fileInfo.name,
+        projectSlug: selectedProject?.namespace.slug,
+        projectName: selectedProject?.name,
       });
-    } catch (err: unknown) {
-      setNotification({
-        type: 'error',
-        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
-      });
-    } finally {
-      setInstallingId(null);
+      return;
     }
+
+    await executeInstall(
+      download.downloadUrl,
+      download.fileInfo.name,
+      projectTitle,
+      selectedProject?.namespace.slug,
+      selectedProject?.name,
+    );
   }
 
   function checkInstalled(project: HangarProject): boolean {
@@ -269,6 +412,42 @@ export function HangarBrowser({
 
   return (
     <div className="space-y-4">
+      {dialog}
+
+      {updatePrompt && (
+        <ModUpdateDialog
+          isOpen={true}
+          modTitle={updatePrompt.projectTitle}
+          installedJar={updatePrompt.existingMod.file}
+          newJar={updatePrompt.targetFilename}
+          isInstalling={installingId !== null}
+          onConfirmDeleteAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.projectSlug,
+              updatePrompt.projectName,
+              updatePrompt.existingMod,
+            )
+          }
+          onConfirmKeepAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.projectSlug,
+              updatePrompt.projectName,
+            )
+          }
+          onDeleteOldOnly={() => {
+            const oldMod = updatePrompt.existingMod;
+            setUpdatePrompt(null);
+            void handleDeleteMod(oldMod);
+          }}
+          onCancel={() => setUpdatePrompt(null)}
+        />
+      )}
       {/* Toast Notification */}
       {notification && (
         <div
@@ -420,7 +599,8 @@ export function HangarBrowser({
       {!loading && results.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {results.map((project) => {
-            const isInstalled = checkInstalled(project);
+            const installedProjectMod = findInstalledHangarProject(project, installedMods);
+            const isInstalled = Boolean(installedProjectMod) || checkInstalled(project);
             const isInstalling = installingId === project.namespace.slug;
 
             return (
@@ -488,16 +668,17 @@ export function HangarBrowser({
                     </Badge>
                   </div>
 
-                  <div className="flex items-center gap-2 pt-1">
+                  <div className="flex items-center gap-1.5 pt-1">
                     <Button
                       size="sm"
                       onClick={() => void handleOneClickInstall(project)}
-                      disabled={isInstalling || isInstalled}
+                      disabled={isInstalling}
                       className={`flex-1 h-8 text-xs gap-1.5 ${
                         isInstalled
-                          ? 'bg-secondary text-muted-foreground cursor-default'
+                          ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
                           : 'bg-sky-600 hover:bg-sky-700 text-white'
                       }`}
+                      title={isInstalled ? 'Click to reinstall or update' : 'Install latest release'}
                     >
                       {isInstalling ? (
                         <>
@@ -506,7 +687,7 @@ export function HangarBrowser({
                         </>
                       ) : isInstalled ? (
                         <>
-                          <Check className="h-3.5 w-3.5 text-emerald-500" />
+                          <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                           Installed
                         </>
                       ) : (
@@ -516,6 +697,19 @@ export function HangarBrowser({
                         </>
                       )}
                     </Button>
+
+                    {installedProjectMod && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                        title={`Delete ${installedProjectMod.file} from server`}
+                        aria-label={`Delete ${installedProjectMod.file}`}
+                        onClick={() => void handleDeleteMod(installedProjectMod)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
 
                     <Button
                       variant="outline"
@@ -603,6 +797,33 @@ export function HangarBrowser({
               </button>
             </div>
 
+            {/* Installed banner */}
+            {(() => {
+              const selectedInstalled = findInstalledHangarProject(selectedProject, installedMods);
+              if (!selectedInstalled) return null;
+              return (
+                <div className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-900 dark:text-emerald-200">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Check className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span className="font-semibold text-foreground">Installed Jar on Server:</span>
+                    <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300 truncate">
+                      {selectedInstalled.file}
+                    </span>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-7 gap-1 px-2.5 text-xs shrink-0"
+                    title={`Delete ${selectedInstalled.file}`}
+                    onClick={() => void handleDeleteMod(selectedInstalled)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete Jar
+                  </Button>
+                </div>
+              );
+            })()}
+
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
               {loadingVersions && (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
@@ -665,33 +886,63 @@ export function HangarBrowser({
                         </p>
                       </div>
 
-                      <Button
-                        size="sm"
-                        disabled={isInstalled || isInstallingThis || !download?.downloadUrl}
-                        onClick={() => void handleInstallVersion(ver, selectedProject.name)}
-                        className={`h-8 gap-1.5 text-xs ${
-                          isInstalled
-                            ? 'bg-secondary text-muted-foreground'
-                            : 'bg-sky-600 hover:bg-sky-700 text-white'
-                        }`}
-                      >
-                        {isInstallingThis ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Installing...
-                          </>
-                        ) : isInstalled ? (
-                          <>
-                            <Check className="h-3.5 w-3.5 text-emerald-500" />
-                            Installed
-                          </>
-                        ) : (
-                          <>
-                            <Download className="h-3.5 w-3.5" />
-                            Install
-                          </>
-                        )}
-                      </Button>
+                      {isInstalled ? (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            size="sm"
+                            disabled={isInstallingThis || !download?.downloadUrl}
+                            onClick={() => void handleInstallVersion(ver, selectedProject.name)}
+                            className="h-8 gap-1.5 border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300 text-xs"
+                            title="Reinstall this version"
+                          >
+                            {isInstallingThis ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                            )}
+                            Reinstall
+                          </Button>
+                          {(() => {
+                            const matchingMod = installedMods.find(
+                              (m) =>
+                                m.file.toLowerCase() === filename?.toLowerCase() ||
+                                m.file.toLowerCase() === `${filename?.toLowerCase()}.disabled`,
+                            );
+                            if (!matchingMod) return null;
+                            return (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                title={`Delete ${matchingMod.file} from server`}
+                                aria-label={`Delete ${matchingMod.file}`}
+                                onClick={() => void handleDeleteMod(matchingMod)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          disabled={isInstallingThis || !download?.downloadUrl}
+                          onClick={() => void handleInstallVersion(ver, selectedProject.name)}
+                          className="h-8 gap-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white"
+                        >
+                          {isInstallingThis ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Installing...
+                            </>
+                          ) : (
+                            <>
+                              <Download className="h-3.5 w-3.5" />
+                              Install
+                            </>
+                          )}
+                        </Button>
+                      )}
                     </div>
                   );
                 })}

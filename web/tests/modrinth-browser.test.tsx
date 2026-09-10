@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
@@ -21,7 +21,6 @@ const mockServer: Server = {
   state: 'running',
   backup_enabled: false,
   backup_interval_minutes: 60,
-  spin_down_enabled: false,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };
@@ -365,6 +364,172 @@ describe('ModrinthBrowser component', () => {
     });
 
     vi.unstubAllGlobals();
+  });
+
+  it('prompts user to delete older jar version when installing an update and deletes old jar on confirm', async () => {
+    const user = userEvent.setup();
+    const onModInstalled = vi.fn();
+    const onModDeleted = vi.fn();
+    const installedOld: Mod[] = [
+      { name: 'Chunky', file: 'Chunky-1.4.27.jar', enabled: true },
+    ];
+
+    vi.spyOn(api, 'deleteMod').mockResolvedValue();
+    vi.spyOn(api, 'downloadMod').mockResolvedValue({
+      name: 'Chunky',
+      file: 'Chunky-1.4.28.jar',
+      enabled: true,
+    });
+
+    render(
+      <ModrinthBrowser
+        server={mockServer}
+        installedMods={installedOld}
+        onModInstalled={onModInstalled}
+        onModDeleted={onModDeleted}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Chunky')).toBeInTheDocument();
+    });
+
+    // Chunky has older version installed, so card shows Installed and has Details button
+    const detailButtons = screen.getAllByRole('button', { name: /Details/i });
+    await user.click(detailButtons[1]);
+
+    // In modal, available version Chunky 1.4.28 has an Install button
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText('Chunky 1.4.28')).toBeInTheDocument();
+    });
+
+    const dialog = screen.getByRole('dialog');
+    const installVersionBtn = within(dialog).getByRole('button', { name: /^Install$/i });
+    await user.click(installVersionBtn);
+
+    // Update prompt should be visible
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Older Jar Version Detected/i })).toBeInTheDocument();
+      expect(screen.getAllByText('Chunky-1.4.27.jar').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Chunky-1.4.28.jar').length).toBeGreaterThan(0);
+    });
+
+    // Click "Delete Old Jar & Install"
+    const deleteAndInstallBtn = screen.getByRole('button', { name: /Delete Old Jar & Install/i });
+    await user.click(deleteAndInstallBtn);
+
+    await waitFor(() => {
+      expect(api.deleteMod).toHaveBeenCalledWith('server-1', 'Chunky');
+      expect(api.downloadMod).toHaveBeenCalledWith(
+        'server-1',
+        'https://cdn.modrinth.com/data/chunky.jar',
+        'Chunky-1.4.28.jar',
+        'Chunky',
+      );
+      expect(onModInstalled).toHaveBeenCalled();
+      expect(onModDeleted).toHaveBeenCalledWith('Chunky');
+    });
+  });
+
+  it('allows keeping both jars when user chooses Keep Both & Install', async () => {
+    const user = userEvent.setup();
+    const onModInstalled = vi.fn();
+    const onModDeleted = vi.fn();
+    const installedOld: Mod[] = [
+      { name: 'Chunky', file: 'Chunky-1.4.27.jar', enabled: true },
+    ];
+
+    vi.spyOn(api, 'deleteMod').mockResolvedValue();
+    vi.spyOn(api, 'downloadMod').mockResolvedValue({
+      name: 'Chunky',
+      file: 'Chunky-1.4.28.jar',
+      enabled: true,
+    });
+
+    render(
+      <ModrinthBrowser
+        server={mockServer}
+        installedMods={installedOld}
+        onModInstalled={onModInstalled}
+        onModDeleted={onModDeleted}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Chunky')).toBeInTheDocument();
+    });
+
+    // Open details modal
+    const detailButtons = screen.getAllByRole('button', { name: /Details/i });
+    await user.click(detailButtons[1]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText('Chunky 1.4.28')).toBeInTheDocument();
+    });
+
+    const dialog = screen.getByRole('dialog');
+    const installVersionBtn = within(dialog).getByRole('button', { name: /^Install$/i });
+    await user.click(installVersionBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Older Jar Version Detected/i })).toBeInTheDocument();
+    });
+
+    // Click "Keep Both & Install"
+    const keepBothBtn = screen.getByRole('button', { name: /Keep Both & Install/i });
+    await user.click(keepBothBtn);
+
+    await waitFor(() => {
+      expect(api.deleteMod).not.toHaveBeenCalled();
+      expect(api.downloadMod).toHaveBeenCalledWith(
+        'server-1',
+        'https://cdn.modrinth.com/data/chunky.jar',
+        'Chunky-1.4.28.jar',
+      );
+      expect(onModInstalled).toHaveBeenCalled();
+      expect(onModDeleted).not.toHaveBeenCalled();
+    });
+  });
+
+  it('allows deleting installed jar directly from mod card', async () => {
+    const user = userEvent.setup();
+    const onModDeleted = vi.fn();
+    const installed: Mod[] = [
+      { name: 'Chunky', file: 'Chunky-1.4.28.jar', enabled: true },
+    ];
+
+    vi.spyOn(api, 'deleteMod').mockResolvedValue();
+
+    render(
+      <ModrinthBrowser
+        server={mockServer}
+        installedMods={installed}
+        onModInstalled={vi.fn()}
+        onModDeleted={onModDeleted}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Chunky')).toBeInTheDocument();
+    });
+
+    const deleteBtn = screen.getByRole('button', { name: /Delete Chunky-1.4.28.jar/i });
+    await user.click(deleteBtn);
+
+    // Confirmation dialog should appear
+    await waitFor(() => {
+      expect(screen.getByText(/Delete Chunky-1.4.28.jar from the server\?/i)).toBeInTheDocument();
+    });
+
+    const confirmDeleteBtn = screen.getByRole('button', { name: /^Delete$/i });
+    await user.click(confirmDeleteBtn);
+
+    await waitFor(() => {
+      expect(api.deleteMod).toHaveBeenCalledWith('server-1', 'Chunky');
+      expect(onModDeleted).toHaveBeenCalledWith('Chunky');
+    });
   });
 });
 

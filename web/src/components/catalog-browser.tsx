@@ -11,6 +11,7 @@ interface CatalogBrowserProps {
   server: Server;
   installedMods: Mod[];
   onModInstalled: (mod: Mod) => void;
+  onModDeleted?: (modName: string) => void;
   defaultProvider?: ModProvider;
 }
 
@@ -18,6 +19,7 @@ export function CatalogBrowser({
   server,
   installedMods,
   onModInstalled,
+  onModDeleted,
   defaultProvider = 'modrinth',
 }: CatalogBrowserProps) {
   const [activeProvider, setActiveProvider] = useState<ModProvider>(defaultProvider);
@@ -135,6 +137,7 @@ export function CatalogBrowser({
           server={server}
           installedMods={installedMods}
           onModInstalled={onModInstalled}
+          onModDeleted={onModDeleted}
         />
       )}
 
@@ -143,6 +146,7 @@ export function CatalogBrowser({
           server={server}
           installedMods={installedMods}
           onModInstalled={onModInstalled}
+          onModDeleted={onModDeleted}
         />
       )}
 
@@ -151,6 +155,7 @@ export function CatalogBrowser({
           server={server}
           installedMods={installedMods}
           onModInstalled={onModInstalled}
+          onModDeleted={onModDeleted}
         />
       )}
 
@@ -159,6 +164,7 @@ export function CatalogBrowser({
           server={server}
           installedMods={installedMods}
           onModInstalled={onModInstalled}
+          onModDeleted={onModDeleted}
         />
       )}
     </div>

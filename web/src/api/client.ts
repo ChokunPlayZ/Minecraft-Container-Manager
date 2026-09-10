@@ -242,7 +242,6 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
           state: 'running',
           backup_enabled: true,
           backup_interval_minutes: 60,
-          spin_down_enabled: false,
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
         },
@@ -295,6 +294,7 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (path.startsWith('/api/servers/') && path.endsWith('/mods/download')) {
     let name = 'Downloaded-Mod';
     let file = 'downloaded-mod.jar';
+    let deleteOldName = '';
     if (init.body) {
       try {
         const parsed = JSON.parse(init.body as string);
@@ -302,9 +302,21 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
           file = parsed.filename;
           name = file.replace(/\.jar$/i, '');
         }
+        if (parsed.delete_old_name) {
+          deleteOldName = parsed.delete_old_name;
+        }
       } catch {
         // ignore
       }
+    }
+    if (deleteOldName) {
+      mockMods = mockMods.filter(
+        (m) =>
+          m.name !== deleteOldName &&
+          m.file !== deleteOldName &&
+          m.file !== `${deleteOldName}.jar` &&
+          m.name !== deleteOldName.replace(/\.jar$/i, ''),
+      );
     }
     const newMod: Mod = { name, file, enabled: true };
     mockMods = [...mockMods.filter((m) => m.name !== name && m.file !== file), newMod];
@@ -382,7 +394,6 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
       state: 'running',
       backup_enabled: true,
       backup_interval_minutes: 60,
-      spin_down_enabled: false,
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
     } as T;
@@ -639,20 +650,24 @@ export const api = {
 
   mods: (serverId: string) => request<ModList>(`/api/servers/${serverId}/mods`),
 
-  downloadMod: (serverId: string, url: string, filename: string) =>
+  downloadMod: (serverId: string, url: string, filename: string, deleteOldName?: string) =>
     request<Mod>(`/api/servers/${serverId}/mods/download`, {
       method: 'POST',
-      body: JSON.stringify({ url, filename }),
+      body: JSON.stringify({ url, filename, delete_old_name: deleteOldName }),
     }),
 
   uploadMod: (
     serverId: string,
     file: File,
     onProgress?: (loaded: number, total: number) => void,
+    deleteOldName?: string,
   ) =>
     uploadWithProgress<Mod>(
       `/api/servers/${serverId}/mods`,
-      [['file', file]],
+      [
+        ['file', file],
+        ...(deleteOldName ? [['delete_old_name', deleteOldName] as [string, string]] : []),
+      ],
       onProgress,
     ),
 
@@ -791,7 +806,6 @@ export interface UpdateServerInput {
   memory_limit_mb?: number;
   backup_enabled?: boolean;
   backup_interval_minutes?: number;
-  spin_down_enabled?: boolean;
   extra_ports?: ExtraPort[];
 }
 

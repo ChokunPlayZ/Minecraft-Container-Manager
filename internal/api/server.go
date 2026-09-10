@@ -20,7 +20,6 @@ import (
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/servers"
-	"github.com/mcm-panel/mcm/internal/spindown"
 	"github.com/mcm-panel/mcm/internal/web"
 )
 
@@ -37,7 +36,6 @@ type Server struct {
 	ceremonies *ceremonyStore
 	jars       *jars.Resolver
 	dns        *dns.Service
-	spin       *spindown.Service
 	logger     *log.Logger
 	mux        *http.ServeMux
 	loginLimit *loginLimiter
@@ -55,7 +53,6 @@ type Options struct {
 	WebAuthn *webauthn.WebAuthn
 	Jars     *jars.Resolver
 	DNS      *dns.Service
-	Spin     *spindown.Service
 	Logger   *log.Logger
 }
 
@@ -82,7 +79,6 @@ func New(opts Options) http.Handler {
 		ceremonies: newCeremonyStore(),
 		jars:       opts.Jars,
 		dns:        opts.DNS,
-		spin:       opts.Spin,
 		logger:     opts.Logger,
 		mux:        http.NewServeMux(),
 		loginLimit: newLoginLimiter(loginDefaults(opts.Cfg)),
@@ -164,13 +160,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/servers/{id}/files", s.requireAuth(s.wrapJSON(s.handleDeleteFile)))
 	s.mux.HandleFunc("POST /api/servers/{id}/files/mkdir", s.requireAuth(s.wrapJSON(s.handleMkdir)))
 	s.mux.HandleFunc("POST /api/servers/{id}/files/rename", s.requireAuth(s.wrapJSON(s.handleRenameFile)))
-
-	// Idle spin-down.
-	s.mux.HandleFunc("GET /api/spindown", s.requireAuth(s.wrapJSON(s.handleListSpindown)))
-	s.mux.HandleFunc("POST /api/servers/{id}/wake", s.requireAuth(s.wrapJSON(s.handleWakeServer)))
-	s.mux.HandleFunc("GET /api/servers/{id}/spindown", s.requireAuth(s.wrapJSON(s.handleGetServerSpindown)))
-	s.mux.HandleFunc("PUT /api/servers/{id}/spindown", s.requireAuth(s.wrapJSON(s.handlePutServerSpindown)))
-	s.mux.HandleFunc("POST /api/servers/{id}/activity", s.requireAuth(s.wrapJSON(s.handleServerActivity)))
 
 	// Backups.
 	s.mux.HandleFunc("POST /api/servers/{id}/backup", s.requireAuth(s.wrapJSON(s.handleBackupServer)))

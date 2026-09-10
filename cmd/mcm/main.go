@@ -16,7 +16,6 @@ import (
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/servers"
-	"github.com/mcm-panel/mcm/internal/spindown"
 )
 
 func main() {
@@ -69,10 +68,6 @@ func main() {
 	backupScheduler.Start()
 	defer backupScheduler.Stop()
 
-	spinService := spindown.New(serverStore, serverStore, logger, 30*time.Minute)
-	spinService.Start()
-	defer spinService.Stop()
-
 	handler := api.New(api.Options{
 		Cfg:      cfg,
 		DB:       handle,
@@ -84,7 +79,6 @@ func main() {
 		WebAuthn: webAuthn,
 		Jars:     jarResolver,
 		DNS:      dnsService,
-		Spin:     spinService,
 		Logger:   logger,
 	})
 

@@ -143,7 +143,6 @@ func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	rc = s.configureConsoleJoinWatcher(r.Context(), r.PathValue("id"), rc)
 	s.streamConsole(r.Context(), w, rc)
 }
 

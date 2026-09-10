@@ -11,11 +11,13 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Trash2,
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import {
   CF_SORT_OPTIONS,
+  findInstalledCurseForgeMod,
   getCurseForgeApiKey,
   getCurseForgeClassId,
   getCurseForgeDownloadUrl,
@@ -25,7 +27,7 @@ import {
   searchCurseForge,
   setCurseForgeApiKey,
 } from '../api/curseforge';
-import { formatCount, formatFileSize } from '../api/modrinth';
+import { extractModId, formatCount, formatFileSize } from '../api/modrinth';
 import type {
   CurseForgeFile,
   CurseForgeMod,
@@ -36,17 +38,21 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
+import { ModUpdateDialog } from './mod-update-dialog';
+import { useModal } from './ui/modal';
 
 interface CurseForgeBrowserProps {
   server: Server;
   installedMods: Mod[];
   onModInstalled: (mod: Mod) => void;
+  onModDeleted?: (modName: string) => void;
 }
 
 export function CurseForgeBrowser({
   server,
   installedMods,
   onModInstalled,
+  onModDeleted,
 }: CurseForgeBrowserProps) {
   const [apiKey, setApiKey] = useState(() => getCurseForgeApiKey());
   const [tempKey, setTempKey] = useState('');
@@ -183,6 +189,129 @@ export function CurseForgeBrowser({
     };
   }, [selectedMod, apiKey, server.version, loaderType]);
 
+  const { confirm, dialog } = useModal();
+  const [updatePrompt, setUpdatePrompt] = useState<{
+    projectTitle: string;
+    existingMod: Mod;
+    targetUrl: string;
+    targetFilename: string;
+    modSlug?: string;
+    modName?: string;
+  } | null>(null);
+
+  function findExistingOldJar(
+    targetFilename: string,
+    mod?: Pick<CurseForgeMod, 'name' | 'slug'>,
+  ): Mod | undefined {
+    let existingMod = mod ? findInstalledCurseForgeMod(mod, installedMods) : undefined;
+    if (!existingMod) {
+      const baseId = extractModId(targetFilename).replace(/_/g, '-');
+      if (baseId.length > 0) {
+        existingMod = installedMods.find((m) => {
+          const mId = extractModId(m.file).replace(/_/g, '-');
+          return mId === baseId;
+        });
+      }
+    }
+    if (!existingMod) return undefined;
+
+    const isSameFile =
+      existingMod.file.toLowerCase() === targetFilename.toLowerCase() ||
+      existingMod.file.toLowerCase() === `${targetFilename.toLowerCase()}.disabled`;
+    if (isSameFile) return undefined;
+
+    return existingMod;
+  }
+
+  async function executeInstall(
+    downloadUrl: string,
+    filename: string,
+    title: string,
+    modSlug?: string,
+    modName?: string,
+    deleteOldMod?: Mod,
+  ) {
+    setInstallingId(modSlug || filename);
+    setError(null);
+
+    try {
+      if (deleteOldMod) {
+        try {
+          await api.deleteMod(server.id, deleteOldMod.name);
+        } catch {
+          // ignore
+        }
+      }
+
+      const installed = deleteOldMod
+        ? await api.downloadMod(server.id, downloadUrl, filename, deleteOldMod.name)
+        : await api.downloadMod(server.id, downloadUrl, filename);
+      onModInstalled(installed);
+      if (deleteOldMod) {
+        onModDeleted?.(deleteOldMod.name);
+      }
+
+      if (modSlug || modName) {
+        setInstalledSlugs(
+          (prev) =>
+            new Set([
+              ...prev,
+              ...(modSlug ? [modSlug] : []),
+              ...(modName ? [modName.toLowerCase()] : []),
+            ]),
+        );
+      }
+      setNotification({
+        type: 'success',
+        text: deleteOldMod
+          ? `Installed ${title} (${filename}) and removed ${deleteOldMod.file}`
+          : `Installed ${title} (${filename}) from CurseForge`,
+      });
+      setUpdatePrompt(null);
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
+      });
+    } finally {
+      setInstallingId(null);
+    }
+  }
+
+  async function handleDeleteMod(mod: Mod) {
+    if (
+      !(await confirm(`Delete ${mod.file} from the server? This cannot be undone.`, {
+        title: 'Delete Installed Jar',
+        confirmLabel: 'Delete',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+
+    try {
+      await api.deleteMod(server.id, mod.name);
+      onModDeleted?.(mod.name);
+      if (selectedMod) {
+        setInstalledSlugs((prev) => {
+          const next = new Set(prev);
+          next.delete(selectedMod.slug);
+          next.delete(selectedMod.name.toLowerCase());
+          return next;
+        });
+      }
+      setNotification({
+        type: 'success',
+        text: `Deleted ${mod.file} from server`,
+      });
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Delete failed',
+      });
+    }
+  }
+
   async function handleOneClickInstall(mod: CurseForgeMod) {
     if (!apiKey) return;
     setInstallingId(mod.id);
@@ -218,19 +347,26 @@ export function CurseForgeBrowser({
         downloadUrl = await getCurseForgeDownloadUrl(mod.id, targetFile.id, apiKey);
       }
 
-      const installed = await api.downloadMod(server.id, downloadUrl, targetFile.fileName);
-      onModInstalled(installed);
-      setInstalledSlugs((prev) => new Set([...prev, mod.slug, mod.name.toLowerCase()]));
-      setNotification({
-        type: 'success',
-        text: `Installed ${mod.name} (${targetFile.fileName}) from CurseForge`,
-      });
+      const existingMod = findExistingOldJar(targetFile.fileName, mod);
+      if (existingMod) {
+        setInstallingId(null);
+        setUpdatePrompt({
+          projectTitle: mod.name,
+          existingMod,
+          targetUrl: downloadUrl,
+          targetFilename: targetFile.fileName,
+          modSlug: mod.slug,
+          modName: mod.name,
+        });
+        return;
+      }
+
+      await executeInstall(downloadUrl, targetFile.fileName, mod.name, mod.slug, mod.name);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
         text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
       });
-    } finally {
       setInstallingId(null);
     }
   }
@@ -245,19 +381,26 @@ export function CurseForgeBrowser({
         downloadUrl = await getCurseForgeDownloadUrl(selectedMod.id, file.id, apiKey);
       }
 
-      const installed = await api.downloadMod(server.id, downloadUrl, file.fileName);
-      onModInstalled(installed);
-      setInstalledSlugs((prev) => new Set([...prev, selectedMod.slug, selectedMod.name.toLowerCase()]));
-      setNotification({
-        type: 'success',
-        text: `Installed ${modName} (${file.fileName})`,
-      });
+      const existingMod = findExistingOldJar(file.fileName, selectedMod);
+      if (existingMod) {
+        setInstallingId(null);
+        setUpdatePrompt({
+          projectTitle: modName,
+          existingMod,
+          targetUrl: downloadUrl,
+          targetFilename: file.fileName,
+          modSlug: selectedMod.slug,
+          modName: selectedMod.name,
+        });
+        return;
+      }
+
+      await executeInstall(downloadUrl, file.fileName, modName, selectedMod.slug, selectedMod.name);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
         text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
       });
-    } finally {
       setInstallingId(null);
     }
   }
@@ -348,6 +491,43 @@ export function CurseForgeBrowser({
 
   return (
     <div className="space-y-4">
+      {dialog}
+
+      {/* Update / Replace Dialog */}
+      {updatePrompt && (
+        <ModUpdateDialog
+          isOpen={true}
+          projectTitle={updatePrompt.projectTitle}
+          existingMod={updatePrompt.existingMod}
+          newFilename={updatePrompt.targetFilename}
+          onConfirmDeleteAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.modSlug,
+              updatePrompt.modName,
+              updatePrompt.existingMod,
+            )
+          }
+          onConfirmKeepAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.modSlug,
+              updatePrompt.modName,
+            )
+          }
+          onDeleteOldOnly={() => {
+            const oldMod = updatePrompt.existingMod;
+            setUpdatePrompt(null);
+            void handleDeleteMod(oldMod);
+          }}
+          onCancel={() => setUpdatePrompt(null)}
+        />
+      )}
+
       {/* Toast Notification */}
       {notification && (
         <div
@@ -502,6 +682,7 @@ export function CurseForgeBrowser({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {results.map((mod) => {
             const isInstalled = checkInstalled(mod);
+            const installedMod = findInstalledCurseForgeMod(mod, installedMods);
             const isInstalling = installingId === mod.id;
             const logoUrl = mod.logo?.thumbnailUrl || mod.logo?.url;
 
@@ -571,33 +752,49 @@ export function CurseForgeBrowser({
                   </div>
 
                   <div className="flex items-center gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      onClick={() => void handleOneClickInstall(mod)}
-                      disabled={isInstalling || isInstalled}
-                      className={`flex-1 h-8 text-xs gap-1.5 ${
-                        isInstalled
-                          ? 'bg-secondary text-muted-foreground cursor-default'
-                          : 'bg-orange-600 hover:bg-orange-700 text-white'
-                      }`}
-                    >
-                      {isInstalling ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Installing...
-                        </>
-                      ) : isInstalled ? (
-                        <>
+                    {isInstalled ? (
+                      <div className="flex items-center gap-1.5 flex-1">
+                        <Button
+                          size="sm"
+                          disabled
+                          className="flex-1 h-8 text-xs gap-1.5 bg-secondary text-muted-foreground cursor-default"
+                        >
                           <Check className="h-3.5 w-3.5 text-emerald-500" />
                           Installed
-                        </>
-                      ) : (
-                        <>
-                          <Download className="h-3.5 w-3.5" />
-                          Install Latest
-                        </>
-                      )}
-                    </Button>
+                        </Button>
+                        {installedMod && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                            title={`Delete ${installedMod.file} from server`}
+                            aria-label={`Delete ${installedMod.file}`}
+                            onClick={() => void handleDeleteMod(installedMod)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <Button
+                        size="sm"
+                        onClick={() => void handleOneClickInstall(mod)}
+                        disabled={isInstalling}
+                        className="flex-1 h-8 text-xs gap-1.5 bg-orange-600 hover:bg-orange-700 text-white"
+                      >
+                        {isInstalling ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Installing...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3.5 w-3.5" />
+                            Install Latest
+                          </>
+                        )}
+                      </Button>
+                    )}
 
                     <Button
                       variant="outline"
@@ -679,6 +876,45 @@ export function CurseForgeBrowser({
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
+              {/* Installed Banner */}
+              {(() => {
+                const selectedInstalledMod = findInstalledCurseForgeMod(selectedMod, installedMods);
+                if (!selectedInstalledMod) return null;
+                return (
+                  <div className="flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Check className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      <div className="min-w-0">
+                        <span className="font-semibold text-emerald-950 dark:text-emerald-200">
+                          Installed on Server
+                        </span>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                          {selectedInstalledMod.file}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
+                      >
+                        {selectedInstalledMod.enabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-7 gap-1 px-2.5 text-xs"
+                        title={`Delete ${selectedInstalledMod.file} from server`}
+                        onClick={() => void handleDeleteMod(selectedInstalledMod)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete Jar
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {loadingFiles && (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-6 w-6 animate-spin text-orange-600" />
@@ -699,36 +935,77 @@ export function CurseForgeBrowser({
               )}
 
               {!loadingFiles &&
-                files.map((fl) => (
-                  <div
-                    key={fl.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border bg-card/60 p-3 text-sm transition-colors hover:bg-secondary/15"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-foreground truncate">
-                          {fl.displayName || fl.fileName}
-                        </span>
-                        <Badge variant="outline" className="text-[10px] uppercase">
-                          {fl.releaseType === 1 ? 'Release' : fl.releaseType === 2 ? 'Beta' : 'Alpha'}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {fl.fileName} · {formatFileSize(fl.fileLength)} · {formatCount(fl.downloadCount)} downloads
-                      </p>
-                    </div>
+                files.map((fl) => {
+                  const isFileInstalled = installedMods.some(
+                    (m) =>
+                      m.file.toLowerCase() === fl.fileName.toLowerCase() ||
+                      m.file.toLowerCase() === `${fl.fileName.toLowerCase()}.disabled`,
+                  );
+                  const matchingMod = installedMods.find(
+                    (m) =>
+                      m.file.toLowerCase() === fl.fileName.toLowerCase() ||
+                      m.file.toLowerCase() === `${fl.fileName.toLowerCase()}.disabled`,
+                  );
 
-                    <Button
-                      size="sm"
-                      onClick={() => void handleInstallFile(fl, selectedMod.name)}
-                      disabled={installingId === fl.id}
-                      className="h-8 gap-1.5 text-xs bg-orange-600 hover:bg-orange-700 text-white"
+                  return (
+                    <div
+                      key={fl.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border bg-card/60 p-3 text-sm transition-colors hover:bg-secondary/15"
                     >
-                      <Download className="h-3.5 w-3.5" />
-                      Install
-                    </Button>
-                  </div>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-foreground truncate">
+                            {fl.displayName || fl.fileName}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] uppercase">
+                            {fl.releaseType === 1 ? 'Release' : fl.releaseType === 2 ? 'Beta' : 'Alpha'}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {fl.fileName} · {formatFileSize(fl.fileLength)} · {formatCount(fl.downloadCount)} downloads
+                        </p>
+                      </div>
+
+                      {isFileInstalled ? (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void handleInstallFile(fl, selectedMod.name)}
+                            disabled={installingId === fl.id}
+                            className="h-8 gap-1.5 text-xs text-muted-foreground"
+                            title="Reinstall this version"
+                          >
+                            <Check className="h-3.5 w-3.5 text-emerald-500" />
+                            Installed
+                          </Button>
+                          {matchingMod && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                              title={`Delete ${matchingMod.file} from server`}
+                              aria-label={`Delete ${matchingMod.file}`}
+                              onClick={() => void handleDeleteMod(matchingMod)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={() => void handleInstallFile(fl, selectedMod.name)}
+                          disabled={installingId === fl.id}
+                          className="h-8 gap-1.5 text-xs bg-orange-600 hover:bg-orange-700 text-white shrink-0"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Install
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
 
             <div className="border-t px-6 py-3 flex items-center justify-end">

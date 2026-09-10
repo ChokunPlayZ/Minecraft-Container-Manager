@@ -13,10 +13,12 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import {
+  extractModId,
   findInstalledMod,
   formatCount,
   formatFileSize,
@@ -38,6 +40,8 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
+import { ModUpdateDialog } from './mod-update-dialog';
+import { useModal } from './ui/modal';
 
 const CATEGORIES = [
   { id: 'all', label: 'All' },
@@ -64,12 +68,14 @@ interface ModrinthBrowserProps {
   server: Server;
   installedMods: Mod[];
   onModInstalled: (mod: Mod) => void;
+  onModDeleted?: (modName: string) => void;
 }
 
 export function ModrinthBrowser({
   server,
   installedMods,
   onModInstalled,
+  onModDeleted,
 }: ModrinthBrowserProps) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
@@ -251,6 +257,151 @@ export function ModrinthBrowser({
     };
   }, [selectedProject, activeLoaders, activeVersion]);
 
+  const { confirm, dialog } = useModal();
+  const [updatePrompt, setUpdatePrompt] = useState<{
+    projectTitle: string;
+    existingMod: Mod;
+    targetUrl: string;
+    targetFilename: string;
+    projectId?: string;
+    projectSlug?: string;
+  } | null>(null);
+
+  function findExistingOldJar(
+    targetFilename: string,
+    project?: Pick<ModrinthSearchHit, 'slug' | 'title'>,
+  ): Mod | undefined {
+    let existingMod = project ? findInstalledMod(project, installedMods) : undefined;
+    if (!existingMod) {
+      const baseId = extractModId(targetFilename).replace(/_/g, '-');
+      if (baseId.length > 0) {
+        existingMod = installedMods.find((m) => {
+          const mId = extractModId(m.file).replace(/_/g, '-');
+          return mId === baseId;
+        });
+      }
+    }
+    if (!existingMod) return undefined;
+
+    const isSameFile =
+      existingMod.file.toLowerCase() === targetFilename.toLowerCase() ||
+      existingMod.file.toLowerCase() === `${targetFilename.toLowerCase()}.disabled`;
+    if (isSameFile) return undefined;
+
+    return existingMod;
+  }
+
+  async function executeInstall(
+    url: string,
+    filename: string,
+    title: string,
+    projectId?: string,
+    projectSlug?: string,
+    deleteOldMod?: Mod,
+  ) {
+    setInstallingId(projectId || url);
+    setError(null);
+
+    try {
+      if (deleteOldMod) {
+        try {
+          await api.deleteMod(server.id, deleteOldMod.name);
+        } catch {
+          // ignore if handled on backend or already deleted
+        }
+      }
+
+      const mod = deleteOldMod
+        ? await api.downloadMod(
+            server.id,
+            url,
+            filename,
+            deleteOldMod.name,
+          )
+        : await api.downloadMod(
+            server.id,
+            url,
+            filename,
+          );
+      onModInstalled(mod);
+      if (deleteOldMod) {
+        onModDeleted?.(deleteOldMod.name);
+        setInstalledFiles((prev) => {
+          const next = new Set(prev);
+          next.delete(deleteOldMod.file.toLowerCase());
+          next.delete(`${deleteOldMod.file.toLowerCase()}.disabled`);
+          return next;
+        });
+      }
+
+      if (projectId || projectSlug) {
+        setInstalledIds(
+          (prev) =>
+            new Set([
+              ...prev,
+              ...(projectId ? [projectId] : []),
+              ...(projectSlug ? [projectSlug] : []),
+            ]),
+        );
+      }
+      setInstalledFiles((prev) => new Set([...prev, filename.toLowerCase()]));
+      setNotification({
+        type: 'success',
+        text: deleteOldMod
+          ? `Installed ${title} (${filename}) and deleted old jar`
+          : `Installed ${title} (${filename})`,
+      });
+      setUpdatePrompt(null);
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
+      });
+    } finally {
+      setInstallingId(null);
+    }
+  }
+
+  async function handleDeleteMod(mod: Mod) {
+    if (
+      !(await confirm(`Delete ${mod.file} from the server? This cannot be undone.`, {
+        title: 'Delete Installed Jar',
+        confirmLabel: 'Delete',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+
+    try {
+      await api.deleteMod(server.id, mod.name);
+      onModDeleted?.(mod.name);
+      setInstalledFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(mod.file.toLowerCase());
+        next.delete(`${mod.file.toLowerCase()}.disabled`);
+        return next;
+      });
+      if (selectedProject) {
+        setInstalledIds((prev) => {
+          const next = new Set(prev);
+          next.delete(selectedProject.project_id);
+          next.delete(selectedProject.slug);
+          return next;
+        });
+      }
+      setNotification({
+        type: 'success',
+        text: `Deleted ${mod.file} from server`,
+      });
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Delete failed',
+      });
+    }
+  }
+
   // One-click install for a search hit
   async function handleOneClickInstall(project: ModrinthSearchHit) {
     setInstallingId(project.project_id);
@@ -280,46 +431,58 @@ export function ModrinthBrowser({
         throw new Error('No installable file found in release.');
       }
 
-      const mod = await api.downloadMod(server.id, primaryFile.url, primaryFile.filename);
-      onModInstalled(mod);
-      setInstalledIds((prev) => new Set([...prev, project.project_id, project.slug]));
-      setInstalledFiles((prev) => new Set([...prev, primaryFile.filename.toLowerCase()]));
-      setNotification({
-        type: 'success',
-        text: `Installed ${project.title} (${primaryFile.filename})`,
-      });
+      const existingMod = findExistingOldJar(primaryFile.filename, project);
+      if (existingMod) {
+        setInstallingId(null);
+        setUpdatePrompt({
+          projectTitle: project.title,
+          existingMod,
+          targetUrl: primaryFile.url,
+          targetFilename: primaryFile.filename,
+          projectId: project.project_id,
+          projectSlug: project.slug,
+        });
+        return;
+      }
+
+      await executeInstall(
+        primaryFile.url,
+        primaryFile.filename,
+        project.title,
+        project.project_id,
+        project.slug,
+      );
     } catch (err: unknown) {
       setNotification({
         type: 'error',
         text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
       });
-    } finally {
       setInstallingId(null);
     }
   }
 
   // Install a specific version file from the dialog
   async function handleInstallVersion(file: ModrinthVersionFile, projectTitle: string) {
-    setInstallingId(file.url);
-    try {
-      const mod = await api.downloadMod(server.id, file.url, file.filename);
-      onModInstalled(mod);
-      if (selectedProject) {
-        setInstalledIds((prev) => new Set([...prev, selectedProject.project_id, selectedProject.slug]));
-      }
-      setInstalledFiles((prev) => new Set([...prev, file.filename.toLowerCase()]));
-      setNotification({
-        type: 'success',
-        text: `Installed ${projectTitle} (${file.filename})`,
+    const existingMod = findExistingOldJar(file.filename, selectedProject ?? undefined);
+    if (existingMod) {
+      setUpdatePrompt({
+        projectTitle,
+        existingMod,
+        targetUrl: file.url,
+        targetFilename: file.filename,
+        projectId: selectedProject?.project_id,
+        projectSlug: selectedProject?.slug,
       });
-    } catch (err: unknown) {
-      setNotification({
-        type: 'error',
-        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Download failed',
-      });
-    } finally {
-      setInstallingId(null);
+      return;
     }
+
+    await executeInstall(
+      file.url,
+      file.filename,
+      projectTitle,
+      selectedProject?.project_id,
+      selectedProject?.slug,
+    );
   }
 
   function checkInstalled(project: ModrinthSearchHit): boolean {
@@ -331,6 +494,42 @@ export function ModrinthBrowser({
 
   return (
     <div className="space-y-4">
+      {dialog}
+
+      {updatePrompt && (
+        <ModUpdateDialog
+          isOpen={true}
+          modTitle={updatePrompt.projectTitle}
+          installedJar={updatePrompt.existingMod.file}
+          newJar={updatePrompt.targetFilename}
+          isInstalling={installingId !== null}
+          onConfirmDeleteAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.projectId,
+              updatePrompt.projectSlug,
+              updatePrompt.existingMod,
+            )
+          }
+          onConfirmKeepAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.projectId,
+              updatePrompt.projectSlug,
+            )
+          }
+          onDeleteOldOnly={() => {
+            const oldMod = updatePrompt.existingMod;
+            setUpdatePrompt(null);
+            void handleDeleteMod(oldMod);
+          }}
+          onCancel={() => setUpdatePrompt(null)}
+        />
+      )}
       {/* Toast Notification */}
       {notification && (
         <div
@@ -682,21 +881,35 @@ export function ModrinthBrowser({
                       </Button>
 
                       {isInstalled ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={isInstalling}
-                          onClick={() => void handleOneClickInstall(project)}
-                          className="h-8 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
-                          title="Click to reinstall or update"
-                        >
-                          {isInstalling ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={isInstalling}
+                            onClick={() => void handleOneClickInstall(project)}
+                            className="h-8 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+                            title="Click to reinstall or update"
+                          >
+                            {isInstalling ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                            )}
+                            Installed
+                          </Button>
+                          {installedMod && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                              title={`Delete ${installedMod.file} from server`}
+                              aria-label={`Delete ${installedMod.file}`}
+                              onClick={() => void handleDeleteMod(installedMod)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           )}
-                          Installed
-                        </Button>
+                        </div>
                       ) : (
                         <Button
                           variant="default"
@@ -864,12 +1077,24 @@ export function ModrinthBrowser({
                         </span>
                       </div>
                     </div>
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
-                    >
-                      {selectedInstalledMod.enabled ? 'Enabled' : 'Disabled'}
-                    </Badge>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
+                      >
+                        {selectedInstalledMod.enabled ? 'Enabled' : 'Disabled'}
+                      </Badge>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-7 gap-1 px-2.5 text-xs"
+                        title={`Delete ${selectedInstalledMod.file} from server`}
+                        onClick={() => void handleDeleteMod(selectedInstalledMod)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete Jar
+                      </Button>
+                    </div>
                   </div>
                 );
               })()}
@@ -958,26 +1183,48 @@ export function ModrinthBrowser({
                           </div>
 
                           {isThisFileInstalled ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isDownloadingThis}
-                              onClick={() => void handleInstallVersion(primaryFile, selectedProject.title)}
-                              className="shrink-0 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
-                              title="Reinstall this version"
-                            >
-                              {isDownloadingThis ? (
-                                <>
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  Downloading...
-                                </>
-                              ) : (
-                                <>
-                                  <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                                  Installed
-                                </>
-                              )}
-                            </Button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={isDownloadingThis}
+                                onClick={() => void handleInstallVersion(primaryFile, selectedProject.title)}
+                                className="h-8 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300 text-xs"
+                                title="Reinstall this version"
+                              >
+                                {isDownloadingThis ? (
+                                  <>
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    Downloading...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                                    Installed
+                                  </>
+                                )}
+                              </Button>
+                              {(() => {
+                                const matchingMod = installedMods.find(
+                                  (m) =>
+                                    m.file.toLowerCase() === primaryFile.filename.toLowerCase() ||
+                                    m.file.toLowerCase() === `${primaryFile.filename.toLowerCase()}.disabled`,
+                                );
+                                if (!matchingMod) return null;
+                                return (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                                    title={`Delete ${matchingMod.file} from server`}
+                                    aria-label={`Delete ${matchingMod.file}`}
+                                    onClick={() => void handleDeleteMod(matchingMod)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                );
+                              })()}
+                            </div>
                           ) : (
                             <Button
                               size="sm"

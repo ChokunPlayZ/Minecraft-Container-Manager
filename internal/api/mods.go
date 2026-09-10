@@ -29,6 +29,9 @@ func (s *Server) handleUploadMod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	if oldName := r.FormValue("delete_old_name"); oldName != "" {
+		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), oldName)
+	}
 	mod, err := s.servers.UploadMod(r.Context(), r.PathValue("id"), header.Filename, file)
 	if err != nil {
 		s.writeModErr(w, err)
@@ -40,8 +43,9 @@ func (s *Server) handleUploadMod(w http.ResponseWriter, r *http.Request) {
 // handleDownloadMod downloads a mod/plugin artifact from a remote URL.
 func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		URL      string `json:"url"`
-		Filename string `json:"filename"`
+		URL           string `json:"url"`
+		Filename      string `json:"filename"`
+		DeleteOldName string `json:"delete_old_name"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -50,6 +54,9 @@ func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 	if in.URL == "" || in.Filename == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "url and filename are required")
 		return
+	}
+	if in.DeleteOldName != "" {
+		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), in.DeleteOldName)
 	}
 	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL)
 	if err != nil {

@@ -9,11 +9,13 @@ import {
   RefreshCw,
   Search,
   Star,
+  Trash2,
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
-import { formatCount } from '../api/modrinth';
+import { extractModId, formatCount } from '../api/modrinth';
 import {
+  findInstalledSpigetResource,
   getSpigetDownloadUrl,
   getSpigetIconUrl,
   getSpigetSafeFilename,
@@ -32,17 +34,21 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
+import { ModUpdateDialog } from './mod-update-dialog';
+import { useModal } from './ui/modal';
 
 interface SpigetBrowserProps {
   server: Server;
   installedMods: Mod[];
   onModInstalled: (mod: Mod) => void;
+  onModDeleted?: (modName: string) => void;
 }
 
 export function SpigetBrowser({
   server,
   installedMods,
   onModInstalled,
+  onModDeleted,
 }: SpigetBrowserProps) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<'-downloads' | '-rating' | '-releaseDate' | '-updateDate'>('-downloads');
@@ -161,21 +167,77 @@ export function SpigetBrowser({
     };
   }, [selectedResource]);
 
-  async function handleInstallResource(resource: SpigetResource, versionName?: string) {
-    setInstallingId(resource.id);
+  const { confirm, dialog } = useModal();
+  const [updatePrompt, setUpdatePrompt] = useState<{
+    projectTitle: string;
+    existingMod: Mod;
+    targetUrl: string;
+    targetFilename: string;
+    resourceId?: number;
+  } | null>(null);
+
+  function findExistingOldJar(
+    targetFilename: string,
+    resource?: Pick<SpigetResource, 'id' | 'name'>,
+  ): Mod | undefined {
+    let existingMod = resource ? findInstalledSpigetResource(resource, installedMods) : undefined;
+    if (!existingMod) {
+      const baseId = extractModId(targetFilename).replace(/_/g, '-');
+      if (baseId.length > 0) {
+        existingMod = installedMods.find((m) => {
+          const mId = extractModId(m.file).replace(/_/g, '-');
+          return mId === baseId;
+        });
+      }
+    }
+    if (!existingMod) return undefined;
+
+    const isSameFile =
+      existingMod.file.toLowerCase() === targetFilename.toLowerCase() ||
+      existingMod.file.toLowerCase() === `${targetFilename.toLowerCase()}.disabled`;
+    if (isSameFile) return undefined;
+
+    return existingMod;
+  }
+
+  async function executeInstall(
+    url: string,
+    filename: string,
+    title: string,
+    resourceId?: number,
+    deleteOldMod?: Mod,
+  ) {
+    setInstallingId(resourceId ?? 0);
     setError(null);
 
     try {
-      const filename = getSpigetSafeFilename(resource.name, versionName);
-      const downloadUrl = getSpigetDownloadUrl(resource.id);
+      if (deleteOldMod) {
+        try {
+          await api.deleteMod(server.id, deleteOldMod.name);
+        } catch {
+          // ignore
+        }
+      }
 
-      const mod = await api.downloadMod(server.id, downloadUrl, filename);
+      const mod = deleteOldMod
+        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name)
+        : await api.downloadMod(server.id, url, filename);
       onModInstalled(mod);
-      setInstalledIds((prev) => new Set([...prev, resource.id]));
+      if (deleteOldMod) {
+        onModDeleted?.(deleteOldMod.name);
+      }
+
+      if (resourceId !== undefined) {
+        setInstalledIds((prev) => new Set([...prev, resourceId]));
+      }
+
       setNotification({
         type: 'success',
-        text: `Installed ${resource.name} (${filename}) from SpigotMC`,
+        text: deleteOldMod
+          ? `Installed ${title} (${filename}) and removed ${deleteOldMod.file}`
+          : `Installed ${title} (${filename}) from SpigotMC`,
       });
+      setUpdatePrompt(null);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
@@ -184,6 +246,58 @@ export function SpigetBrowser({
     } finally {
       setInstallingId(null);
     }
+  }
+
+  async function handleDeleteMod(mod: Mod) {
+    if (
+      !(await confirm(`Delete ${mod.file} from the server? This cannot be undone.`, {
+        title: 'Delete Installed Jar',
+        confirmLabel: 'Delete',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
+
+    try {
+      await api.deleteMod(server.id, mod.name);
+      onModDeleted?.(mod.name);
+      if (selectedResource) {
+        setInstalledIds((prev) => {
+          const next = new Set(prev);
+          next.delete(selectedResource.id);
+          return next;
+        });
+      }
+      setNotification({
+        type: 'success',
+        text: `Deleted ${mod.file} from server`,
+      });
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Delete failed',
+      });
+    }
+  }
+
+  async function handleInstallResource(resource: SpigetResource, versionName?: string) {
+    const filename = getSpigetSafeFilename(resource.name, versionName);
+    const downloadUrl = getSpigetDownloadUrl(resource.id);
+
+    const existingMod = findExistingOldJar(filename, resource);
+    if (existingMod) {
+      setUpdatePrompt({
+        projectTitle: resource.name,
+        existingMod,
+        targetUrl: downloadUrl,
+        targetFilename: filename,
+        resourceId: resource.id,
+      });
+      return;
+    }
+
+    await executeInstall(downloadUrl, filename, resource.name, resource.id);
   }
 
   function checkInstalled(resource: SpigetResource): boolean {
@@ -195,6 +309,40 @@ export function SpigetBrowser({
 
   return (
     <div className="space-y-4">
+      {dialog}
+
+      {updatePrompt && (
+        <ModUpdateDialog
+          isOpen={true}
+          modTitle={updatePrompt.projectTitle}
+          installedJar={updatePrompt.existingMod.file}
+          newJar={updatePrompt.targetFilename}
+          isInstalling={installingId !== null}
+          onConfirmDeleteAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.resourceId,
+              updatePrompt.existingMod,
+            )
+          }
+          onConfirmKeepAndInstall={() =>
+            executeInstall(
+              updatePrompt.targetUrl,
+              updatePrompt.targetFilename,
+              updatePrompt.projectTitle,
+              updatePrompt.resourceId,
+            )
+          }
+          onDeleteOldOnly={() => {
+            const oldMod = updatePrompt.existingMod;
+            setUpdatePrompt(null);
+            void handleDeleteMod(oldMod);
+          }}
+          onCancel={() => setUpdatePrompt(null)}
+        />
+      )}
       {/* Toast Notification */}
       {notification && (
         <div
@@ -329,7 +477,8 @@ export function SpigetBrowser({
       {!loading && results.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {results.map((res) => {
-            const isInstalled = checkInstalled(res);
+            const installedMod = findInstalledSpigetResource(res, installedMods);
+            const isInstalled = Boolean(installedMod) || checkInstalled(res);
             const isInstalling = installingId === res.id;
             const iconUrl = getSpigetIconUrl(res);
 
@@ -406,16 +555,17 @@ export function SpigetBrowser({
                     </a>
                   </div>
 
-                  <div className="flex items-center gap-2 pt-1">
+                  <div className="flex items-center gap-1.5 pt-1">
                     <Button
                       size="sm"
                       onClick={() => void handleInstallResource(res)}
-                      disabled={isInstalling || isInstalled}
+                      disabled={isInstalling}
                       className={`flex-1 h-8 text-xs gap-1.5 ${
                         isInstalled
-                          ? 'bg-secondary text-muted-foreground cursor-default'
+                          ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
                           : 'bg-amber-600 hover:bg-amber-700 text-white'
                       }`}
+                      title={isInstalled ? 'Click to reinstall or update' : 'Install Jar'}
                     >
                       {isInstalling ? (
                         <>
@@ -424,7 +574,7 @@ export function SpigetBrowser({
                         </>
                       ) : isInstalled ? (
                         <>
-                          <Check className="h-3.5 w-3.5 text-emerald-500" />
+                          <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                           Installed
                         </>
                       ) : (
@@ -434,6 +584,19 @@ export function SpigetBrowser({
                         </>
                       )}
                     </Button>
+
+                    {installedMod && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                        title={`Delete ${installedMod.file} from server`}
+                        aria-label={`Delete ${installedMod.file}`}
+                        onClick={() => void handleDeleteMod(installedMod)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
 
                     <Button
                       variant="outline"
@@ -524,6 +687,33 @@ export function SpigetBrowser({
               </button>
             </div>
 
+            {/* Installed jar banner */}
+            {(() => {
+              const installedResourceMod = findInstalledSpigetResource(selectedResource, installedMods);
+              if (!installedResourceMod) return null;
+              return (
+                <div className="mx-6 mt-4 flex items-center justify-between gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-900 dark:text-emerald-200">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Check className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span className="font-semibold text-foreground">Installed Jar on Server:</span>
+                    <span className="font-mono font-medium text-emerald-700 dark:text-emerald-300 truncate">
+                      {installedResourceMod.file}
+                    </span>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-7 gap-1 px-2.5 text-xs shrink-0"
+                    title={`Delete ${installedResourceMod.file}`}
+                    onClick={() => void handleDeleteMod(installedResourceMod)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete Jar
+                  </Button>
+                </div>
+              );
+            })()}
+
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
               {loadingVersions && (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
@@ -545,31 +735,71 @@ export function SpigetBrowser({
               )}
 
               {!loadingVersions &&
-                versions.map((ver) => (
-                  <div
-                    key={ver.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border bg-card/60 p-3 text-sm transition-colors hover:bg-secondary/15"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-foreground">{ver.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatCount(ver.downloads || 0)} downloads
-                        </span>
+                versions.map((ver) => {
+                  const verFilename = getSpigetSafeFilename(selectedResource.name, ver.name);
+                  const matchingMod = installedMods.find(
+                    (m) =>
+                      m.file.toLowerCase() === verFilename.toLowerCase() ||
+                      m.file.toLowerCase() === `${verFilename.toLowerCase()}.disabled`,
+                  );
+                  const isThisInstalled = Boolean(matchingMod);
+
+                  return (
+                    <div
+                      key={ver.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border bg-card/60 p-3 text-sm transition-colors hover:bg-secondary/15"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-foreground">{ver.name}</span>
+                          {isThisInstalled && (
+                            <Badge
+                              variant="secondary"
+                              className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 text-[10px]"
+                            >
+                              Installed
+                            </Badge>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {formatCount(ver.downloads || 0)} downloads
+                          </span>
+                        </div>
+                        <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">
+                          {verFilename}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={() => void handleInstallResource(selectedResource, ver.name)}
+                          disabled={installingId === selectedResource.id}
+                          className={`h-8 gap-1.5 text-xs ${
+                            isThisInstalled
+                              ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
+                              : 'bg-amber-600 hover:bg-amber-700 text-white'
+                          }`}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          {isThisInstalled ? 'Reinstall' : `Install ${ver.name}`}
+                        </Button>
+
+                        {matchingMod && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            title={`Delete ${matchingMod.file} from server`}
+                            aria-label={`Delete ${matchingMod.file}`}
+                            onClick={() => void handleDeleteMod(matchingMod)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </div>
-
-                    <Button
-                      size="sm"
-                      onClick={() => void handleInstallResource(selectedResource, ver.name)}
-                      disabled={installingId === selectedResource.id}
-                      className="h-8 gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      Install {ver.name}
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
             </div>
 
             <div className="border-t px-6 py-3 flex items-center justify-end">

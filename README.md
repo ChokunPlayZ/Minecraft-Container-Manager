@@ -57,10 +57,6 @@ Each Minecraft server owns and publishes its game port directly to the host netw
 - **Automated Retention**: Enforce retention limits to automatically prune older snapshots.
 - **Instant Restore**: One-click in-place snapshot restoration.
 
-### 💤 Automated Idle Spin-Down
-- **Resource Optimization**: Monitors server activity and automatically stops idle servers after a configurable period of zero player activity.
-- **Per-Server Overrides**: Enable or disable idle spin-down per server, or specify custom timeout durations.
-
 ### 🔒 Enterprise Security & Authentication
 - **Multi-Factor Authentication (MFA)**:
   - **TOTP Two-Factor Authentication**: Authenticator app enrollment with QR code generation.
@@ -226,7 +222,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `GET` | `/api/servers` | List all managed Minecraft servers. |
 | `POST` | `/api/servers` | Create a new server (flavor, version, build, RAM, CPU, ports). |
 | `GET` | `/api/servers/:id` | Get server configuration and container status. |
-| `PATCH` | `/api/servers/:id` | Update server configuration (RAM, CPU, ports, spin-down). |
+| `PATCH` | `/api/servers/:id` | Update server configuration (RAM, CPU, ports). |
 | `DELETE` | `/api/servers/:id` | Delete server and remove container/data. |
 | `POST` | `/api/servers/:id/start` | Start server container. |
 | `POST` | `/api/servers/:id/stop` | Gracefully stop server container. |
@@ -300,14 +296,6 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `POST` | `/api/servers/:id/dns` | Publish or update an SRV record for a server. |
 | `DELETE` | `/api/servers/:id/dns` | Remove an SRV record for a server. |
 
-### Idle Spin-Down
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/spindown` | List idle spin-down status across all servers. |
-| `GET` | `/api/servers/:id/spindown` | Get idle spin-down status and timeout for a server. |
-| `PUT` | `/api/servers/:id/spindown` | Update idle timeout override for a server. |
-| `POST` | `/api/servers/:id/activity` | Record manual activity ping for a server. |
-
 ### User Management & System Health
 | Method | Path | Description |
 | --- | --- | --- |
@@ -340,8 +328,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 │   ├── jars/               # Paper, Fabric, Vanilla, Forge, NeoForge, Spigot version resolution
 │   ├── ports/              # Host port allocation pool manager
 │   ├── rcon/               # Minecraft RCON client implementation
-│   ├── servers/            # Server entity store, state transitions, and activity tracker
-│   ├── spindown/           # Idle activity monitor and automated shutdown scheduler
+│   ├── servers/            # Server entity store and state transitions
 │   └── web/                # Embedded production frontend assets
 ├── migrations/             # SQL schema migrations (SQLite)
 ├── web/                    # React / Vite frontend application
