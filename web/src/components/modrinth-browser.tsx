@@ -4,7 +4,6 @@ import {
   Download,
   ExternalLink,
   Filter,
-  Flame,
   Info,
   Layers,
   Loader2,
@@ -39,9 +38,9 @@ import type {
 } from '../api/types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { ModUpdateDialog } from './mod-update-dialog';
+import { PluginCard, PluginEmptyState, PluginGridSkeleton } from './plugin-card';
 import { useModal } from './ui/modal';
 
 const CATEGORIES = [
@@ -773,30 +772,13 @@ export function ModrinthBrowser({
 
       {/* Results Grid */}
       {loading ? (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="flex animate-pulse items-start gap-3.5 rounded-xl border bg-card p-4"
-            >
-              <div className="h-12 w-12 shrink-0 rounded-lg bg-secondary" />
-              <div className="flex-1 space-y-2">
-                <div className="h-4 w-1/2 rounded bg-secondary" />
-                <div className="h-3 w-3/4 rounded bg-secondary/70" />
-                <div className="h-3 w-1/3 rounded bg-secondary/50" />
-              </div>
-            </div>
-          ))}
-        </div>
+        <PluginGridSkeleton count={6} />
       ) : results.length === 0 && !error ? (
-        <div className="rounded-xl border border-dashed p-10 text-center">
-          <Package className="mx-auto h-10 w-10 text-muted-foreground/60" />
-          <h3 className="mt-3 text-base font-semibold text-foreground">No matching projects found</h3>
-          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
-            No projects matched your criteria for {loaderLabel} {server.version ? `MC ${server.version}` : ''}. Try adjusting search terms or toggling the compatibility filters.
-          </p>
-          <div className="mt-4 flex justify-center gap-2">
-            {(matchVersion || matchLoader || serverSideOnly || category !== 'all') && (
+        <PluginEmptyState
+          title="No matching projects found"
+          description={`No projects matched your criteria for ${loaderLabel} ${server.version ? `MC ${server.version}` : ''}. Try adjusting search terms or toggling the compatibility filters.`}
+          action={
+            (matchVersion || matchLoader || serverSideOnly || category !== 'all') && (
               <Button
                 variant="outline"
                 size="sm"
@@ -810,174 +792,69 @@ export function ModrinthBrowser({
               >
                 Reset All Filters
               </Button>
-            )}
-          </div>
-        </div>
+            )
+          }
+        />
       ) : (
-        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {results.map((project) => {
             const installedMod = findInstalledMod(project, installedMods, hashProjectMap);
             const isInstalled = Boolean(installedMod) || checkInstalled(project);
             const isInstalling = installingId === project.project_id;
             const isClientOnly = project.server_side === 'unsupported';
 
+            const badges = (
+              <>
+                {isClientOnly && (
+                  <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
+                    Client Only
+                  </Badge>
+                )}
+                {project.server_side === 'required' && (
+                  <Badge
+                    variant="outline"
+                    className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px] px-1.5 py-0"
+                  >
+                    Server Only
+                  </Badge>
+                )}
+                {project.categories?.slice(0, 2).map((cat) => (
+                  <Badge
+                    key={cat}
+                    variant="secondary"
+                    className="text-[10px] px-1.5 py-0 capitalize"
+                  >
+                    {cat}
+                  </Badge>
+                ))}
+              </>
+            );
+
             return (
-              <Card
+              <PluginCard
                 key={project.project_id}
-                className="group relative flex flex-col justify-between overflow-hidden border transition-all hover:border-primary/40 hover:shadow-sm"
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3.5">
-                    {/* Project Icon */}
-                    <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-secondary/40 shadow-2xs">
-                      {project.icon_url ? (
-                        <img
-                          src={project.icon_url}
-                          alt={project.title}
-                          className="h-full w-full object-cover"
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <Package className="h-6 w-6 text-muted-foreground/60" />
-                      )}
-                    </div>
-
-                    {/* Meta info */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h4
-                          className="truncate font-semibold text-foreground transition-colors group-hover:text-primary cursor-pointer text-sm"
-                          onClick={() => setSelectedProject(project)}
-                          title={project.title}
-                        >
-                          {project.title}
-                        </h4>
-                      </div>
-
-                      <p className="truncate text-xs text-muted-foreground">
-                        by <span className="font-medium text-foreground/80">{project.author}</span>
-                      </p>
-
-                      {/* Description with 2-line clamp */}
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {project.description}
-                      </p>
-
-                      {/* Installed jar indicator if on server */}
-                      {installedMod && (
-                        <div className="mt-1.5 flex items-center gap-1.5 rounded bg-emerald-500/10 px-2 py-0.5 text-[11px] font-mono text-emerald-700 dark:text-emerald-300">
-                          <Check className="h-3 w-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                          <span className="truncate">Installed: {installedMod.file}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Badges & Stats */}
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                    {isClientOnly && (
-                      <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
-                        Client Only
-                      </Badge>
-                    )}
-                    {project.server_side === 'required' && (
-                      <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px] px-1.5 py-0">
-                        Server Only
-                      </Badge>
-                    )}
-                    {project.categories?.slice(0, 2).map((cat) => (
-                      <Badge
-                        key={cat}
-                        variant="secondary"
-                        className="text-[10px] px-1.5 py-0 capitalize"
-                      >
-                        {cat}
-                      </Badge>
-                    ))}
-                  </div>
-
-                  {/* Card Footer: stats & download button */}
-                  <div className="mt-3.5 flex items-center justify-between border-t border-border/60 pt-3 text-xs">
-                    <div className="flex items-center gap-3 text-muted-foreground">
-                      <span className="inline-flex items-center gap-1" title="Downloads">
-                        <Download className="h-3.5 w-3.5" />
-                        {formatCount(project.downloads)}
-                      </span>
-                      <span className="inline-flex items-center gap-1" title="Followers">
-                        <Flame className="h-3.5 w-3.5 text-amber-500" />
-                        {formatCount(project.follows)}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-xs"
-                        onClick={() => setSelectedProject(project)}
-                        title="View versions and details"
-                      >
-                        Details
-                      </Button>
-
-                      {isInstalled ? (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={isInstalling}
-                            onClick={() => void handleOneClickInstall(project)}
-                            className="h-8 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
-                            title="Click to reinstall or update"
-                          >
-                            {isInstalling ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                            )}
-                            Installed
-                          </Button>
-                          {installedMod && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                              title={`Delete ${installedMod.file} from server`}
-                              aria-label={`Delete ${installedMod.file}`}
-                              onClick={() => void handleDeleteMod(installedMod)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                        </div>
-                      ) : (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          disabled={isInstalling}
-                          onClick={() => void handleOneClickInstall(project)}
-                          className="h-8 gap-1.5 shadow-2xs"
-                        >
-                          {isInstalling ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Installing...
-                            </>
-                          ) : (
-                            <>
-                              <Download className="h-3.5 w-3.5" />
-                              Install
-                            </>
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                id={project.project_id}
+                title={project.title}
+                author={project.author}
+                description={project.description}
+                iconUrl={project.icon_url}
+                provider="modrinth"
+                isInstalled={isInstalled}
+                installedJar={installedMod?.file}
+                isInstalling={isInstalling}
+                downloads={project.downloads}
+                follows={project.follows}
+                badges={badges}
+                externalUrl={`https://modrinth.com/${project.project_type}/${project.slug}`}
+                externalLabel="Modrinth"
+                installLabel="Install"
+                onInstall={() => void handleOneClickInstall(project)}
+                onDelete={installedMod ? () => void handleDeleteMod(installedMod) : undefined}
+                onViewDetails={() => setSelectedProject(project)}
+                detailsTitle="View versions and details"
+                detailsLabel="Details"
+                onClickTitle={() => setSelectedProject(project)}
+              />
             );
           })}
         </div>

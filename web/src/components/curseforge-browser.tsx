@@ -4,10 +4,7 @@ import {
   Download,
   ExternalLink,
   Flame,
-  Key,
-  Layers,
   Loader2,
-  Package,
   RefreshCw,
   Search,
   Settings,
@@ -39,6 +36,7 @@ import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { ModUpdateDialog } from './mod-update-dialog';
+import { PluginCard, PluginEmptyState, PluginGridSkeleton } from './plugin-card';
 import { useModal } from './ui/modal';
 
 interface CurseForgeBrowserProps {
@@ -69,7 +67,7 @@ export function CurseForgeBrowser({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [installingId, setInstallingId] = useState<number | null>(null);
+  const [installingId, setInstallingId] = useState<number | string | null>(null);
   const [installedSlugs, setInstalledSlugs] = useState<Set<string>>(new Set());
   const [notification, setNotification] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -503,9 +501,9 @@ export function CurseForgeBrowser({
       {updatePrompt && (
         <ModUpdateDialog
           isOpen={true}
-          projectTitle={updatePrompt.projectTitle}
-          existingMod={updatePrompt.existingMod}
-          newFilename={updatePrompt.targetFilename}
+          modTitle={updatePrompt.projectTitle}
+          installedJar={updatePrompt.existingMod.file}
+          newJar={updatePrompt.targetFilename}
           onConfirmDeleteAndInstall={() =>
             executeInstall(
               updatePrompt.targetUrl,
@@ -526,9 +524,10 @@ export function CurseForgeBrowser({
             )
           }
           onDeleteOldOnly={() => {
-            const oldMod = updatePrompt.existingMod;
+            if (updatePrompt.existingMod) {
+              void handleDeleteMod(updatePrompt.existingMod);
+            }
             setUpdatePrompt(null);
-            void handleDeleteMod(oldMod);
           }}
           onCancel={() => setUpdatePrompt(null)}
         />
@@ -660,28 +659,7 @@ export function CurseForgeBrowser({
       )}
 
       {/* Loading Skeleton */}
-      {loading && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-44 rounded-xl border border-border/60 bg-card/40 p-4 animate-pulse"
-            >
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-lg bg-secondary/80" />
-                <div className="space-y-1.5 flex-1">
-                  <div className="h-4 w-28 rounded-sm bg-secondary/80" />
-                  <div className="h-3 w-16 rounded-sm bg-secondary/60" />
-                </div>
-              </div>
-              <div className="mt-4 space-y-2">
-                <div className="h-3 w-full rounded-sm bg-secondary/50" />
-                <div className="h-3 w-3/4 rounded-sm bg-secondary/40" />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {loading && <PluginGridSkeleton count={6} />}
 
       {/* Results Grid */}
       {!loading && results.length > 0 && (
@@ -689,131 +667,32 @@ export function CurseForgeBrowser({
           {results.map((mod) => {
             const isInstalled = checkInstalled(mod);
             const installedMod = findInstalledCurseForgeMod(mod, installedMods);
-            const isInstalling = installingId === mod.id;
+            const isInstalling = installingId === mod.id || installingId === mod.slug;
             const logoUrl = mod.logo?.thumbnailUrl || mod.logo?.url;
 
             return (
-              <div
+              <PluginCard
                 key={mod.id}
-                className="group relative flex flex-col justify-between rounded-xl border border-border/80 bg-card/60 p-4 shadow-2xs transition-all hover:border-orange-500/40 hover:shadow-md hover:bg-card"
-              >
-                <div>
-                  <div className="flex items-start gap-3">
-                    {logoUrl ? (
-                      <img
-                        src={logoUrl}
-                        alt={mod.name}
-                        className="h-11 w-11 shrink-0 rounded-lg object-contain bg-secondary/30 p-1 border border-border/40"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600">
-                        <Flame className="h-6 w-6" />
-                      </div>
-                    )}
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h4 className="truncate font-semibold text-foreground text-sm group-hover:text-orange-600 transition-colors">
-                          {mod.name}
-                        </h4>
-                        {isInstalled && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] px-1.5 py-0 shrink-0 font-medium"
-                          >
-                            Installed
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="truncate text-xs text-muted-foreground">
-                        by {mod.authors?.[0]?.name || 'Unknown'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <p className="mt-2.5 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
-                    {mod.summary || 'No summary available.'}
-                  </p>
-                </div>
-
-                <div className="mt-4 space-y-3 pt-2 border-t border-border/40">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-1">
-                      <Download className="h-3 w-3 text-muted-foreground/80" />
-                      {formatCount(mod.downloadCount || 0)}
-                    </span>
-
-                    <a
-                      href={mod.links?.websiteUrl || `https://curseforge.com/minecraft/mc-mods/${mod.slug}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                    >
-                      CurseForge
-                      <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-1">
-                    {isInstalled ? (
-                      <div className="flex items-center gap-1.5 flex-1">
-                        <Button
-                          size="sm"
-                          disabled
-                          className="flex-1 h-8 text-xs gap-1.5 bg-secondary text-muted-foreground cursor-default"
-                        >
-                          <Check className="h-3.5 w-3.5 text-emerald-500" />
-                          Installed
-                        </Button>
-                        {installedMod && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                            title={`Delete ${installedMod.file} from server`}
-                            aria-label={`Delete ${installedMod.file}`}
-                            onClick={() => void handleDeleteMod(installedMod)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        onClick={() => void handleOneClickInstall(mod)}
-                        disabled={isInstalling}
-                        className="flex-1 h-8 text-xs gap-1.5 bg-orange-600 hover:bg-orange-700 text-white"
-                      >
-                        {isInstalling ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Installing...
-                          </>
-                        ) : (
-                          <>
-                            <Download className="h-3.5 w-3.5" />
-                            Install Latest
-                          </>
-                        )}
-                      </Button>
-                    )}
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSelectedMod(mod)}
-                      className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-                      title="View all mod files"
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
+                id={mod.id}
+                title={mod.name}
+                author={mod.authors?.[0]?.name || 'Unknown'}
+                description={mod.summary || 'No summary available.'}
+                iconUrl={logoUrl}
+                provider="curseforge"
+                isInstalled={isInstalled}
+                installedJar={installedMod?.file}
+                isInstalling={isInstalling}
+                downloads={mod.downloadCount || 0}
+                externalUrl={mod.links?.websiteUrl || `https://curseforge.com/minecraft/mc-mods/${mod.slug}`}
+                externalLabel="CurseForge"
+                installLabel="Install Latest"
+                installDisabled={isInstalled}
+                onInstall={() => void handleOneClickInstall(mod)}
+                onDelete={installedMod ? () => void handleDeleteMod(installedMod) : undefined}
+                onViewDetails={() => setSelectedMod(mod)}
+                detailsTitle="View all mod files"
+                onClickTitle={() => setSelectedMod(mod)}
+              />
             );
           })}
         </div>
@@ -821,13 +700,10 @@ export function CurseForgeBrowser({
 
       {/* Empty State */}
       {!loading && results.length === 0 && !error && (
-        <div className="rounded-xl border border-dashed border-border/80 py-12 text-center">
-          <Package className="mx-auto h-8 w-8 text-muted-foreground/60" />
-          <p className="mt-3 text-sm font-medium text-foreground">No items found on CurseForge</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Try adjusting your search query or class filter.
-          </p>
-        </div>
+        <PluginEmptyState
+          title="No items found on CurseForge"
+          description="Try adjusting your search query or class filter."
+        />
       )}
 
       {/* Load More Button */}

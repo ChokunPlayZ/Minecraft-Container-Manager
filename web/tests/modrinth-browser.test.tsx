@@ -376,7 +376,7 @@ describe('ModrinthBrowser component', () => {
       { name: 'Chunky', file: 'Chunky-1.4.27.jar', enabled: true },
     ];
 
-    vi.spyOn(api, 'deleteMod').mockResolvedValue();
+    vi.spyOn(api, 'deleteMod').mockResolvedValue({ ok: true });
     vi.spyOn(api, 'downloadMod').mockResolvedValue({
       name: 'Chunky',
       file: 'Chunky-1.4.28.jar',
@@ -443,7 +443,7 @@ describe('ModrinthBrowser component', () => {
       { name: 'Chunky', file: 'Chunky-1.4.27.jar', enabled: true },
     ];
 
-    vi.spyOn(api, 'deleteMod').mockResolvedValue();
+    vi.spyOn(api, 'deleteMod').mockResolvedValue({ ok: true });
     vi.spyOn(api, 'downloadMod').mockResolvedValue({
       name: 'Chunky',
       file: 'Chunky-1.4.28.jar',
@@ -505,7 +505,7 @@ describe('ModrinthBrowser component', () => {
       { name: 'Chunky', file: 'Chunky-1.4.28.jar', enabled: true },
     ];
 
-    vi.spyOn(api, 'deleteMod').mockResolvedValue();
+    vi.spyOn(api, 'deleteMod').mockResolvedValue({ ok: true });
 
     render(
       <ModrinthBrowser

@@ -4,7 +4,6 @@ import {
   getSpigetDownloadUrl,
   getSpigetIconUrl,
   getSpigetSafeFilename,
-  getSpigetVersions,
   isSpigetResourceInstalled,
   searchSpiget,
 } from '../src/api/spiget';

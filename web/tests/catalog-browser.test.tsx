@@ -10,13 +10,18 @@ const mockServer: Server = {
   name: 'Paper Test Server',
   server_type: 'paper',
   version: '1.21.1',
-  port: 25565,
-  rcon_port: 25575,
-  status: 'running',
-  memory: '4G',
+  build: '145',
+  ram_mb: 4096,
   cpu_limit: 2,
+  memory_limit_mb: 4096,
+  host_port: 25565,
+  extra_ports: [],
+  container_id: 'container-1',
+  state: 'running',
+  backup_enabled: false,
+  backup_interval_minutes: 60,
   created_at: '2026-01-01T00:00:00Z',
-  auto_start: true,
+  updated_at: '2026-01-01T00:00:00Z',
 };
 
 const mockInstalledMods: Mod[] = [];

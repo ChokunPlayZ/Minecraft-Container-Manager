@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Compass, Flame, Layers, Package, Sparkles } from 'lucide-react';
+import { Compass, Flame, Layers, Package } from 'lucide-react';
 import type { Mod, ModProvider, Server } from '../api/types';
 import { Badge } from './ui/badge';
 import { CurseForgeBrowser } from './curseforge-browser';

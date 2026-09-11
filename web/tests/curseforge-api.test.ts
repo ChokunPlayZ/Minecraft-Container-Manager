@@ -3,7 +3,6 @@ import {
   getCurseForgeApiKey,
   getCurseForgeClassId,
   getCurseForgeDownloadUrl,
-  getCurseForgeFiles,
   getCurseForgeLoaderType,
   hasCurseForgeApiKey,
   isCurseForgeModInstalled,

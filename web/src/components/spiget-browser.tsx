@@ -3,12 +3,9 @@ import {
   Check,
   Download,
   ExternalLink,
-  Layers,
   Loader2,
-  Package,
   RefreshCw,
   Search,
-  Star,
   Trash2,
   X,
 } from 'lucide-react';
@@ -35,6 +32,7 @@ import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { ModUpdateDialog } from './mod-update-dialog';
+import { PluginCard, PluginEmptyState, PluginGridSkeleton } from './plugin-card';
 import { useModal } from './ui/modal';
 
 interface SpigetBrowserProps {
@@ -456,28 +454,7 @@ export function SpigetBrowser({
       )}
 
       {/* Loading Skeleton */}
-      {loading && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-44 rounded-xl border border-border/60 bg-card/40 p-4 animate-pulse"
-            >
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-lg bg-secondary/80" />
-                <div className="space-y-1.5 flex-1">
-                  <div className="h-4 w-28 rounded-sm bg-secondary/80" />
-                  <div className="h-3 w-16 rounded-sm bg-secondary/60" />
-                </div>
-              </div>
-              <div className="mt-4 space-y-2">
-                <div className="h-3 w-full rounded-sm bg-secondary/50" />
-                <div className="h-3 w-3/4 rounded-sm bg-secondary/40" />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {loading && <PluginGridSkeleton count={6} />}
 
       {/* Results Grid */}
       {!loading && results.length > 0 && (
@@ -489,133 +466,28 @@ export function SpigetBrowser({
             const iconUrl = getSpigetIconUrl(res);
 
             return (
-              <div
+              <PluginCard
                 key={res.id}
-                className="group relative flex flex-col justify-between rounded-xl border border-border/80 bg-card/60 p-4 shadow-2xs transition-all hover:border-amber-500/40 hover:shadow-md hover:bg-card"
-              >
-                <div>
-                  <div className="flex items-start gap-3">
-                    {iconUrl ? (
-                      <img
-                        src={iconUrl}
-                        alt={res.name}
-                        className="h-11 w-11 shrink-0 rounded-lg object-contain bg-secondary/30 p-1 border border-border/40"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
-                        <Package className="h-6 w-6" />
-                      </div>
-                    )}
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h4 className="truncate font-semibold text-foreground text-sm group-hover:text-amber-600 transition-colors">
-                          {res.name}
-                        </h4>
-                        {isInstalled && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] px-1.5 py-0 shrink-0 font-medium"
-                          >
-                            Installed
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="truncate text-xs text-muted-foreground">
-                        Resource #{res.id}
-                      </p>
-                    </div>
-                  </div>
-
-                  <p className="mt-2.5 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
-                    {res.tag || 'No summary available.'}
-                  </p>
-                </div>
-
-                <div className="mt-4 space-y-3 pt-2 border-t border-border/40">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex items-center gap-3">
-                      <span className="inline-flex items-center gap-1">
-                        <Download className="h-3 w-3 text-muted-foreground/80" />
-                        {formatCount(res.downloads || 0)}
-                      </span>
-                      {res.rating?.average !== undefined && res.rating.average > 0 && (
-                        <span className="inline-flex items-center gap-1">
-                          <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
-                          {res.rating.average.toFixed(1)}
-                        </span>
-                      )}
-                    </div>
-
-                    <a
-                      href={`https://spigotmc.org/resources/${res.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                    >
-                      SpigotMC
-                      <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <Button
-                      size="sm"
-                      onClick={() => void handleInstallResource(res)}
-                      disabled={isInstalling}
-                      className={`flex-1 h-8 text-xs gap-1.5 ${
-                        isInstalled
-                          ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
-                          : 'bg-amber-600 hover:bg-amber-700 text-white'
-                      }`}
-                      title={isInstalled ? 'Click to reinstall or update' : 'Install Jar'}
-                    >
-                      {isInstalling ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Installing...
-                        </>
-                      ) : isInstalled ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                          Installed
-                        </>
-                      ) : (
-                        <>
-                          <Download className="h-3.5 w-3.5" />
-                          Install Jar
-                        </>
-                      )}
-                    </Button>
-
-                    {installedMod && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                        title={`Delete ${installedMod.file} from server`}
-                        aria-label={`Delete ${installedMod.file}`}
-                        onClick={() => void handleDeleteMod(installedMod)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSelectedResource(res)}
-                      className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-                      title="View release history"
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
+                id={res.id}
+                title={res.name}
+                author={res.author?.name ? res.author.name : `Resource #${res.id}`}
+                description={res.tag || 'No summary available.'}
+                iconUrl={iconUrl}
+                provider="spiget"
+                isInstalled={isInstalled}
+                installedJar={installedMod?.file}
+                isInstalling={isInstalling}
+                downloads={res.downloads || 0}
+                rating={res.rating?.average}
+                externalUrl={`https://spigotmc.org/resources/${res.id}`}
+                externalLabel="SpigotMC"
+                installLabel="Install Jar"
+                onInstall={() => void handleInstallResource(res)}
+                onDelete={installedMod ? () => void handleDeleteMod(installedMod) : undefined}
+                onViewDetails={() => setSelectedResource(res)}
+                detailsTitle="View release history"
+                onClickTitle={() => setSelectedResource(res)}
+              />
             );
           })}
         </div>
@@ -623,23 +495,22 @@ export function SpigetBrowser({
 
       {/* Empty State */}
       {!loading && results.length === 0 && !error && (
-        <div className="rounded-xl border border-dashed border-border/80 py-12 text-center">
-          <Package className="mx-auto h-8 w-8 text-muted-foreground/60" />
-          <p className="mt-3 text-sm font-medium text-foreground">No plugins found on SpigotMC</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Try a different search keyword.
-          </p>
-          {query && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setQuery('')}
-              className="mt-4 text-xs"
-            >
-              Clear search query
-            </Button>
-          )}
-        </div>
+        <PluginEmptyState
+          title="No plugins found on SpigotMC"
+          description="Try a different search keyword."
+          action={
+            query ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setQuery('')}
+                className="mt-4 text-xs"
+              >
+                Clear search query
+              </Button>
+            ) : undefined
+          }
+        />
       )}
 
       {/* Load More Button */}

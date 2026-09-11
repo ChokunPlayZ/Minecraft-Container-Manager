@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
   Download,
   ExternalLink,
-  Layers,
   Loader2,
-  Package,
   RefreshCw,
   Search,
-  Star,
   Trash2,
   X,
 } from 'lucide-react';
@@ -22,7 +19,7 @@ import {
   isHangarVersionInstalled,
   searchHangar,
 } from '../api/hangar';
-import { extractModId, formatCount, formatFileSize } from '../api/modrinth';
+import { extractModId, formatFileSize } from '../api/modrinth';
 import type {
   HangarProject,
   HangarVersion,
@@ -34,6 +31,7 @@ import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { ModUpdateDialog } from './mod-update-dialog';
+import { PluginCard, PluginEmptyState, PluginGridSkeleton } from './plugin-card';
 import { useModal } from './ui/modal';
 
 interface HangarBrowserProps {
@@ -578,28 +576,7 @@ export function HangarBrowser({
       )}
 
       {/* Loading Skeleton */}
-      {loading && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-44 rounded-xl border border-border/60 bg-card/40 p-4 animate-pulse"
-            >
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-lg bg-secondary/80" />
-                <div className="space-y-1.5 flex-1">
-                  <div className="h-4 w-28 rounded-sm bg-secondary/80" />
-                  <div className="h-3 w-16 rounded-sm bg-secondary/60" />
-                </div>
-              </div>
-              <div className="mt-4 space-y-2">
-                <div className="h-3 w-full rounded-sm bg-secondary/50" />
-                <div className="h-3 w-3/4 rounded-sm bg-secondary/40" />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {loading && <PluginGridSkeleton count={6} />}
 
       {/* Results Grid */}
       {!loading && results.length > 0 && (
@@ -610,125 +587,29 @@ export function HangarBrowser({
             const isInstalling = installingId === project.namespace.slug;
 
             return (
-              <div
+              <PluginCard
                 key={project.id}
-                className="group relative flex flex-col justify-between rounded-xl border border-border/80 bg-card/60 p-4 shadow-2xs transition-all hover:border-sky-500/40 hover:shadow-md hover:bg-card"
-              >
-                <div>
-                  <div className="flex items-start gap-3">
-                    {project.avatarUrl ? (
-                      <img
-                        src={project.avatarUrl}
-                        alt={project.name}
-                        className="h-11 w-11 shrink-0 rounded-lg object-contain bg-secondary/30 p-1 border border-border/40"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600">
-                        <Package className="h-6 w-6" />
-                      </div>
-                    )}
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h4 className="truncate font-semibold text-foreground text-sm group-hover:text-sky-600 transition-colors">
-                          {project.name}
-                        </h4>
-                        {isInstalled && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] px-1.5 py-0 shrink-0 font-medium"
-                          >
-                            Installed
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="truncate text-xs text-muted-foreground">
-                        by {project.namespace.owner}
-                      </p>
-                    </div>
-                  </div>
-
-                  <p className="mt-2.5 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
-                    {project.description || 'No description provided.'}
-                  </p>
-                </div>
-
-                <div className="mt-4 space-y-3 pt-2 border-t border-border/40">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex items-center gap-3">
-                      <span className="inline-flex items-center gap-1">
-                        <Download className="h-3 w-3 text-muted-foreground/80" />
-                        {formatCount(project.stats.downloads)}
-                      </span>
-                      <span className="inline-flex items-center gap-1">
-                        <Star className="h-3 w-3 text-amber-500" />
-                        {formatCount(project.stats.stars)}
-                      </span>
-                    </div>
-
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase">
-                      {project.category.replace(/_/g, ' ')}
-                    </Badge>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <Button
-                      size="sm"
-                      onClick={() => void handleOneClickInstall(project)}
-                      disabled={isInstalling}
-                      className={`flex-1 h-8 text-xs gap-1.5 ${
-                        isInstalled
-                          ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
-                          : 'bg-sky-600 hover:bg-sky-700 text-white'
-                      }`}
-                      title={isInstalled ? 'Click to reinstall or update' : 'Install latest release'}
-                    >
-                      {isInstalling ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Installing...
-                        </>
-                      ) : isInstalled ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                          Installed
-                        </>
-                      ) : (
-                        <>
-                          <Download className="h-3.5 w-3.5" />
-                          Install Latest
-                        </>
-                      )}
-                    </Button>
-
-                    {installedProjectMod && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                        title={`Delete ${installedProjectMod.file} from server`}
-                        aria-label={`Delete ${installedProjectMod.file}`}
-                        onClick={() => void handleDeleteMod(installedProjectMod)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSelectedProject(project)}
-                      className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-                      title="View all release versions"
-                    >
-                      <Layers className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
+                id={project.id}
+                title={project.name}
+                author={project.namespace.owner}
+                description={project.description}
+                iconUrl={project.avatarUrl}
+                provider="hangar"
+                isInstalled={isInstalled}
+                installedJar={installedProjectMod?.file}
+                isInstalling={isInstalling}
+                downloads={project.stats.downloads}
+                stars={project.stats.stars}
+                category={project.category.replace(/_/g, ' ')}
+                externalUrl={`https://hangar.papermc.io/${project.namespace.owner}/${project.namespace.slug}`}
+                externalLabel="Hangar"
+                installLabel="Install Latest"
+                onInstall={() => void handleOneClickInstall(project)}
+                onDelete={installedProjectMod ? () => void handleDeleteMod(installedProjectMod) : undefined}
+                onViewDetails={() => setSelectedProject(project)}
+                detailsTitle="View all release versions"
+                onClickTitle={() => setSelectedProject(project)}
+              />
             );
           })}
         </div>
@@ -736,23 +617,22 @@ export function HangarBrowser({
 
       {/* Empty State */}
       {!loading && results.length === 0 && !error && (
-        <div className="rounded-xl border border-dashed border-border/80 py-12 text-center">
-          <Package className="mx-auto h-8 w-8 text-muted-foreground/60" />
-          <p className="mt-3 text-sm font-medium text-foreground">No plugins found on Hangar</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Try adjusting your search query or selecting a different category.
-          </p>
-          {query && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setQuery('')}
-              className="mt-4 text-xs"
-            >
-              Clear search query
-            </Button>
-          )}
-        </div>
+        <PluginEmptyState
+          title="No plugins found on Hangar"
+          description="Try adjusting your search query or selecting a different category."
+          action={
+            query ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setQuery('')}
+                className="text-xs"
+              >
+                Clear search query
+              </Button>
+            ) : undefined
+          }
+        />
       )}
 
       {/* Infinite Scroll Sentinel / Load More Button */}
