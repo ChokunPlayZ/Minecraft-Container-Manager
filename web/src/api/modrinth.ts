@@ -373,3 +373,43 @@ export async function getProject(
 
   return (await resp.json()) as ModrinthProject;
 }
+
+export interface ModrinthVersionUpdateParams {
+  hashes: string[];
+  algorithm?: 'sha1' | 'sha512';
+  loaders?: string[];
+  gameVersions?: string[];
+}
+
+/**
+ * Checks for updates on Modrinth given file hashes.
+ * Endpoint: POST /v2/version_files/update
+ */
+export async function checkModrinthUpdates(
+  params: ModrinthVersionUpdateParams,
+  signal?: AbortSignal,
+): Promise<Record<string, ModrinthVersion>> {
+  if (params.hashes.length === 0) return {};
+  try {
+    const res = await fetch(`${MODRINTH_API_BASE}/version_files/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'mcm-panel/1.0 (https://github.com/mcm-panel/mcm)',
+      },
+      body: JSON.stringify({
+        hashes: params.hashes,
+        algorithm: params.algorithm ?? 'sha1',
+        loaders: params.loaders,
+        game_versions: params.gameVersions,
+      }),
+      signal,
+    });
+    if (!res.ok) {
+      return {};
+    }
+    return (await res.json()) as Record<string, ModrinthVersion>;
+  } catch {
+    return {};
+  }
+}

@@ -1,5 +1,6 @@
 import { useState, type ReactNode, type ComponentType } from 'react';
 import {
+  ArrowUpCircle,
   Check,
   Compass,
   Download,
@@ -69,6 +70,9 @@ export interface PluginCardProps {
   isInstalled?: boolean;
   installedJar?: string;
   isInstalling?: boolean;
+  hasUpdate?: boolean;
+  updateLabel?: string;
+  onUpdate?: () => void | Promise<void>;
 
   // Stats
   downloads?: number;
@@ -110,6 +114,9 @@ export function PluginCard({
   isInstalled = false,
   installedJar,
   isInstalling = false,
+  hasUpdate = false,
+  updateLabel = 'Update',
+  onUpdate,
   downloads,
   rating,
   stars,
@@ -167,9 +174,13 @@ export function PluginCard({
               {isInstalled && (
                 <Badge
                   variant="secondary"
-                  className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] px-1.5 py-0 shrink-0 font-medium"
+                  className={
+                    hasUpdate
+                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 text-[10px] px-1.5 py-0 shrink-0 font-medium'
+                      : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] px-1.5 py-0 shrink-0 font-medium'
+                  }
                 >
-                  Installed
+                  {hasUpdate ? 'Update Available' : 'Installed'}
                 </Badge>
               )}
             </div>
@@ -250,40 +261,62 @@ export function PluginCard({
         </div>
 
         <div className="flex items-center gap-1.5 pt-1">
-          <Button
-            size="sm"
-            onClick={onInstall}
-            disabled={isInstalling || (isInstalled && !onInstall) || installDisabled}
-            className={`flex-1 h-8 text-xs gap-1.5 ${
-              isInstalled
-                ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
-                : theme.installButton
-            }`}
-            title={
-              isInstalled
-                ? installDisabled
-                  ? 'Installed'
-                  : 'Click to reinstall or update'
-                : installLabel
-            }
-          >
-            {isInstalling ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Installing...
-              </>
-            ) : isInstalled ? (
-              <>
-                <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                Installed
-              </>
-            ) : (
-              <>
-                <Download className="h-3.5 w-3.5" />
-                {installLabel}
-              </>
-            )}
-          </Button>
+          {hasUpdate && onUpdate ? (
+            <Button
+              size="sm"
+              onClick={onUpdate}
+              disabled={isInstalling || installDisabled}
+              className="flex-1 h-8 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-2xs"
+              title={updateLabel ? `Update available: ${updateLabel}` : 'Update available! Click to pick a new jar'}
+            >
+              {isInstalling ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Updating...
+                </>
+              ) : (
+                <>
+                  <ArrowUpCircle className="h-3.5 w-3.5" />
+                  {updateLabel}
+                </>
+              )}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={onInstall}
+              disabled={isInstalling || (isInstalled && !onInstall) || installDisabled}
+              className={`flex-1 h-8 text-xs gap-1.5 ${
+                isInstalled
+                  ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
+                  : theme.installButton
+              }`}
+              title={
+                isInstalled
+                  ? installDisabled
+                    ? 'Installed'
+                    : 'Click to reinstall or update'
+                  : installLabel
+              }
+            >
+              {isInstalling ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Installing...
+                </>
+              ) : isInstalled ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  Installed
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" />
+                  {installLabel}
+                </>
+              )}
+            </Button>
+          )}
 
           {isInstalled && onDelete && (
             <Button
