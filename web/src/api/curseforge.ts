@@ -6,6 +6,7 @@ import type {
   ServerType,
 } from './types';
 import { extractModId } from './modrinth';
+import { rateLimitedFetchJson } from './rate-limited-fetch';
 
 export const CURSEFORGE_API_BASE = 'https://api.curseforge.com/v1';
 export const MINECRAFT_GAME_ID = 432;
@@ -113,22 +114,19 @@ export async function searchCurseForge(
   searchParams.set('index', String(index));
 
   const url = `${CURSEFORGE_API_BASE}/mods/search?${searchParams.toString()}`;
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'x-api-key': apiKey.trim(),
+  return rateLimitedFetchJson<CurseForgeSearchResult>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+        'x-api-key': apiKey.trim(),
+      },
     },
-    signal,
-  });
-
-  if (!resp.ok) {
-    if (resp.status === 403 || resp.status === 401) {
-      throw new Error('Invalid CurseForge API key or access denied.');
-    }
-    throw new Error(`CurseForge search failed with status ${resp.status}`);
-  }
-
-  return (await resp.json()) as CurseForgeSearchResult;
+    {
+      cacheTtlMs: 120000, // 2 minutes
+      signal,
+    },
+  );
 }
 
 /**
@@ -156,19 +154,20 @@ export async function getCurseForgeFiles(
   const query = searchParams.toString();
   const url = `${CURSEFORGE_API_BASE}/mods/${modId}/files?${query}`;
 
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'x-api-key': apiKey.trim(),
+  const data = await rateLimitedFetchJson<{ data: CurseForgeFile[] }>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+        'x-api-key': apiKey.trim(),
+      },
     },
-    signal,
-  });
+    {
+      cacheTtlMs: 300000, // 5 minutes
+      signal,
+    },
+  );
 
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch files for mod ${modId} (${resp.status})`);
-  }
-
-  const data = (await resp.json()) as { data: CurseForgeFile[] };
   return data.data ?? [];
 }
 
@@ -182,19 +181,19 @@ export async function getCurseForgeDownloadUrl(
   signal?: AbortSignal,
 ): Promise<string> {
   const url = `${CURSEFORGE_API_BASE}/mods/${modId}/files/${fileId}/download-url`;
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'x-api-key': apiKey.trim(),
+  const data = await rateLimitedFetchJson<{ data: string }>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+        'x-api-key': apiKey.trim(),
+      },
     },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Failed to obtain download URL for file ${fileId} (${resp.status})`);
-  }
-
-  const data = (await resp.json()) as { data: string };
+    {
+      cacheTtlMs: 900000, // 15 minutes
+      signal,
+    },
+  );
   return data.data;
 }
 

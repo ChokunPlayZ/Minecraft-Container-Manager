@@ -216,6 +216,44 @@ export interface ModList {
   items: Mod[];
 }
 
+export interface AvailableModJar {
+  version_id: string;
+  version_name: string;
+  version_number: string;
+  filename: string;
+  download_url: string;
+  size_bytes?: number;
+  release_type?: string;
+  game_versions?: string[];
+  loaders?: string[];
+  date_published?: string;
+  is_current?: boolean;
+}
+
+export interface ServerModUpdateInfo {
+  mod_name: string;
+  mod_file: string;
+  provider: ModProvider;
+  project_id?: string;
+  project_slug?: string;
+  title: string;
+  current_version?: string;
+  latest_version: string;
+  latest_jar: string;
+  latest_download_url?: string;
+  latest_release_type?: string;
+  latest_release_date?: string;
+  changelog?: string;
+  available_jars?: AvailableModJar[];
+}
+
+export interface ServerModUpdatesResponse {
+  updates: Record<string, ServerModUpdateInfo>;
+  last_checked: string;
+  total_mods: number;
+  update_count: number;
+}
+
 export interface ServerProperties {
   content: string;
   exists: boolean;

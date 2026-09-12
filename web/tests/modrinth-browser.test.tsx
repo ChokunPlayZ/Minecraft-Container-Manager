@@ -5,6 +5,7 @@ import { api } from '../src/api/client';
 import type { Mod, ModrinthSearchHit, ModrinthVersion, Server } from '../src/api/types';
 import { ModrinthBrowser } from '../src/components/modrinth-browser';
 import { ModsPanel } from '../src/components/mods-panel';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 
 const mockServer: Server = {
   id: 'server-1',
@@ -93,6 +94,7 @@ const mockVersions: ModrinthVersion[] = [
 describe('ModrinthBrowser component', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    clearRateLimitCache();
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
       const urlStr = String(url);
@@ -119,6 +121,7 @@ describe('ModrinthBrowser component', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    clearRateLimitCache();
   });
 
   it('renders server matching banner and mod cards', async () => {

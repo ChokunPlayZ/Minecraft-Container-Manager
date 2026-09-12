@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
 import { checkModsForUpdates, fetchModAvailableJars } from '../src/api/mod-updates';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import type { Mod, Server } from '../src/api/types';
 import { ModsPanel } from '../src/components/mods-panel';
 import { ModJarPickerDialog } from '../src/components/mod-jar-picker-dialog';
@@ -31,10 +32,12 @@ describe('Mod Update Tool & Jar Picker', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    clearRateLimitCache();
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    clearRateLimitCache();
   });
 
   describe('checkModsForUpdates API', () => {

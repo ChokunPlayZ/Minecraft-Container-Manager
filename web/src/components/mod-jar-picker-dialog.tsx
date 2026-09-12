@@ -70,20 +70,51 @@ export function ModJarPickerDialog({
     setLoading(true);
     setError(null);
 
-    fetchModAvailableJars(mod, updateInfo, server, controller.signal)
-      .then((res) => {
+    api
+      .getModAvailableVersions(server.id, mod.name)
+      .then((serverJars) => {
         if (!isMounted) return;
-        setJars(res);
-        if (res.length === 0) {
-          // If no online jars were found, default tab to upload
-          setActiveTab('upload');
-        } else {
+        if (
+          serverJars &&
+          Array.isArray(serverJars) &&
+          serverJars.length > 0 &&
+          Boolean((serverJars[0] as unknown as { filename?: string }).filename)
+        ) {
+          const mapped: AvailableModJar[] = serverJars.map((j) => ({
+            versionId: j.version_id || j.version_number,
+            versionName: j.version_name || j.version_number,
+            versionNumber: j.version_number,
+            filename: j.filename,
+            downloadUrl: j.download_url,
+            sizeBytes: j.size_bytes,
+            releaseType: j.release_type,
+            gameVersions: j.game_versions,
+            loaders: j.loaders,
+            datePublished: j.date_published,
+            isCurrent: j.is_current,
+          }));
+          setJars(mapped);
           setActiveTab('catalog');
+          return;
         }
+        // Fallback to client-side catalog fetch
+        return fetchModAvailableJars(mod, updateInfo, server, controller.signal).then((res) => {
+          if (!isMounted) return;
+          setJars(res);
+          setActiveTab(res.length === 0 ? 'upload' : 'catalog');
+        });
       })
-      .catch((err) => {
-        if (!isMounted) return;
-        setError(err instanceof Error ? err.message : 'Failed to fetch jar versions');
+      .catch(() => {
+        return fetchModAvailableJars(mod, updateInfo, server, controller.signal)
+          .then((res) => {
+            if (!isMounted) return;
+            setJars(res);
+            setActiveTab(res.length === 0 ? 'upload' : 'catalog');
+          })
+          .catch((err) => {
+            if (!isMounted) return;
+            setError(err instanceof Error ? err.message : 'Failed to fetch jar versions');
+          });
       })
       .finally(() => {
         if (isMounted) setLoading(false);
@@ -98,19 +129,21 @@ export function ModJarPickerDialog({
   // Handle escape key
   useEffect(() => {
     if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !isUpdating) onClose();
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isUpdating) {
+        onClose();
+      }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, isUpdating, onClose]);
 
   if (!isOpen) return null;
 
   async function handlePickJar(jar: AvailableModJar) {
     setIsUpdating(true);
-    setSelectedJarUrl(jar.downloadUrl);
     setError(null);
+    setSelectedJarUrl(jar.downloadUrl);
 
     const oldName = deleteOldJar ? mod.name : undefined;
 

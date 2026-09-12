@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/ports"
+	"github.com/mcm-panel/mcm/internal/proxy"
 )
 
 // dockerRuntime is the subset of the Docker manager used by the server store.
@@ -165,6 +167,11 @@ type Store struct {
 	dataDirHost string
 	// dns optionally publishes/removes SRV records as servers start and stop.
 	dns dns.Publisher
+
+	proxyMu      sync.Mutex
+	proxy        *proxy.Service
+	updatesMu    sync.RWMutex
+	updatesCache map[string]*ServerModUpdatesResponse
 }
 
 // NewStore wires the server store together.

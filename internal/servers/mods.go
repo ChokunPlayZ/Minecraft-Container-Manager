@@ -245,6 +245,7 @@ func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader)
 		return Mod{}, cerr
 	}
 	manifest, _ := inspectModJar(target)
+	s.InvalidateModUpdatesCache(id)
 	return Mod{
 		Name:        modDisplayBase(filename),
 		File:        filename,
@@ -329,6 +330,7 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 		m.ProjectSlug = meta.ProjectSlug
 		m.Provider = meta.Provider
 	}
+	s.InvalidateModUpdatesCache(id)
 	return m, nil
 }
 
@@ -347,7 +349,11 @@ func (s *Store) DeleteMod(ctx context.Context, id, name string) error {
 		return fmt.Errorf("mod not found: %s", name)
 	}
 	deleteModMeta(dir, base)
-	return os.Remove(filepath.Join(dir, base))
+	err = os.Remove(filepath.Join(dir, base))
+	if err == nil {
+		s.InvalidateModUpdatesCache(id)
+	}
+	return err
 }
 
 // resolveModDirEntry finds an on-disk file whose display name matches name,
@@ -462,5 +468,6 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 		result.ProjectSlug = meta[0].ProjectSlug
 		result.Provider = meta[0].Provider
 	}
+	s.InvalidateModUpdatesCache(id)
 	return result, nil
 }

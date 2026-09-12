@@ -4,6 +4,7 @@ import type {
   SpigetVersion,
 } from './types';
 import { extractModId } from './modrinth';
+import { rateLimitedFetchJson } from './rate-limited-fetch';
 
 export const SPIGET_API_BASE = 'https://api.spiget.org/v2';
 
@@ -51,20 +52,24 @@ export async function searchSpiget(
     url = `${SPIGET_API_BASE}/resources?${searchParams.toString()}`;
   }
 
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'mcm-panel/1.0',
-    },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Spigot search failed with status ${resp.status}`);
+  try {
+    const data = await rateLimitedFetchJson<SpigetResource[]>(
+      url,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'mcm-panel/1.0',
+        },
+      },
+      {
+        cacheTtlMs: 120000, // 2 minutes
+        signal,
+      },
+    );
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    throw err instanceof Error ? err : new Error('Spigot search failed');
   }
-
-  const data = (await resp.json()) as SpigetResource[];
-  return Array.isArray(data) ? data : [];
 }
 
 /**
@@ -76,20 +81,24 @@ export async function getSpigetVersions(
 ): Promise<SpigetVersion[]> {
   const url = `${SPIGET_API_BASE}/resources/${resourceId}/versions?size=25&sort=-releaseDate`;
 
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': 'mcm-panel/1.0',
-    },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch Spigot versions for ${resourceId} (${resp.status})`);
+  try {
+    const data = await rateLimitedFetchJson<SpigetVersion[]>(
+      url,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'mcm-panel/1.0',
+        },
+      },
+      {
+        cacheTtlMs: 600000, // 10 minutes cache for Spiget releases
+        signal,
+      },
+    );
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    throw err instanceof Error ? err : new Error(`Failed to fetch Spigot versions for ${resourceId}`);
   }
-
-  const data = (await resp.json()) as SpigetVersion[];
-  return Array.isArray(data) ? data : [];
 }
 
 /**

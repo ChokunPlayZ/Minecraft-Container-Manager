@@ -6,6 +6,7 @@ import type {
   Mod,
 } from './types';
 import { extractModId } from './modrinth';
+import { rateLimitedFetchJson } from './rate-limited-fetch';
 
 export const HANGAR_API_BASE = 'https://hangar.papermc.io/api/v1';
 
@@ -76,18 +77,18 @@ export async function searchHangar(
   searchParams.set('offset', String(offset));
 
   const url = `${HANGAR_API_BASE}/projects?${searchParams.toString()}`;
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
+  return rateLimitedFetchJson<HangarSearchResult>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
     },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Hangar search failed with status ${resp.status}`);
-  }
-
-  return (await resp.json()) as HangarSearchResult;
+    {
+      cacheTtlMs: 120000, // 2 minutes
+      signal,
+    },
+  );
 }
 
 /**
@@ -110,18 +111,19 @@ export async function getHangarVersions(
   const query = searchParams.toString();
   const url = `${HANGAR_API_BASE}/projects/${encodeURIComponent(projectSlug)}/versions?${query}`;
 
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
+  const data = await rateLimitedFetchJson<HangarVersionsResult>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
     },
-    signal,
-  });
+    {
+      cacheTtlMs: 300000, // 5 minutes
+      signal,
+    },
+  );
 
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch Hangar versions for ${projectSlug} (${resp.status})`);
-  }
-
-  const data = (await resp.json()) as HangarVersionsResult;
   return data.result ?? [];
 }
 
@@ -133,18 +135,18 @@ export async function getHangarProject(
   signal?: AbortSignal,
 ): Promise<HangarProject> {
   const url = `${HANGAR_API_BASE}/projects/${encodeURIComponent(projectSlug)}`;
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
+  return rateLimitedFetchJson<HangarProject>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
     },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch Hangar project ${projectSlug} (${resp.status})`);
-  }
-
-  return (await resp.json()) as HangarProject;
+    {
+      cacheTtlMs: 300000, // 5 minutes
+      signal,
+    },
+  );
 }
 
 /**

@@ -19,6 +19,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/jars"
+	"github.com/mcm-panel/mcm/internal/proxy"
 	"github.com/mcm-panel/mcm/internal/servers"
 	"github.com/mcm-panel/mcm/internal/web"
 )
@@ -36,6 +37,7 @@ type Server struct {
 	ceremonies *ceremonyStore
 	jars       *jars.Resolver
 	dns        *dns.Service
+	proxy      *proxy.Service
 	logger     *log.Logger
 	mux        *http.ServeMux
 	loginLimit *loginLimiter
@@ -67,6 +69,10 @@ func New(opts Options) http.Handler {
 	if opts.Logger == nil {
 		opts.Logger = log.Default()
 	}
+	px := proxy.NewService()
+	if opts.Servers != nil {
+		opts.Servers.SetProxy(px)
+	}
 	s := &Server{
 		cfg:        opts.Cfg,
 		db:         opts.DB,
@@ -79,6 +85,7 @@ func New(opts Options) http.Handler {
 		ceremonies: newCeremonyStore(),
 		jars:       opts.Jars,
 		dns:        opts.DNS,
+		proxy:      px,
 		logger:     opts.Logger,
 		mux:        http.NewServeMux(),
 		loginLimit: newLoginLimiter(loginDefaults(opts.Cfg)),
@@ -141,12 +148,20 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/servers/{id}/whitelist", s.requireAuth(s.wrapJSON(s.handleAddWhitelist)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}/whitelist/{name}", s.requireAuth(s.wrapJSON(s.handleRemoveWhitelist)))
 	s.mux.HandleFunc("GET /api/servers/{id}/mods", s.requireAuth(s.wrapJSON(s.handleListMods)))
+	s.mux.HandleFunc("GET /api/servers/{id}/mods/updates", s.requireAuth(s.wrapJSON(s.handleGetModUpdates)))
+	s.mux.HandleFunc("POST /api/servers/{id}/mods/updates/check", s.requireAuth(s.wrapJSON(s.handleCheckModUpdates)))
+	s.mux.HandleFunc("GET /api/servers/{id}/mods/{name}/versions", s.requireAuth(s.wrapJSON(s.handleGetModVersions)))
+	s.mux.HandleFunc("POST /api/servers/{id}/mods/{name}/update", s.requireAuth(s.wrapJSON(s.handleUpdateMod)))
 	s.mux.HandleFunc("POST /api/servers/{id}/mods", s.requireAuth(s.wrapJSON(s.handleUploadMod)))
 	s.mux.HandleFunc("POST /api/servers/{id}/mods/download", s.requireAuth(s.wrapJSON(s.handleDownloadMod)))
 	s.mux.HandleFunc("PATCH /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleSetModEnabled)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleDeleteMod)))
 	s.mux.HandleFunc("GET /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleGetProperties)))
 	s.mux.HandleFunc("PUT /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleSaveProperties)))
+
+	// External catalog proxy.
+	s.mux.HandleFunc("GET /api/proxy", s.requireAuth(s.handleProxy))
+	s.mux.HandleFunc("POST /api/proxy", s.requireAuth(s.handleProxy))
 
 	// File manager.
 	s.mux.HandleFunc("GET /api/servers/{id}/files", s.requireAuth(s.wrapJSON(s.handleListFiles)))

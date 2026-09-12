@@ -104,6 +104,76 @@ func (s *Server) handleDeleteMod(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleGetModUpdates retrieves current updates for a server's mods/plugins.
+func (s *Server) handleGetModUpdates(w http.ResponseWriter, r *http.Request) {
+	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
+	res, err := s.servers.CheckModUpdates(r.Context(), r.PathValue("id"), force)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleCheckModUpdates forces an update check across online catalogs.
+func (s *Server) handleCheckModUpdates(w http.ResponseWriter, r *http.Request) {
+	res, err := s.servers.CheckModUpdates(r.Context(), r.PathValue("id"), true)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleGetModVersions returns available releases/jars for a specific mod.
+func (s *Server) handleGetModVersions(w http.ResponseWriter, r *http.Request) {
+	jars, err := s.servers.GetModAvailableJars(r.Context(), r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		s.writeModErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, jars)
+}
+
+// handleUpdateMod downloads and applies a new jar version, removing the old jar.
+func (s *Server) handleUpdateMod(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		URL         string `json:"url"`
+		Filename    string `json:"filename"`
+		DeleteOld   bool   `json:"delete_old"`
+		ProjectID   string `json:"project_id"`
+		ProjectSlug string `json:"project_slug"`
+		Provider    string `json:"provider"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if in.URL == "" || in.Filename == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "url and filename are required")
+		return
+	}
+	var oldName string
+	if in.DeleteOld {
+		oldName = r.PathValue("name")
+		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), oldName)
+	}
+	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL, servers.ModDownloadMeta{
+		ProjectID:   in.ProjectID,
+		ProjectSlug: in.ProjectSlug,
+		Provider:    in.Provider,
+	})
+	if err != nil {
+		if errors.Is(err, servers.ErrDownloadFailed) {
+			writeError(w, http.StatusBadGateway, "download_failed", "Failed to download mod from remote URL.")
+			return
+		}
+		s.writeModErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, mod)
+}
+
 func (s *Server) writeModErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, servers.ErrNotFound):

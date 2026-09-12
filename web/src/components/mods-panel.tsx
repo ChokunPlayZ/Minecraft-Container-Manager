@@ -44,13 +44,52 @@ export function ModsPanel({ server }: { server: Server }) {
   const unsupported = server.server_type === 'vanilla';
 
   const checkForUpdates = useCallback(
-    async (installedList?: Mod[]) => {
+    async (installedList?: Mod[], force = false) => {
       const list = installedList ?? items;
       if (unsupported || list.length === 0) {
         setUpdates({});
         return;
       }
       setCheckingUpdates(true);
+      try {
+        // Query server-side updates endpoint (cached and paced on the server)
+        const serverRes = await api.checkModUpdates(server.id, force);
+        if (
+          serverRes?.updates &&
+          typeof serverRes.updates === 'object' &&
+          !Array.isArray(serverRes.updates) &&
+          Object.keys(serverRes.updates).length > 0
+        ) {
+          const mappedUpdates: Record<string, ModUpdateInfo> = {};
+          for (const [key, u] of Object.entries(serverRes.updates)) {
+            mappedUpdates[key] = {
+              modName: u.mod_name,
+              modFile: u.mod_file,
+              provider: u.provider,
+              projectId: u.project_id,
+              projectSlug: u.project_slug,
+              title: u.title,
+              currentVersion: u.current_version,
+              latestVersion: u.latest_version,
+              latestJar: u.latest_jar,
+              latestDownloadUrl: u.latest_download_url,
+              latestReleaseType: u.latest_release_type,
+              latestReleaseDate: u.latest_release_date,
+              changelog: u.changelog,
+            };
+          }
+          setUpdates(mappedUpdates);
+          if (serverRes.last_checked) {
+            setLastChecked(new Date(serverRes.last_checked));
+          } else {
+            setLastChecked(new Date());
+          }
+          return;
+        }
+      } catch {
+        // Fallback to client-side catalog check
+      }
+
       try {
         const res = await checkModsForUpdates(list, server);
         setUpdates(res);
@@ -258,7 +297,7 @@ export function ModsPanel({ server }: { server: Server }) {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void checkForUpdates()}
+              onClick={() => void checkForUpdates(undefined, true)}
               disabled={checkingUpdates || items.length === 0}
               className="h-8 gap-1.5 text-xs border-amber-500/30 hover:bg-amber-500/10 text-foreground"
               title="Check online catalogs for newer mod releases"
@@ -508,7 +547,7 @@ export function ModsPanel({ server }: { server: Server }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => void checkForUpdates()}
+                    onClick={() => void checkForUpdates(undefined, true)}
                     disabled={checkingUpdates || items.length === 0}
                     className="gap-1.5 text-xs border-amber-500/30 text-foreground hover:bg-amber-500/10"
                   >
@@ -612,7 +651,7 @@ export function ModsPanel({ server }: { server: Server }) {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void checkForUpdates()}
+                    onClick={() => void checkForUpdates(undefined, true)}
                     className="mt-4 gap-1.5 text-xs"
                   >
                     <RefreshCw className="h-3.5 w-3.5" />

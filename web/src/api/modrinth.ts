@@ -7,6 +7,7 @@ import type {
   ModrinthVersionFile,
   ServerType,
 } from './types';
+import { rateLimitedFetchJson } from './rate-limited-fetch';
 
 const MODRINTH_API_BASE = 'https://api.modrinth.com/v2';
 
@@ -125,22 +126,24 @@ export async function lookupModrinthVersionFiles(
 ): Promise<Record<string, ModrinthVersionFileLookup>> {
   if (hashes.length === 0) return {};
   try {
-    const res = await fetch(`${MODRINTH_API_BASE}/version_files`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'mcm-panel/1.0 (https://github.com/mcm-panel/mcm)',
+    return await rateLimitedFetchJson<Record<string, ModrinthVersionFileLookup>>(
+      `${MODRINTH_API_BASE}/version_files`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'mcm-panel/1.0 (https://github.com/mcm-panel/mcm)',
+        },
+        body: JSON.stringify({
+          hashes,
+          algorithm,
+        }),
       },
-      body: JSON.stringify({
-        hashes,
-        algorithm,
-      }),
-      signal,
-    });
-    if (!res.ok) {
-      return {};
-    }
-    return (await res.json()) as Record<string, ModrinthVersionFileLookup>;
+      {
+        cacheTtlMs: 600000, // 10 minutes cache for immutable hashes
+        signal,
+      },
+    );
   } catch {
     return {};
   }
@@ -302,18 +305,18 @@ export async function searchModrinth(
   searchParams.set('limit', String(limit));
 
   const url = `${MODRINTH_API_BASE}/search?${searchParams.toString()}`;
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
+  return rateLimitedFetchJson<ModrinthSearchResult>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
     },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Modrinth search failed with status ${resp.status}`);
-  }
-
-  return (await resp.json()) as ModrinthSearchResult;
+    {
+      cacheTtlMs: 120000, // 2 minutes
+      signal,
+    },
+  );
 }
 
 /**
@@ -338,18 +341,18 @@ export async function getProjectVersions(
   const query = searchParams.toString();
   const url = `${MODRINTH_API_BASE}/project/${encodeURIComponent(projectSlugOrId)}/version${query ? `?${query}` : ''}`;
 
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
+  return rateLimitedFetchJson<ModrinthVersion[]>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
     },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch versions for ${projectSlugOrId} (${resp.status})`);
-  }
-
-  return (await resp.json()) as ModrinthVersion[];
+    {
+      cacheTtlMs: 300000, // 5 minutes
+      signal,
+    },
+  );
 }
 
 /**
@@ -360,18 +363,18 @@ export async function getProject(
   signal?: AbortSignal,
 ): Promise<ModrinthProject> {
   const url = `${MODRINTH_API_BASE}/project/${encodeURIComponent(projectSlugOrId)}`;
-  const resp = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
+  return rateLimitedFetchJson<ModrinthProject>(
+    url,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
     },
-    signal,
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch project ${projectSlugOrId} (${resp.status})`);
-  }
-
-  return (await resp.json()) as ModrinthProject;
+    {
+      cacheTtlMs: 300000, // 5 minutes
+      signal,
+    },
+  );
 }
 
 export interface ModrinthVersionUpdateParams {
@@ -391,24 +394,26 @@ export async function checkModrinthUpdates(
 ): Promise<Record<string, ModrinthVersion>> {
   if (params.hashes.length === 0) return {};
   try {
-    const res = await fetch(`${MODRINTH_API_BASE}/version_files/update`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'mcm-panel/1.0 (https://github.com/mcm-panel/mcm)',
+    return await rateLimitedFetchJson<Record<string, ModrinthVersion>>(
+      `${MODRINTH_API_BASE}/version_files/update`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'mcm-panel/1.0 (https://github.com/mcm-panel/mcm)',
+        },
+        body: JSON.stringify({
+          hashes: params.hashes,
+          algorithm: params.algorithm ?? 'sha1',
+          loaders: params.loaders,
+          game_versions: params.gameVersions,
+        }),
       },
-      body: JSON.stringify({
-        hashes: params.hashes,
-        algorithm: params.algorithm ?? 'sha1',
-        loaders: params.loaders,
-        game_versions: params.gameVersions,
-      }),
-      signal,
-    });
-    if (!res.ok) {
-      return {};
-    }
-    return (await res.json()) as Record<string, ModrinthVersion>;
+      {
+        cacheTtlMs: 300000, // 5 minutes
+        signal,
+      },
+    );
   } catch {
     return {};
   }

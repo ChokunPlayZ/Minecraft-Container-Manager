@@ -29,6 +29,8 @@ import type {
   ServerDNSResponse,
   DNSTestResult,
   PublishDNSInput,
+  AvailableModJar,
+  ServerModUpdatesResponse,
 } from './types';
 
 export class ApiError extends Error {
@@ -341,6 +343,35 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     };
     mockMods = [...mockMods.filter((m) => m.name !== name && m.file !== file), newMod];
     return newMod as T;
+  }
+  if (path.startsWith('/api/servers/') && path.includes('/mods/updates')) {
+    return {
+      updates: {},
+      last_checked: new Date().toISOString(),
+      total_mods: mockMods.length,
+      update_count: 0,
+    } as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/versions')) {
+    return [] as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/update') && init.method === 'POST') {
+    let filename = 'updated-mod.jar';
+    try {
+      const parsed = JSON.parse(init.body as string);
+      if (parsed.filename) filename = parsed.filename;
+    } catch {
+      // ignore
+    }
+    const parts = path.split('/');
+    const oldName = decodeURIComponent(parts[parts.length - 2]);
+    const updatedMod: Mod = {
+      name: filename.replace(/\.jar$/i, ''),
+      file: filename,
+      enabled: true,
+    };
+    mockMods = [...mockMods.filter((m) => m.name !== oldName && m.file !== oldName), updatedMod];
+    return updatedMod as T;
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/mods')) {
     return {
@@ -669,6 +700,44 @@ export const api = {
     }),
 
   mods: (serverId: string) => request<ModList>(`/api/servers/${serverId}/mods`),
+
+  checkModUpdates: (serverId: string, force?: boolean) =>
+    request<ServerModUpdatesResponse>(
+      `/api/servers/${serverId}/mods/updates${force ? '?force=true' : ''}`,
+    ),
+
+  checkModUpdatesForce: (serverId: string) =>
+    request<ServerModUpdatesResponse>(
+      `/api/servers/${serverId}/mods/updates/check`,
+      { method: 'POST' },
+    ),
+
+  getModAvailableVersions: (serverId: string, modName: string) =>
+    request<AvailableModJar[]>(
+      `/api/servers/${serverId}/mods/${encodeURIComponent(modName)}/versions`,
+    ),
+
+  updateModVersion: (
+    serverId: string,
+    modName: string,
+    url: string,
+    filename: string,
+    meta?: { deleteOld?: boolean; projectId?: string; projectSlug?: string; provider?: ModProvider },
+  ) =>
+    request<Mod>(
+      `/api/servers/${serverId}/mods/${encodeURIComponent(modName)}/update`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          url,
+          filename,
+          delete_old: meta?.deleteOld ?? true,
+          project_id: meta?.projectId,
+          project_slug: meta?.projectSlug,
+          provider: meta?.provider,
+        }),
+      },
+    ),
 
   downloadMod: (
     serverId: string,
