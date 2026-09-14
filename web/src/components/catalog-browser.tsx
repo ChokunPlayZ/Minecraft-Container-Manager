@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Compass, Flame, Layers, Package } from 'lucide-react';
 import type { Mod, ModProvider, Server } from '../api/types';
+import type { ModUpdateInfo } from '../api/mod-updates';
 import { Badge } from './ui/badge';
 import { CurseForgeBrowser } from './curseforge-browser';
 import { HangarBrowser } from './hangar-browser';
@@ -10,6 +11,8 @@ import { SpigetBrowser } from './spiget-browser';
 interface CatalogBrowserProps {
   server: Server;
   installedMods: Mod[];
+  updates?: Record<string, ModUpdateInfo>;
+  onOpenPicker?: (mod: Mod, updateInfo?: ModUpdateInfo) => void;
   onModInstalled: (mod: Mod) => void;
   onModDeleted?: (modName: string) => void;
   defaultProvider?: ModProvider;
@@ -18,6 +21,8 @@ interface CatalogBrowserProps {
 export function CatalogBrowser({
   server,
   installedMods,
+  updates,
+  onOpenPicker,
   onModInstalled,
   onModDeleted,
   defaultProvider = 'modrinth',
@@ -136,6 +141,8 @@ export function CatalogBrowser({
         <ModrinthBrowser
           server={server}
           installedMods={installedMods}
+          updates={updates}
+          onOpenPicker={onOpenPicker}
           onModInstalled={onModInstalled}
           onModDeleted={onModDeleted}
         />
@@ -145,6 +152,8 @@ export function CatalogBrowser({
         <HangarBrowser
           server={server}
           installedMods={installedMods}
+          updates={updates}
+          onOpenPicker={onOpenPicker}
           onModInstalled={onModInstalled}
           onModDeleted={onModDeleted}
         />
@@ -154,6 +163,8 @@ export function CatalogBrowser({
         <SpigetBrowser
           server={server}
           installedMods={installedMods}
+          updates={updates}
+          onOpenPicker={onOpenPicker}
           onModInstalled={onModInstalled}
           onModDeleted={onModDeleted}
         />
@@ -163,6 +174,8 @@ export function CatalogBrowser({
         <CurseForgeBrowser
           server={server}
           installedMods={installedMods}
+          updates={updates}
+          onOpenPicker={onOpenPicker}
           onModInstalled={onModInstalled}
           onModDeleted={onModDeleted}
         />

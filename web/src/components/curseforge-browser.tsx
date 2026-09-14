@@ -29,6 +29,7 @@ import type {
   CurseForgeFile,
   CurseForgeMod,
   Mod,
+  ModUpdateInfo,
   Server,
 } from '../api/types';
 import { Badge } from './ui/badge';
@@ -42,6 +43,8 @@ import { useModal } from './ui/modal';
 interface CurseForgeBrowserProps {
   server: Server;
   installedMods: Mod[];
+  updates?: Record<string, ModUpdateInfo>;
+  onOpenPicker?: (mod: Mod, updateInfo?: ModUpdateInfo) => void;
   onModInstalled: (mod: Mod) => void;
   onModDeleted?: (modName: string) => void;
 }
@@ -49,6 +52,8 @@ interface CurseForgeBrowserProps {
 export function CurseForgeBrowser({
   server,
   installedMods,
+  updates,
+  onOpenPicker,
   onModInstalled,
   onModDeleted,
 }: CurseForgeBrowserProps) {
@@ -193,6 +198,7 @@ export function CurseForgeBrowser({
     existingMod: Mod;
     targetUrl: string;
     targetFilename: string;
+    modId?: number | string;
     modSlug?: string;
     modName?: string;
   } | null>(null);
@@ -225,6 +231,7 @@ export function CurseForgeBrowser({
     downloadUrl: string,
     filename: string,
     title: string,
+    modId?: number | string,
     modSlug?: string,
     modName?: string,
     deleteOldMod?: Mod,
@@ -233,23 +240,17 @@ export function CurseForgeBrowser({
     setError(null);
 
     try {
-      if (deleteOldMod) {
-        try {
-          await api.deleteMod(server.id, deleteOldMod.name);
-        } catch {
-          // ignore
-        }
-      }
-
-      const installed = deleteOldMod
-        ? await api.downloadMod(server.id, downloadUrl, filename, deleteOldMod.name, {
-            projectSlug: modSlug,
-            provider: 'curseforge',
-          })
-        : await api.downloadMod(server.id, downloadUrl, filename, undefined, {
-            projectSlug: modSlug,
-            provider: 'curseforge',
-          });
+      const installed = await api.downloadMod(
+        server.id,
+        downloadUrl,
+        filename,
+        deleteOldMod?.name,
+        {
+          projectId: modId !== undefined ? String(modId) : undefined,
+          projectSlug: modSlug,
+          provider: 'curseforge',
+        },
+      );
       onModInstalled(installed);
       if (deleteOldMod) {
         onModDeleted?.(deleteOldMod.name);
@@ -359,13 +360,14 @@ export function CurseForgeBrowser({
           existingMod,
           targetUrl: downloadUrl,
           targetFilename: targetFile.fileName,
+          modId: mod.id,
           modSlug: mod.slug,
           modName: mod.name,
         });
         return;
       }
 
-      await executeInstall(downloadUrl, targetFile.fileName, mod.name, mod.slug, mod.name);
+      await executeInstall(downloadUrl, targetFile.fileName, mod.name, mod.id, mod.slug, mod.name);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
@@ -393,13 +395,14 @@ export function CurseForgeBrowser({
           existingMod,
           targetUrl: downloadUrl,
           targetFilename: file.fileName,
+          modId: selectedMod.id,
           modSlug: selectedMod.slug,
           modName: selectedMod.name,
         });
         return;
       }
 
-      await executeInstall(downloadUrl, file.fileName, modName, selectedMod.slug, selectedMod.name);
+      await executeInstall(downloadUrl, file.fileName, modName, selectedMod.id, selectedMod.slug, selectedMod.name);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
@@ -509,6 +512,7 @@ export function CurseForgeBrowser({
               updatePrompt.targetUrl,
               updatePrompt.targetFilename,
               updatePrompt.projectTitle,
+              updatePrompt.modId,
               updatePrompt.modSlug,
               updatePrompt.modName,
               updatePrompt.existingMod,
@@ -519,6 +523,7 @@ export function CurseForgeBrowser({
               updatePrompt.targetUrl,
               updatePrompt.targetFilename,
               updatePrompt.projectTitle,
+              updatePrompt.modId,
               updatePrompt.modSlug,
               updatePrompt.modName,
             )
@@ -669,6 +674,8 @@ export function CurseForgeBrowser({
             const installedMod = findInstalledCurseForgeMod(mod, installedMods);
             const isInstalling = installingId === mod.id || installingId === mod.slug;
             const logoUrl = mod.logo?.thumbnailUrl || mod.logo?.url;
+            const updateInfo = installedMod ? updates?.[installedMod.name] : undefined;
+            const hasUpdate = Boolean(updateInfo);
 
             return (
               <PluginCard
@@ -682,6 +689,13 @@ export function CurseForgeBrowser({
                 isInstalled={isInstalled}
                 installedJar={installedMod?.file}
                 isInstalling={isInstalling}
+                hasUpdate={hasUpdate}
+                updateLabel={updateInfo ? `v${updateInfo.latestVersion}` : 'Update'}
+                onUpdate={
+                  installedMod && onOpenPicker
+                    ? () => onOpenPicker(installedMod, updateInfo)
+                    : undefined
+                }
                 downloads={mod.downloadCount || 0}
                 externalUrl={mod.links?.websiteUrl || `https://curseforge.com/minecraft/mc-mods/${mod.slug}`}
                 externalLabel="CurseForge"

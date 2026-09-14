@@ -25,7 +25,7 @@ import { useModal } from './ui/modal';
 import { CatalogBrowser } from './catalog-browser';
 
 import { extractModId } from '../api/modrinth';
-import { checkModsForUpdates, type ModUpdateInfo } from '../api/mod-updates';
+import type { ModUpdateInfo } from '../api/mod-updates';
 import { ModJarPickerDialog } from './mod-jar-picker-dialog';
 
 export function ModsPanel({ server }: { server: Server }) {
@@ -33,6 +33,7 @@ export function ModsPanel({ server }: { server: Server }) {
   const [items, setItems] = useState<Mod[]>([]);
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [installedSearch, setInstalledSearch] = useState('');
   const [updates, setUpdates] = useState<Record<string, ModUpdateInfo>>({});
@@ -52,15 +53,14 @@ export function ModsPanel({ server }: { server: Server }) {
       }
       setCheckingUpdates(true);
       try {
-        // Query server-side updates endpoint (cached and paced on the server)
+        // Query server-side updates endpoint (cached, rate-limited, and paced on the server)
         const serverRes = await api.checkModUpdates(server.id, force);
+        const mappedUpdates: Record<string, ModUpdateInfo> = {};
         if (
           serverRes?.updates &&
           typeof serverRes.updates === 'object' &&
-          !Array.isArray(serverRes.updates) &&
-          Object.keys(serverRes.updates).length > 0
+          !Array.isArray(serverRes.updates)
         ) {
-          const mappedUpdates: Record<string, ModUpdateInfo> = {};
           for (const [key, u] of Object.entries(serverRes.updates)) {
             mappedUpdates[key] = {
               modName: u.mod_name,
@@ -78,24 +78,15 @@ export function ModsPanel({ server }: { server: Server }) {
               changelog: u.changelog,
             };
           }
-          setUpdates(mappedUpdates);
-          if (serverRes.last_checked) {
-            setLastChecked(new Date(serverRes.last_checked));
-          } else {
-            setLastChecked(new Date());
-          }
-          return;
+        }
+        setUpdates(mappedUpdates);
+        if (serverRes?.last_checked) {
+          setLastChecked(new Date(serverRes.last_checked));
+        } else {
+          setLastChecked(new Date());
         }
       } catch {
-        // Fallback to client-side catalog check
-      }
-
-      try {
-        const res = await checkModsForUpdates(list, server);
-        setUpdates(res);
-        setLastChecked(new Date());
-      } catch {
-        // ignore update check failures
+        // Server-side update check error (handled gracefully without client-side spamming)
       } finally {
         setCheckingUpdates(false);
       }
@@ -696,6 +687,8 @@ export function ModsPanel({ server }: { server: Server }) {
           <CatalogBrowser
             server={server}
             installedMods={items}
+            updates={updates}
+            onOpenPicker={(mod, updateInfo) => setPickerMod({ mod, updateInfo })}
             onModInstalled={() => {
               void load(true);
             }}

@@ -31,6 +31,7 @@ import {
 } from '../api/modrinth';
 import type {
   Mod,
+  ModUpdateInfo,
   ModrinthSearchHit,
   ModrinthVersion,
   ModrinthVersionFile,
@@ -67,6 +68,8 @@ const SORT_OPTIONS: { id: 'downloads' | 'relevance' | 'follows' | 'updated' | 'n
 interface ModrinthBrowserProps {
   server: Server;
   installedMods: Mod[];
+  updates?: Record<string, ModUpdateInfo>;
+  onOpenPicker?: (mod: Mod, updateInfo?: ModUpdateInfo) => void;
   onModInstalled: (mod: Mod) => void;
   onModDeleted?: (modName: string) => void;
 }
@@ -74,6 +77,8 @@ interface ModrinthBrowserProps {
 export function ModrinthBrowser({
   server,
   installedMods,
+  updates,
+  onOpenPicker,
   onModInstalled,
   onModDeleted,
 }: ModrinthBrowserProps) {
@@ -342,14 +347,6 @@ export function ModrinthBrowser({
     setError(null);
 
     try {
-      if (deleteOldMod) {
-        try {
-          await api.deleteMod(server.id, deleteOldMod.name);
-        } catch {
-          // ignore if handled on backend or already deleted
-        }
-      }
-
       const mod = deleteOldMod
         ? await api.downloadMod(
             server.id,
@@ -802,6 +799,8 @@ export function ModrinthBrowser({
             const isInstalled = Boolean(installedMod) || checkInstalled(project);
             const isInstalling = installingId === project.project_id;
             const isClientOnly = project.server_side === 'unsupported';
+            const updateInfo = installedMod ? updates?.[installedMod.name] : undefined;
+            const hasUpdate = Boolean(updateInfo);
 
             const badges = (
               <>
@@ -842,6 +841,13 @@ export function ModrinthBrowser({
                 isInstalled={isInstalled}
                 installedJar={installedMod?.file}
                 isInstalling={isInstalling}
+                hasUpdate={hasUpdate}
+                updateLabel={updateInfo ? `v${updateInfo.latestVersion}` : 'Update'}
+                onUpdate={
+                  installedMod && onOpenPicker
+                    ? () => onOpenPicker(installedMod, updateInfo)
+                    : undefined
+                }
                 downloads={project.downloads}
                 follows={project.follows}
                 badges={badges}

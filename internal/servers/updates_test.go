@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mcm-panel/mcm/internal/proxy"
@@ -172,4 +173,120 @@ type roundTripFunc func(req *http.Request) *http.Response
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req), nil
+}
+
+func TestModMetadataTrackingAndProviderUpdates(t *testing.T) {
+	st, serverID := newModTestStore(t, "paper")
+	ctx := context.Background()
+
+	// 1. Upload a mod with metadata
+	tmpDir := t.TempDir()
+	p1 := createTestJar(t, tmpDir, "Chunky-1.4.10.jar", map[string]string{
+		"plugin.yml": "name: Chunky\nversion: 1.4.10\n",
+	})
+	jarData, err := os.ReadFile(p1)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	uploaded, err := st.UploadMod(ctx, serverID, "Chunky-1.4.10.jar", bytes.NewReader(jarData), ModDownloadMeta{
+		Provider:    "hangar",
+		ProjectID:   "1234",
+		ProjectSlug: "chunky",
+	})
+	if err != nil {
+		t.Fatalf("UploadMod: %v", err)
+	}
+	if uploaded.Provider != "hangar" || uploaded.ProjectID != "1234" || uploaded.ProjectSlug != "chunky" {
+		t.Errorf("uploaded meta mismatch: %+v", uploaded)
+	}
+
+	// Verify ListMods retrieves it
+	list, err := st.ListMods(ctx, serverID)
+	if err != nil {
+		t.Fatalf("ListMods: %v", err)
+	}
+	if len(list.Items) != 1 || list.Items[0].Provider != "hangar" || list.Items[0].ProjectID != "1234" {
+		t.Errorf("ListMods did not return saved meta: %+v", list.Items)
+	}
+
+	// Verify GetMod retrieves it
+	gotMod, err := st.GetMod(ctx, serverID, "Chunky-1.4.10")
+	if err != nil {
+		t.Fatalf("GetMod: %v", err)
+	}
+	if gotMod.Provider != "hangar" || gotMod.ProjectSlug != "chunky" {
+		t.Errorf("GetMod did not return saved meta: %+v", gotMod)
+	}
+
+	// 2. Upload a replacement jar without passing metadata; should inherit from old metadata
+	p2 := createTestJar(t, tmpDir, "Chunky-1.4.11.jar", map[string]string{
+		"plugin.yml": "name: Chunky\nversion: 1.4.11\n",
+	})
+	newJarData, err := os.ReadFile(p2)
+	if err != nil {
+		t.Fatalf("ReadFile p2: %v", err)
+	}
+	uploaded2, err := st.UploadMod(ctx, serverID, "Chunky-1.4.11.jar", bytes.NewReader(newJarData))
+	if err != nil {
+		t.Fatalf("UploadMod replacement: %v", err)
+	}
+	if uploaded2.Provider != "hangar" || uploaded2.ProjectSlug != "chunky" {
+		t.Errorf("UploadMod replacement failed to inherit meta: %+v", uploaded2)
+	}
+
+	// 3. Mock Hangar API for CheckModUpdates
+	hangarResponse := struct {
+		Result []hangarVersion `json:"result"`
+	}{
+		Result: []hangarVersion{
+			{
+				Name:      "1.4.12",
+				CreatedAt: "2026-09-14T00:00:00Z",
+				Downloads: map[string]hangarVersionDownload{
+					"PAPER": {
+						FileInfo: &struct {
+							Name      string `json:"name"`
+							SizeBytes int64  `json:"sizeBytes"`
+						}{
+							Name:      "Chunky-1.4.12.jar",
+							SizeBytes: 1024,
+						},
+						DownloadURL: "https://hangarcdn.papermc.io/plugins/chunky/versions/1.4.12/PAPER/Chunky-1.4.12.jar",
+					},
+				},
+			},
+		},
+	}
+	hBytes, _ := json.Marshal(hangarResponse)
+
+	mockClient := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) *http.Response {
+			if strings.Contains(r.URL.Path, "/projects/chunky/versions") {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader(hBytes)),
+				}
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewReader(nil))}
+		}),
+	}
+	px := proxy.NewService()
+	px.SetClient(mockClient)
+	st.SetProxy(px)
+
+	updatesRes, err := st.CheckModUpdates(ctx, serverID, true)
+	if err != nil {
+		t.Fatalf("CheckModUpdates: %v", err)
+	}
+	if len(updatesRes.Updates) == 0 {
+		t.Fatal("expected update for Chunky, got none")
+	}
+	u, ok := updatesRes.Updates["Chunky-1.4.11"]
+	if !ok {
+		t.Fatalf("expected update key Chunky-1.4.11, got %+v", updatesRes.Updates)
+	}
+	if u.Provider != "hangar" || u.LatestVersion != "1.4.12" || u.LatestJar != "Chunky-1.4.12.jar" {
+		t.Errorf("unexpected update info: %+v", u)
+	}
 }

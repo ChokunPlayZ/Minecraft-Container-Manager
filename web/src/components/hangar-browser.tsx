@@ -20,6 +20,7 @@ import {
   searchHangar,
 } from '../api/hangar';
 import { extractModId, formatFileSize } from '../api/modrinth';
+import type { ModUpdateInfo } from '../api/mod-updates';
 import type {
   HangarProject,
   HangarVersion,
@@ -37,6 +38,8 @@ import { useModal } from './ui/modal';
 interface HangarBrowserProps {
   server: Server;
   installedMods: Mod[];
+  updates?: Record<string, ModUpdateInfo>;
+  onOpenPicker?: (mod: Mod, updateInfo?: ModUpdateInfo) => void;
   onModInstalled: (mod: Mod) => void;
   onModDeleted?: (modName: string) => void;
 }
@@ -44,6 +47,8 @@ interface HangarBrowserProps {
 export function HangarBrowser({
   server,
   installedMods,
+  updates,
+  onOpenPicker,
   onModInstalled,
   onModDeleted,
 }: HangarBrowserProps) {
@@ -203,6 +208,7 @@ export function HangarBrowser({
     existingMod: Mod;
     targetUrl: string;
     targetFilename: string;
+    projectId?: string;
     projectSlug?: string;
     projectName?: string;
   } | null>(null);
@@ -235,6 +241,7 @@ export function HangarBrowser({
     url: string,
     filename: string,
     title: string,
+    projectId?: string,
     projectSlug?: string,
     projectName?: string,
     deleteOldMod?: Mod,
@@ -243,23 +250,11 @@ export function HangarBrowser({
     setError(null);
 
     try {
-      if (deleteOldMod) {
-        try {
-          await api.deleteMod(server.id, deleteOldMod.name);
-        } catch {
-          // ignore
-        }
-      }
-
-      const mod = deleteOldMod
-        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name, {
-            projectSlug,
-            provider: 'hangar',
-          })
-        : await api.downloadMod(server.id, url, filename, undefined, {
-            projectSlug,
-            provider: 'hangar',
-          });
+      const mod = await api.downloadMod(server.id, url, filename, deleteOldMod?.name, {
+        projectId,
+        projectSlug,
+        provider: 'hangar',
+      });
       onModInstalled(mod);
       if (deleteOldMod) {
         onModDeleted?.(deleteOldMod.name);
@@ -356,6 +351,7 @@ export function HangarBrowser({
           existingMod,
           targetUrl: download.downloadUrl,
           targetFilename: download.fileInfo.name,
+          projectId: String(project.id),
           projectSlug: project.namespace.slug,
           projectName: project.name,
         });
@@ -366,6 +362,7 @@ export function HangarBrowser({
         download.downloadUrl,
         download.fileInfo.name,
         project.name,
+        String(project.id),
         project.namespace.slug,
         project.name,
       );
@@ -392,6 +389,7 @@ export function HangarBrowser({
         existingMod,
         targetUrl: download.downloadUrl,
         targetFilename: download.fileInfo.name,
+        projectId: selectedProject ? String(selectedProject.id) : undefined,
         projectSlug: selectedProject?.namespace.slug,
         projectName: selectedProject?.name,
       });
@@ -402,6 +400,7 @@ export function HangarBrowser({
       download.downloadUrl,
       download.fileInfo.name,
       projectTitle,
+      selectedProject ? String(selectedProject.id) : undefined,
       selectedProject?.namespace.slug,
       selectedProject?.name,
     );
@@ -430,6 +429,7 @@ export function HangarBrowser({
               updatePrompt.targetUrl,
               updatePrompt.targetFilename,
               updatePrompt.projectTitle,
+              updatePrompt.projectId,
               updatePrompt.projectSlug,
               updatePrompt.projectName,
               updatePrompt.existingMod,
@@ -440,6 +440,7 @@ export function HangarBrowser({
               updatePrompt.targetUrl,
               updatePrompt.targetFilename,
               updatePrompt.projectTitle,
+              updatePrompt.projectId,
               updatePrompt.projectSlug,
               updatePrompt.projectName,
             )
@@ -585,6 +586,8 @@ export function HangarBrowser({
             const installedProjectMod = findInstalledHangarProject(project, installedMods);
             const isInstalled = Boolean(installedProjectMod) || checkInstalled(project);
             const isInstalling = installingId === project.namespace.slug;
+            const updateInfo = installedProjectMod ? updates?.[installedProjectMod.name] : undefined;
+            const hasUpdate = Boolean(updateInfo);
 
             return (
               <PluginCard
@@ -598,6 +601,13 @@ export function HangarBrowser({
                 isInstalled={isInstalled}
                 installedJar={installedProjectMod?.file}
                 isInstalling={isInstalling}
+                hasUpdate={hasUpdate}
+                updateLabel={updateInfo ? `v${updateInfo.latestVersion}` : 'Update'}
+                onUpdate={
+                  installedProjectMod && onOpenPicker
+                    ? () => onOpenPicker(installedProjectMod, updateInfo)
+                    : undefined
+                }
                 downloads={project.stats.downloads}
                 stars={project.stats.stars}
                 category={project.category.replace(/_/g, ' ')}

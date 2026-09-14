@@ -701,21 +701,35 @@ export const api = {
 
   mods: (serverId: string) => request<ModList>(`/api/servers/${serverId}/mods`),
 
-  checkModUpdates: (serverId: string, force?: boolean) =>
-    request<ServerModUpdatesResponse>(
+  checkModUpdates: (serverId: string, force?: boolean) => {
+    const cfHeader = typeof window !== 'undefined' && localStorage.getItem('mcm_curseforge_api_key')
+      ? { 'x-curseforge-api-key': localStorage.getItem('mcm_curseforge_api_key')!.trim() }
+      : undefined;
+    return request<ServerModUpdatesResponse>(
       `/api/servers/${serverId}/mods/updates${force ? '?force=true' : ''}`,
-    ),
+      { headers: cfHeader },
+    );
+  },
 
-  checkModUpdatesForce: (serverId: string) =>
-    request<ServerModUpdatesResponse>(
+  checkModUpdatesForce: (serverId: string) => {
+    const cfHeader = typeof window !== 'undefined' && localStorage.getItem('mcm_curseforge_api_key')
+      ? { 'x-curseforge-api-key': localStorage.getItem('mcm_curseforge_api_key')!.trim() }
+      : undefined;
+    return request<ServerModUpdatesResponse>(
       `/api/servers/${serverId}/mods/updates/check`,
-      { method: 'POST' },
-    ),
+      { method: 'POST', headers: cfHeader },
+    );
+  },
 
-  getModAvailableVersions: (serverId: string, modName: string) =>
-    request<AvailableModJar[]>(
+  getModAvailableVersions: (serverId: string, modName: string) => {
+    const cfHeader = typeof window !== 'undefined' && localStorage.getItem('mcm_curseforge_api_key')
+      ? { 'x-curseforge-api-key': localStorage.getItem('mcm_curseforge_api_key')!.trim() }
+      : undefined;
+    return request<AvailableModJar[]>(
       `/api/servers/${serverId}/mods/${encodeURIComponent(modName)}/versions`,
-    ),
+      { headers: cfHeader },
+    );
+  },
 
   updateModVersion: (
     serverId: string,
@@ -763,12 +777,16 @@ export const api = {
     file: File,
     onProgress?: (loaded: number, total: number) => void,
     deleteOldName?: string,
+    meta?: { projectId?: string; projectSlug?: string; provider?: ModProvider },
   ) =>
     uploadWithProgress<Mod>(
       `/api/servers/${serverId}/mods`,
       [
         ['file', file],
         ...(deleteOldName ? [['delete_old_name', deleteOldName] as [string, string]] : []),
+        ...(meta?.projectId ? [['project_id', meta.projectId] as [string, string]] : []),
+        ...(meta?.projectSlug ? [['project_slug', meta.projectSlug] as [string, string]] : []),
+        ...(meta?.provider ? [['provider', meta.provider] as [string, string]] : []),
       ],
       onProgress,
     ),

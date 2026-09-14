@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import { extractModId, formatCount } from '../api/modrinth';
+import type { ModUpdateInfo } from '../api/mod-updates';
 import {
   findInstalledSpigetResource,
   getSpigetDownloadUrl,
@@ -38,6 +39,8 @@ import { useModal } from './ui/modal';
 interface SpigetBrowserProps {
   server: Server;
   installedMods: Mod[];
+  updates?: Record<string, ModUpdateInfo>;
+  onOpenPicker?: (mod: Mod, updateInfo?: ModUpdateInfo) => void;
   onModInstalled: (mod: Mod) => void;
   onModDeleted?: (modName: string) => void;
 }
@@ -45,6 +48,8 @@ interface SpigetBrowserProps {
 export function SpigetBrowser({
   server,
   installedMods,
+  updates,
+  onOpenPicker,
   onModInstalled,
   onModDeleted,
 }: SpigetBrowserProps) {
@@ -209,23 +214,11 @@ export function SpigetBrowser({
     setError(null);
 
     try {
-      if (deleteOldMod) {
-        try {
-          await api.deleteMod(server.id, deleteOldMod.name);
-        } catch {
-          // ignore
-        }
-      }
-
-      const mod = deleteOldMod
-        ? await api.downloadMod(server.id, url, filename, deleteOldMod.name, {
-            projectId: resourceId !== undefined ? String(resourceId) : undefined,
-            provider: 'spiget',
-          })
-        : await api.downloadMod(server.id, url, filename, undefined, {
-            projectId: resourceId !== undefined ? String(resourceId) : undefined,
-            provider: 'spiget',
-          });
+      const mod = await api.downloadMod(server.id, url, filename, deleteOldMod?.name, {
+        projectId: resourceId !== undefined ? String(resourceId) : undefined,
+        projectSlug: title,
+        provider: 'spiget',
+      });
       onModInstalled(mod);
       if (deleteOldMod) {
         onModDeleted?.(deleteOldMod.name);
@@ -464,6 +457,8 @@ export function SpigetBrowser({
             const isInstalled = Boolean(installedMod) || checkInstalled(res);
             const isInstalling = installingId === res.id;
             const iconUrl = getSpigetIconUrl(res);
+            const updateInfo = installedMod ? updates?.[installedMod.name] : undefined;
+            const hasUpdate = Boolean(updateInfo);
 
             return (
               <PluginCard
@@ -477,6 +472,13 @@ export function SpigetBrowser({
                 isInstalled={isInstalled}
                 installedJar={installedMod?.file}
                 isInstalling={isInstalling}
+                hasUpdate={hasUpdate}
+                updateLabel={updateInfo ? `v${updateInfo.latestVersion}` : 'Update'}
+                onUpdate={
+                  installedMod && onOpenPicker
+                    ? () => onOpenPicker(installedMod, updateInfo)
+                    : undefined
+                }
                 downloads={res.downloads || 0}
                 rating={res.rating?.average}
                 externalUrl={`https://spigotmc.org/resources/${res.id}`}

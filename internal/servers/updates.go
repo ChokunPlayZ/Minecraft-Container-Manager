@@ -6,12 +6,37 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mcm-panel/mcm/internal/proxy"
 )
+
+type contextKey string
+
+const CurseForgeAPIKeyContextKey contextKey = "curseforge_api_key"
+
+// WithCurseForgeAPIKey returns a new context carrying the CurseForge API key.
+func WithCurseForgeAPIKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, CurseForgeAPIKeyContextKey, key)
+}
+
+func getCurseForgeKey(ctx context.Context) string {
+	if val, ok := ctx.Value(CurseForgeAPIKeyContextKey).(string); ok && val != "" {
+		return val
+	}
+	return os.Getenv("CURSEFORGE_API_KEY")
+}
+
+func cleanVersionString(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.TrimPrefix(v, "v")
+	v = strings.TrimPrefix(v, "release-")
+	v = strings.TrimPrefix(v, "build-")
+	return v
+}
 
 // AvailableModJar describes a single installable build of a mod or plugin.
 type AvailableModJar struct {
@@ -222,7 +247,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 	var modsWithSha1 []Mod
 	var hashes []string
 	for _, m := range installedMods {
-		if m.SHA1 != "" {
+		if m.SHA1 != "" && (m.Provider == "modrinth" || m.Provider == "") {
 			modsWithSha1 = append(modsWithSha1, m)
 			hashes = append(hashes, m.SHA1)
 		}
@@ -270,6 +295,15 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 
 					if isSameHash && isSameFile {
 						continue
+					}
+
+					// Persist metadata if it was not tracked before
+					if modDir, _, err := s.modsPath(serverID, srv.ServerType); err == nil && (mod.Provider == "" || mod.ProjectID == "") {
+						writeModMeta(modDir, mod.File, ModDownloadMeta{
+							Provider:    "modrinth",
+							ProjectID:   ver.ProjectID,
+							ProjectSlug: mod.ProjectSlug,
+						}, mod.ModID)
 					}
 
 					updates[mod.Name] = ModUpdateInfo{
@@ -322,10 +356,21 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 				}
 				if json.Unmarshal(resp.Body, &vers) == nil && len(vers.Result) > 0 {
 					latest := vers.Result[0]
-					dl := latest.Downloads["PAPER"]
+					var dl hangarVersionDownload
+					if pDl, ok := latest.Downloads["PAPER"]; ok && pDl.FileInfo != nil {
+						dl = pDl
+					} else {
+						for _, anyDl := range latest.Downloads {
+							if anyDl.FileInfo != nil && anyDl.FileInfo.Name != "" {
+								dl = anyDl
+								break
+							}
+						}
+					}
 					if dl.FileInfo != nil && dl.FileInfo.Name != "" {
 						isSame := strings.EqualFold(dl.FileInfo.Name, mod.File) ||
-							strings.EqualFold(dl.FileInfo.Name+".disabled", mod.File)
+							strings.EqualFold(dl.FileInfo.Name+".disabled", mod.File) ||
+							(mod.Version != "" && cleanVersionString(mod.Version) == cleanVersionString(latest.Name))
 						if !isSame {
 							title := mod.Title
 							if title == "" {
@@ -336,6 +381,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 								ModFile:           mod.File,
 								Provider:          "hangar",
 								ProjectSlug:       slug,
+								ProjectID:         mod.ProjectID,
 								Title:             title,
 								CurrentVersion:    mod.Version,
 								LatestVersion:     latest.Name,
@@ -359,7 +405,9 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 					var vers []spigetVersion
 					if json.Unmarshal(resp.Body, &vers) == nil && len(vers) > 0 {
 						latest := vers[0]
-						if mod.Version == "" || !strings.EqualFold(strings.TrimSpace(mod.Version), strings.TrimSpace(latest.Name)) {
+						currVer := cleanVersionString(mod.Version)
+						latestVer := cleanVersionString(latest.Name)
+						if currVer == "" || (latestVer != "" && !strings.EqualFold(currVer, latestVer)) {
 							title := mod.Title
 							if title == "" {
 								title = mod.Name
@@ -373,6 +421,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 								ModFile:           mod.File,
 								Provider:          "spiget",
 								ProjectID:         strconv.Itoa(resID),
+								ProjectSlug:       mod.ProjectSlug,
 								Title:             title,
 								CurrentVersion:    mod.Version,
 								LatestVersion:     latest.Name,
@@ -389,38 +438,44 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 
 		// CurseForge provider
 		if mod.Provider == "curseforge" && mod.ProjectID != "" {
-			if modID, err := strconv.Atoi(mod.ProjectID); err == nil {
-				cfURL := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?pageSize=5", modID)
-				if serverVersion != "" {
-					cfURL += fmt.Sprintf("&gameVersion=%s", url.QueryEscape(serverVersion))
-				}
-				resp, err := px.Do(ctx, http.MethodGet, cfURL, nil, nil, force)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					var cfRes curseForgeFilesResponse
-					if json.Unmarshal(resp.Body, &cfRes) == nil && len(cfRes.Data) > 0 {
-						latest := cfRes.Data[0]
-						isSame := strings.EqualFold(latest.FileName, mod.File) ||
-							strings.EqualFold(latest.FileName+".disabled", mod.File)
-						if !isSame && latest.DownloadURL != "" {
-							title := mod.Title
-							if title == "" {
-								title = mod.Name
-							}
-							latestVer := latest.DisplayName
-							if latestVer == "" {
-								latestVer = latest.FileName
-							}
-							updates[mod.Name] = ModUpdateInfo{
-								ModName:           mod.Name,
-								ModFile:           mod.File,
-								Provider:          "curseforge",
-								ProjectID:         strconv.Itoa(modID),
-								Title:             title,
-								CurrentVersion:    mod.Version,
-								LatestVersion:     latestVer,
-								LatestJar:         latest.FileName,
-								LatestDownloadURL: latest.DownloadURL,
-								LatestReleaseDate: latest.FileDate,
+			cfKey := getCurseForgeKey(ctx)
+			if cfKey != "" {
+				if modID, err := strconv.Atoi(mod.ProjectID); err == nil {
+					cfURL := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?pageSize=5", modID)
+					if serverVersion != "" {
+						cfURL += fmt.Sprintf("&gameVersion=%s", url.QueryEscape(serverVersion))
+					}
+					hdr := http.Header{"x-api-key": []string{cfKey}}
+					resp, err := px.Do(ctx, http.MethodGet, cfURL, nil, hdr, force)
+					if err == nil && resp.StatusCode == http.StatusOK {
+						var cfRes curseForgeFilesResponse
+						if json.Unmarshal(resp.Body, &cfRes) == nil && len(cfRes.Data) > 0 {
+							latest := cfRes.Data[0]
+							isSame := strings.EqualFold(latest.FileName, mod.File) ||
+								strings.EqualFold(latest.FileName+".disabled", mod.File) ||
+								(mod.Version != "" && cleanVersionString(mod.Version) == cleanVersionString(latest.DisplayName))
+							if !isSame && latest.DownloadURL != "" {
+								title := mod.Title
+								if title == "" {
+									title = mod.Name
+								}
+								latestVer := latest.DisplayName
+								if latestVer == "" {
+									latestVer = latest.FileName
+								}
+								updates[mod.Name] = ModUpdateInfo{
+									ModName:           mod.Name,
+									ModFile:           mod.File,
+									Provider:          "curseforge",
+									ProjectID:         strconv.Itoa(modID),
+									ProjectSlug:       mod.ProjectSlug,
+									Title:             title,
+									CurrentVersion:    mod.Version,
+									LatestVersion:     latestVer,
+									LatestJar:         latest.FileName,
+									LatestDownloadURL: latest.DownloadURL,
+									LatestReleaseDate: latest.FileDate,
+								}
 							}
 						}
 					}
@@ -437,7 +492,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 		if slugOrID == "" {
 			slugOrID = mod.ModID
 		}
-		if slugOrID != "" {
+		if slugOrID != "" && (mod.Provider == "modrinth" || mod.Provider == "") {
 			reqURL := fmt.Sprintf("https://api.modrinth.com/v2/project/%s/version", url.PathEscape(slugOrID))
 			q := url.Values{}
 			if len(serverLoaders) > 0 {
@@ -475,6 +530,15 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 							strings.EqualFold(primaryFile.Hashes["sha1"], mod.SHA1)
 
 						if !isSameFile && !isSameHash {
+							// Persist metadata if it was not tracked before
+							if modDir, _, err := s.modsPath(serverID, srv.ServerType); err == nil && (mod.Provider == "" || mod.ProjectID == "") {
+								writeModMeta(modDir, mod.File, ModDownloadMeta{
+									Provider:    "modrinth",
+									ProjectID:   latest.ProjectID,
+									ProjectSlug: mod.ProjectSlug,
+								}, mod.ModID)
+							}
+
 							title := mod.Title
 							if title == "" {
 								title = mod.Name
@@ -615,7 +679,17 @@ func (s *Store) GetModAvailableJars(ctx context.Context, serverID, modName strin
 				}
 				if json.Unmarshal(resp.Body, &vers) == nil {
 					for _, v := range vers.Result {
-						dl := v.Downloads["PAPER"]
+						var dl hangarVersionDownload
+						if pDl, ok := v.Downloads["PAPER"]; ok && pDl.FileInfo != nil {
+							dl = pDl
+						} else {
+							for _, anyDl := range v.Downloads {
+								if anyDl.FileInfo != nil && anyDl.FileInfo.Name != "" {
+									dl = anyDl
+									break
+								}
+							}
+						}
 						if dl.FileInfo != nil && dl.FileInfo.Name != "" {
 							isCur := strings.EqualFold(dl.FileInfo.Name, targetMod.File) ||
 								strings.EqualFold(dl.FileInfo.Name+".disabled", targetMod.File)
@@ -678,7 +752,12 @@ func (s *Store) GetModAvailableJars(ctx context.Context, serverID, modName strin
 			if serverVersion != "" {
 				cfURL += fmt.Sprintf("&gameVersion=%s", url.QueryEscape(serverVersion))
 			}
-			resp, err := px.Do(ctx, http.MethodGet, cfURL, nil, nil, false)
+			cfKey := getCurseForgeKey(ctx)
+			var hdr http.Header
+			if cfKey != "" {
+				hdr = http.Header{"x-api-key": []string{cfKey}}
+			}
+			resp, err := px.Do(ctx, http.MethodGet, cfURL, nil, hdr, false)
 			if err == nil && resp.StatusCode == http.StatusOK {
 				var cfRes curseForgeFilesResponse
 				if json.Unmarshal(resp.Body, &cfRes) == nil {

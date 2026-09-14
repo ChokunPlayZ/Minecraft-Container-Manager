@@ -356,6 +356,7 @@ describe('Mod Update Tool & Jar Picker', () => {
           newJarFile,
           expect.any(Function),
           'custom-mod', // deletes old jar by default
+          expect.anything(),
         );
         expect(onUpdated).toHaveBeenCalled();
         expect(onClose).toHaveBeenCalled();
@@ -402,6 +403,23 @@ describe('Mod Update Tool & Jar Picker', () => {
           ],
         },
       };
+
+      vi.spyOn(api, 'checkModUpdates').mockResolvedValue({
+        updates: {
+          'fabric-api': {
+            mod_name: 'fabric-api',
+            title: 'Fabric API',
+            current_version: '0.100.0',
+            latest_version: '0.105.0',
+            latest_jar: 'fabric-api-0.105.0.jar',
+            latest_download_url: 'https://cdn.modrinth.com/data/fabric-api-0.105.0.jar',
+            latest_release_date: '2026-09-01T12:00:00Z',
+            provider: 'modrinth',
+            project_id: 'P7dR8mSH',
+          } as any,
+        },
+        last_checked: new Date().toISOString(),
+      });
 
       global.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
         const url = String(input);

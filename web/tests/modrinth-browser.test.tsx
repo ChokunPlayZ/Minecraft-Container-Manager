@@ -120,6 +120,8 @@ describe('ModrinthBrowser component', () => {
   });
 
   afterEach(() => {
+    delete (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver;
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     clearRateLimitCache();
   });
@@ -309,6 +311,7 @@ describe('ModrinthBrowser component', () => {
     }
 
     vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = MockIntersectionObserver;
 
     const mockHit3: ModrinthSearchHit = {
       ...mockHit1,
@@ -368,6 +371,7 @@ describe('ModrinthBrowser component', () => {
       expect(screen.getByText('LuckPerms')).toBeInTheDocument();
     });
 
+    delete (window as unknown as { IntersectionObserver?: unknown }).IntersectionObserver;
     vi.unstubAllGlobals();
   });
 
@@ -425,7 +429,6 @@ describe('ModrinthBrowser component', () => {
     await user.click(deleteAndInstallBtn);
 
     await waitFor(() => {
-      expect(api.deleteMod).toHaveBeenCalledWith('server-1', 'Chunky');
       expect(api.downloadMod).toHaveBeenCalledWith(
         'server-1',
         'https://cdn.modrinth.com/data/chunky.jar',

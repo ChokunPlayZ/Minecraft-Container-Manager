@@ -184,6 +184,11 @@ export function ModJarPickerDialog({
           setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
         },
         oldName,
+        {
+          projectId: updateInfo?.projectId || mod.project_id,
+          projectSlug: updateInfo?.projectSlug || mod.project_slug,
+          provider: updateInfo?.provider || mod.provider,
+        },
       );
       onUpdated(updated);
       onClose();

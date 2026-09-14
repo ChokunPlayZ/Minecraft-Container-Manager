@@ -49,9 +49,11 @@ type Mod struct {
 
 // ModDownloadMeta stores catalog metadata associated with an installed mod.
 type ModDownloadMeta struct {
-	ProjectID   string `json:"project_id,omitempty"`
-	ProjectSlug string `json:"project_slug,omitempty"`
-	Provider    string `json:"provider,omitempty"`
+	ProjectID        string `json:"project_id,omitempty"`
+	ProjectSlug      string `json:"project_slug,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+	DownloadURL      string `json:"download_url,omitempty"`
 }
 
 func modsMetaFile(modsDir string) string {
@@ -70,7 +72,7 @@ func readModsMeta(modsDir string) map[string]ModDownloadMeta {
 	return res
 }
 
-func writeModMeta(modsDir, filename string, meta ModDownloadMeta) {
+func writeModMeta(modsDir, filename string, meta ModDownloadMeta, extraKeys ...string) {
 	if meta.ProjectID == "" && meta.ProjectSlug == "" && meta.Provider == "" {
 		return
 	}
@@ -78,6 +80,12 @@ func writeModMeta(modsDir, filename string, meta ModDownloadMeta) {
 	base := modDisplayBase(filename)
 	m[filename] = meta
 	m[base] = meta
+	for _, k := range extraKeys {
+		if k != "" {
+			m[k] = meta
+			m[strings.ToLower(k)] = meta
+		}
+	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err == nil {
 		_ = os.WriteFile(modsMetaFile(modsDir), data, 0o644)
@@ -94,6 +102,31 @@ func deleteModMeta(modsDir, filename string) {
 	if err == nil {
 		_ = os.WriteFile(modsMetaFile(modsDir), data, 0o644)
 	}
+}
+
+func getModMeta(modsDir, filename string, modIDs ...string) (ModDownloadMeta, bool) {
+	metaMap := readModsMeta(modsDir)
+	if meta, ok := metaMap[filename]; ok && (meta.Provider != "" || meta.ProjectID != "" || meta.ProjectSlug != "") {
+		return meta, true
+	}
+	if meta, ok := metaMap[strings.TrimSuffix(filename, ".disabled")]; ok && (meta.Provider != "" || meta.ProjectID != "" || meta.ProjectSlug != "") {
+		return meta, true
+	}
+	if meta, ok := metaMap[modDisplayBase(filename)]; ok && (meta.Provider != "" || meta.ProjectID != "" || meta.ProjectSlug != "") {
+		return meta, true
+	}
+	for _, id := range modIDs {
+		if id == "" {
+			continue
+		}
+		if meta, ok := metaMap[id]; ok && (meta.Provider != "" || meta.ProjectID != "" || meta.ProjectSlug != "") {
+			return meta, true
+		}
+		if meta, ok := metaMap[strings.ToLower(id)]; ok && (meta.Provider != "" || meta.ProjectID != "" || meta.ProjectSlug != "") {
+			return meta, true
+		}
+	}
+	return ModDownloadMeta{}, false
 }
 
 // ModListResult is a listing of a server's mods or plugins.
@@ -189,7 +222,6 @@ func (s *Store) ListMods(ctx context.Context, id string) (ModListResult, error) 
 		}
 		byName[base] = &Mod{Name: base, File: fname, Enabled: enabled}
 	}
-	metaMap := readModsMeta(dir)
 	items := make([]Mod, 0, len(byName))
 	for _, m := range byName {
 		fullPath := filepath.Join(dir, m.File)
@@ -200,11 +232,7 @@ func (s *Store) ListMods(ctx context.Context, id string) (ModListResult, error) 
 			m.SHA1 = manifest.SHA1
 			m.Description = manifest.Description
 		}
-		if meta, ok := metaMap[m.File]; ok {
-			m.ProjectID = meta.ProjectID
-			m.ProjectSlug = meta.ProjectSlug
-			m.Provider = meta.Provider
-		} else if meta, ok := metaMap[modDisplayBase(m.File)]; ok {
+		if meta, ok := getModMeta(dir, m.File, m.ModID); ok {
 			m.ProjectID = meta.ProjectID
 			m.ProjectSlug = meta.ProjectSlug
 			m.Provider = meta.Provider
@@ -215,8 +243,22 @@ func (s *Store) ListMods(ctx context.Context, id string) (ModListResult, error) 
 	return ModListResult{Type: string(t), Items: items}, nil
 }
 
+// GetMod returns a single installed mod by display name or filename.
+func (s *Store) GetMod(ctx context.Context, id, name string) (Mod, error) {
+	list, err := s.ListMods(ctx, id)
+	if err != nil {
+		return Mod{}, err
+	}
+	for _, m := range list.Items {
+		if m.Name == name || m.File == name || modDisplayBase(m.File) == name || strings.TrimSuffix(m.File, ".disabled") == name {
+			return m, nil
+		}
+	}
+	return Mod{}, fmt.Errorf("mod not found: %s", name)
+}
+
 // UploadMod writes an uploaded artifact into the server's mod/plugin directory.
-func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader) (Mod, error) {
+func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader, meta ...ModDownloadMeta) (Mod, error) {
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Mod{}, err
@@ -245,6 +287,20 @@ func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader)
 		return Mod{}, cerr
 	}
 	manifest, _ := inspectModJar(target)
+
+	var dMeta ModDownloadMeta
+	if len(meta) > 0 {
+		dMeta = meta[0]
+	}
+	if dMeta.Provider == "" && dMeta.ProjectID == "" {
+		if existing, ok := getModMeta(dir, filename, manifest.ModID); ok {
+			dMeta = existing
+		}
+	}
+	if dMeta.Provider != "" || dMeta.ProjectID != "" || dMeta.ProjectSlug != "" {
+		writeModMeta(dir, filename, dMeta, manifest.ModID)
+	}
+
 	s.InvalidateModUpdatesCache(id)
 	return Mod{
 		Name:        modDisplayBase(filename),
@@ -255,6 +311,9 @@ func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader)
 		Version:     manifest.Version,
 		SHA1:        manifest.SHA1,
 		Description: manifest.Description,
+		ProjectID:   dMeta.ProjectID,
+		ProjectSlug: dMeta.ProjectSlug,
+		Provider:    dMeta.Provider,
 	}, nil
 }
 
@@ -277,7 +336,6 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 		// Nothing to change.
 		targetPath := filepath.Join(dir, base)
 		manifest, _ := inspectModJar(targetPath)
-		metaMap := readModsMeta(dir)
 		m := Mod{
 			Name:        modDisplayBase(base),
 			File:        base,
@@ -288,11 +346,7 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 			SHA1:        manifest.SHA1,
 			Description: manifest.Description,
 		}
-		if meta, ok := metaMap[base]; ok {
-			m.ProjectID = meta.ProjectID
-			m.ProjectSlug = meta.ProjectSlug
-			m.Provider = meta.Provider
-		} else if meta, ok := metaMap[modDisplayBase(base)]; ok {
+		if meta, ok := getModMeta(dir, base, manifest.ModID); ok {
 			m.ProjectID = meta.ProjectID
 			m.ProjectSlug = meta.ProjectSlug
 			m.Provider = meta.Provider
@@ -310,7 +364,6 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 	}
 	targetPath := filepath.Join(dir, target)
 	manifest, _ := inspectModJar(targetPath)
-	metaMap := readModsMeta(dir)
 	m := Mod{
 		Name:        modDisplayBase(target),
 		File:        target,
@@ -321,11 +374,7 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 		SHA1:        manifest.SHA1,
 		Description: manifest.Description,
 	}
-	if meta, ok := metaMap[target]; ok {
-		m.ProjectID = meta.ProjectID
-		m.ProjectSlug = meta.ProjectSlug
-		m.Provider = meta.Provider
-	} else if meta, ok := metaMap[modDisplayBase(target)]; ok {
+	if meta, ok := getModMeta(dir, target, manifest.ModID); ok {
 		m.ProjectID = meta.ProjectID
 		m.ProjectSlug = meta.ProjectSlug
 		m.Provider = meta.Provider
@@ -449,10 +498,21 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 		return Mod{}, err
 	}
 
-	if len(meta) > 0 {
-		writeModMeta(dir, filename, meta[0])
-	}
 	manifest, _ := inspectModJar(target)
+
+	var dMeta ModDownloadMeta
+	if len(meta) > 0 {
+		dMeta = meta[0]
+	}
+	if dMeta.Provider == "" && dMeta.ProjectID == "" {
+		if existing, ok := getModMeta(dir, filename, manifest.ModID); ok {
+			dMeta = existing
+		}
+	}
+	if dMeta.Provider != "" || dMeta.ProjectID != "" || dMeta.ProjectSlug != "" {
+		writeModMeta(dir, filename, dMeta, manifest.ModID)
+	}
+
 	result := Mod{
 		Name:        modDisplayBase(filename),
 		File:        filename,
@@ -462,11 +522,9 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 		Version:     manifest.Version,
 		SHA1:        manifest.SHA1,
 		Description: manifest.Description,
-	}
-	if len(meta) > 0 {
-		result.ProjectID = meta[0].ProjectID
-		result.ProjectSlug = meta[0].ProjectSlug
-		result.Provider = meta[0].Provider
+		ProjectID:   dMeta.ProjectID,
+		ProjectSlug: dMeta.ProjectSlug,
+		Provider:    dMeta.Provider,
 	}
 	s.InvalidateModUpdatesCache(id)
 	return result, nil
