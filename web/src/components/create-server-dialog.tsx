@@ -858,12 +858,12 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                         value={serverType}
                         onChange={(e) => setServerType(e.target.value as ServerType)}
                       >
-                        <option value="paper">Paper</option>
-                        <option value="fabric">Fabric</option>
-                        <option value="vanilla">Vanilla</option>
-                        <option value="forge">Forge</option>
-                        <option value="neoforge">NeoForge</option>
-                        <option value="spigot">Spigot</option>
+                        <option key="paper" value="paper">Paper</option>
+                        <option key="fabric" value="fabric">Fabric</option>
+                        <option key="vanilla" value="vanilla">Vanilla</option>
+                        <option key="forge" value="forge">Forge</option>
+                        <option key="neoforge" value="neoforge">NeoForge</option>
+                        <option key="spigot" value="spigot">Spigot</option>
                       </Select>
                     </div>
                     <div className="space-y-1.5">
@@ -893,8 +893,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                           onChange={(e) => setVersion(e.target.value)}
                           disabled={versions.length === 0}
                         >
-                          {versions.map((v) => (
-                            <option key={v.name} value={v.name}>
+                          {versions.map((v, idx) => (
+                            <option key={`${v.name || idx}-${idx}`} value={v.name}>
                               {v.latest ?? v.name}
                             </option>
                           ))}
@@ -914,8 +914,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                           onChange={(e) => setBuild(e.target.value)}
                           disabled={builds.length === 0}
                         >
-                          {builds.map((b) => (
-                            <option key={b.build} value={b.build}>
+                          {builds.map((b, idx) => (
+                            <option key={`${b.build || idx}-${idx}`} value={b.build}>
                               {b.build}
                             </option>
                           ))}

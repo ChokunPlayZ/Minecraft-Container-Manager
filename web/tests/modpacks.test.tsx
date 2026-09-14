@@ -156,8 +156,8 @@ describe('ModpacksPanel Component', () => {
 
     // Check version list
     await waitFor(() => {
-      expect(screen.getByText(/Installed Version/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Update/i })).toBeInTheDocument();
+      expect(screen.getByText(/Current Active Version/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Update$/i })).toBeInTheDocument();
     });
   });
 
