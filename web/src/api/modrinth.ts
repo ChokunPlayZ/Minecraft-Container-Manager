@@ -16,6 +16,7 @@ export interface ModrinthSearchParams {
   loaders?: string[];
   gameVersion?: string;
   category?: string;
+  projectType?: 'mod' | 'modpack' | 'plugin';
   serverSideOnly?: boolean;
   sort?: 'relevance' | 'downloads' | 'follows' | 'newest' | 'updated';
   offset?: number;
@@ -265,6 +266,7 @@ export async function searchModrinth(
     loaders = [],
     gameVersion,
     category,
+    projectType,
     serverSideOnly = true,
     sort = 'downloads',
     offset = 0,
@@ -272,6 +274,11 @@ export async function searchModrinth(
   } = params;
 
   const facets: string[][] = [];
+
+  // Project type (mod, modpack, plugin)
+  if (projectType) {
+    facets.push([`project_type:${projectType}`]);
+  }
 
   // Loader category matching
   if (loaders.length > 0) {
@@ -288,8 +295,8 @@ export async function searchModrinth(
     facets.push([`categories:${category}`]);
   }
 
-  // Exclude client-only mods by default for servers
-  if (serverSideOnly) {
+  // Exclude client-only mods by default for servers, except for modpacks which are bundles
+  if (serverSideOnly && projectType !== 'modpack') {
     facets.push(['server_side!=unsupported']);
   }
 

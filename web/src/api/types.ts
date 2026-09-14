@@ -579,3 +579,52 @@ export interface CurseForgeSearchResult {
   };
 }
 
+export type ModpackFormat = 'modrinth' | 'curseforge' | 'generic';
+
+export interface ModpackManifest {
+  format: ModpackFormat;
+  name: string;
+  version: string;
+  summary?: string;
+  author?: string;
+  minecraft_version: string;
+  loader: string;
+  loader_version: string;
+  total_files: number;
+  server_files: number;
+  client_only_files: number;
+  icon_url?: string;
+}
+
+export interface InstalledModpack {
+  name: string;
+  version: string;
+  summary?: string;
+  author?: string;
+  format: ModpackFormat;
+  minecraft_version: string;
+  loader: string;
+  loader_version: string;
+  installed_at: string;
+  source: string;
+  project_id?: string;
+  project_slug?: string;
+  installed_files: string[];
+  icon_url?: string;
+}
+
+export interface InstalledModpackResponse {
+  installed: boolean;
+  modpack: InstalledModpack | null;
+}
+
+export interface InstallModpackOptions {
+  source?: string;
+  url?: string;
+  project_id?: string;
+  project_slug?: string;
+  version_id?: string;
+  auto_configure_server?: boolean;
+  curseforge_api_key?: string;
+}
+

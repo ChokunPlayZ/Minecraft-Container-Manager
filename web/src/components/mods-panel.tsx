@@ -6,6 +6,7 @@ import {
   Compass,
   FolderOpen,
   Loader2,
+  Package,
   Plus,
   Power,
   RefreshCw,
@@ -16,22 +17,24 @@ import {
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
-import type { Mod, Server } from '../api/types';
+import type { InstalledModpack, Mod, Server } from '../api/types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { useModal } from './ui/modal';
 import { CatalogBrowser } from './catalog-browser';
+import { ModpacksPanel } from './modpacks-panel';
 
 import { extractModId } from '../api/modrinth';
 import type { ModUpdateInfo } from '../api/mod-updates';
 import { ModJarPickerDialog } from './mod-jar-picker-dialog';
 
 export function ModsPanel({ server }: { server: Server }) {
-  const [activeTab, setActiveTab] = useState<'installed' | 'updates' | 'browse'>('installed');
+  const [activeTab, setActiveTab] = useState<'installed' | 'modpacks' | 'updates' | 'browse'>('installed');
   const [items, setItems] = useState<Mod[]>([]);
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
+  const [installedModpack, setInstalledModpack] = useState<InstalledModpack | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -96,6 +99,12 @@ export function ModsPanel({ server }: { server: Server }) {
 
   const load = useCallback(
     async (andCheckUpdates = false) => {
+      // Check installed modpack
+      api
+        .getInstalledModpack(server.id)
+        .then((res) => setInstalledModpack(res.installed ? res.modpack : null))
+        .catch(() => setInstalledModpack(null));
+
       if (unsupported) {
         setItems([]);
         setError(null);
@@ -196,20 +205,47 @@ export function ModsPanel({ server }: { server: Server }) {
   const label = type === 'mods' ? 'Mods' : 'Plugins';
   const updateCount = Object.keys(updates).length;
 
-  if (unsupported) {
+  if (unsupported && activeTab !== 'modpacks') {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Mods &amp; plugins</CardTitle>
-          <CardDescription>Manage installed artifacts.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            This server type doesn&apos;t support mods or plugins. Switch server software to Paper,
-            Fabric, Forge, or NeoForge in settings to enable modding.
-          </p>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-border/80 pb-2.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setActiveTab('installed')}
+              className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+            >
+              <FolderOpen className="h-4 w-4" />
+              Installed Mods
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('modpacks')}
+              className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold bg-primary text-primary-foreground shadow-xs"
+            >
+              <Package className="h-4 w-4" />
+              Modpacks
+            </button>
+          </div>
+        </div>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Vanilla Server Detected</CardTitle>
+            <CardDescription>Mods &amp; plugins are disabled on vanilla.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Vanilla servers do not support individual mod jars. You can install an official Modpack
+              to automatically convert this server to Fabric or Forge.
+            </p>
+            <Button onClick={() => setActiveTab('modpacks')} className="gap-2 text-xs font-semibold">
+              <Package className="h-4 w-4" />
+              Browse &amp; Install Modpacks
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -244,6 +280,27 @@ export function ModsPanel({ server }: { server: Server }) {
               >
                 {items.length}
               </Badge>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('modpacks')}
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                activeTab === 'modpacks'
+                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+              }`}
+            >
+              <Package className="h-4 w-4" />
+              Modpacks
+              {installedModpack && (
+                <Badge
+                  variant="secondary"
+                  className="ml-1 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 px-1.5 py-0 text-xs font-semibold"
+                >
+                  Active
+                </Badge>
+              )}
             </button>
 
             <button
@@ -513,7 +570,16 @@ export function ModsPanel({ server }: { server: Server }) {
           </Card>
         )}
 
-        {/* Tab 2: Mod Update Tool */}
+        {/* Tab 2: Modpacks Hub */}
+        {activeTab === 'modpacks' && (
+          <ModpacksPanel
+            server={server}
+            onViewInstalledMods={() => setActiveTab('installed')}
+            onModpackChanged={() => void load(true)}
+          />
+        )}
+
+        {/* Tab 3: Mod Update Tool */}
         {activeTab === 'updates' && (
           <Card>
             <CardHeader className="pb-3">

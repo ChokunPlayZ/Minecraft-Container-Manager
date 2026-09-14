@@ -48,14 +48,18 @@ export function getCurseForgeLoaderType(serverType: ServerType): number | undefi
   }
 }
 
+export const CF_CLASS_MODS = 6;
+export const CF_CLASS_PLUGINS = 5;
+export const CF_CLASS_MODPACKS = 4471;
+
 /**
  * Returns appropriate CurseForge classId: 6 for mods, 5 for plugins.
  */
 export function getCurseForgeClassId(serverType: ServerType): number {
   if (serverType === 'paper' || serverType === 'spigot') {
-    return 5; // Bukkit Plugins
+    return CF_CLASS_PLUGINS; // Bukkit Plugins
   }
-  return 6; // Mods
+  return CF_CLASS_MODS; // Mods
 }
 
 export const CF_SORT_OPTIONS: {

@@ -28,6 +28,10 @@ import type {
   DNSStatusResponse,
   ServerDNSResponse,
   DNSTestResult,
+  InstalledModpack,
+  InstalledModpackResponse,
+  InstallModpackOptions,
+  ModpackManifest,
   PublishDNSInput,
   AvailableModJar,
   ServerModUpdatesResponse,
@@ -906,6 +910,73 @@ export const api = {
     request<FileEntry>(`/api/servers/${serverId}/files/rename`, {
       method: 'POST',
       body: JSON.stringify({ path, name }),
+    }),
+
+  getInstalledModpack: (serverId: string) =>
+    request<InstalledModpackResponse>(`/api/servers/${serverId}/modpack`),
+
+  inspectModpackFile: (
+    serverId: string,
+    file: File,
+    onProgress?: (loaded: number, total: number) => void,
+  ) =>
+    uploadWithProgress<ModpackManifest>(
+      `/api/servers/${serverId}/modpack/inspect`,
+      [['file', file]],
+      onProgress,
+    ),
+
+  inspectModpackUpload: (
+    file: File,
+    onProgress?: (loaded: number, total: number) => void,
+  ) =>
+    uploadWithProgress<ModpackManifest>(
+      '/api/modpack/inspect',
+      [['file', file]],
+      onProgress,
+    ),
+
+  inspectModpackUrl: (serverId: string, url: string) =>
+    request<ModpackManifest>(`/api/servers/${serverId}/modpack/inspect`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+
+  installModpackFile: (
+    serverId: string,
+    file: File,
+    autoConfigureServer = true,
+    onProgress?: (loaded: number, total: number) => void,
+  ) => {
+    const cfKey = typeof window !== 'undefined' ? localStorage.getItem('mcm_curseforge_api_key') : null;
+    return uploadWithProgress<InstalledModpack>(
+      `/api/servers/${serverId}/modpack/install`,
+      [
+        ['file', file],
+        ['auto_configure_server', String(autoConfigureServer)],
+        ...(cfKey ? [['curseforge_api_key', cfKey] as [string, string]] : []),
+      ],
+      onProgress,
+    );
+  },
+
+  installModpackRemote: (serverId: string, options: InstallModpackOptions) => {
+    const cfKey =
+      options.curseforge_api_key ||
+      (typeof window !== 'undefined' ? localStorage.getItem('mcm_curseforge_api_key') ?? undefined : undefined);
+    return request<InstalledModpack>(`/api/servers/${serverId}/modpack/install`, {
+      method: 'POST',
+      headers: cfKey ? { 'x-curseforge-api-key': cfKey } : undefined,
+      body: JSON.stringify({
+        ...options,
+        curseforge_api_key: cfKey,
+      }),
+    });
+  },
+
+  uninstallModpack: (serverId: string) =>
+    request<{ ok: boolean }>(`/api/servers/${serverId}/modpack`, {
+      method: 'DELETE',
     }),
 };
 

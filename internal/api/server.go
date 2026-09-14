@@ -156,6 +156,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/servers/{id}/mods/download", s.requireAuth(s.wrapJSON(s.handleDownloadMod)))
 	s.mux.HandleFunc("PATCH /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleSetModEnabled)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}/mods/{name}", s.requireAuth(s.wrapJSON(s.handleDeleteMod)))
+
+	// Modpack management.
+	s.mux.HandleFunc("POST /api/modpack/inspect", s.requireAuth(s.wrapJSON(s.handleInspectModpack)))
+	s.mux.HandleFunc("GET /api/servers/{id}/modpack", s.requireAuth(s.wrapJSON(s.handleGetInstalledModpack)))
+	s.mux.HandleFunc("POST /api/servers/{id}/modpack/inspect", s.requireAuth(s.wrapJSON(s.handleInspectModpack)))
+	s.mux.HandleFunc("POST /api/servers/{id}/modpack/install", s.requireAuth(s.wrapJSON(s.handleInstallModpack)))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/modpack", s.requireAuth(s.wrapJSON(s.handleUninstallModpack)))
+
 	s.mux.HandleFunc("GET /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleGetProperties)))
 	s.mux.HandleFunc("PUT /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleSaveProperties)))
 
