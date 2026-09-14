@@ -34,6 +34,8 @@ var (
 	ErrInvalidModpack = errors.New("invalid or unsupported modpack archive")
 	// ErrModpackNotFound is returned when querying for a modpack that is not installed.
 	ErrModpackNotFound = errors.New("no modpack installed")
+	// ErrModpackLocked is returned when attempting to change or uninstall a modpack on a server created with a modpack.
+	ErrModpackLocked = errors.New("server is locked to its initial modpack and cannot be changed")
 )
 
 // ModpackManifest describes inspected metadata from a modpack archive or online entry.
@@ -66,8 +68,9 @@ type InstalledModpack struct {
 	Source           string        `json:"source"` // "upload", "modrinth", "curseforge", "url"
 	ProjectID        string        `json:"project_id,omitempty"`
 	ProjectSlug      string        `json:"project_slug,omitempty"`
-	InstalledFiles   []string      `json:"installed_files"`
-	IconURL          string        `json:"icon_url,omitempty"`
+	InstalledFiles     []string      `json:"installed_files"`
+	IconURL            string        `json:"icon_url,omitempty"`
+	CreatedWithModpack bool          `json:"created_with_modpack,omitempty"`
 }
 
 // InstallModpackOpts contains parameters controlling modpack installation.
@@ -79,6 +82,7 @@ type InstallModpackOpts struct {
 	VersionID           string `json:"version_id,omitempty"`
 	AutoConfigureServer bool   `json:"auto_configure_server"`
 	CurseForgeAPIKey    string `json:"curseforge_api_key,omitempty"`
+	CreatedWithModpack  bool   `json:"created_with_modpack,omitempty"`
 }
 
 // Internal modrinth.index.json representation
@@ -313,6 +317,9 @@ func (s *Store) UninstallModpack(ctx context.Context, serverID string) error {
 	if err != nil {
 		return err
 	}
+	if modpack.CreatedWithModpack {
+		return ErrModpackLocked
+	}
 
 	dataDir := s.dataPath(serverID)
 	modsDir := filepath.Join(dataDir, "mods")
@@ -373,6 +380,29 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 	manifest, err := InspectModpackArchive(f, fi.Size(), fi.Name())
 	if err != nil {
 		return nil, err
+	}
+
+	existing, _ := s.GetInstalledModpack(ctx, serverID)
+	createdWithModpack := opts.CreatedWithModpack
+	if existing != nil && existing.CreatedWithModpack {
+		createdWithModpack = true
+		// Verify this is an update of the same modpack, not a switch to a different modpack
+		if existing.ProjectID != "" && opts.ProjectID != "" && existing.ProjectID != opts.ProjectID {
+			return nil, fmt.Errorf("%w: server is locked to modpack %q (project %s)", ErrModpackLocked, existing.Name, existing.ProjectID)
+		}
+		if existing.ProjectSlug != "" && opts.ProjectSlug != "" && !strings.EqualFold(existing.ProjectSlug, opts.ProjectSlug) {
+			return nil, fmt.Errorf("%w: server is locked to modpack %q (slug %s)", ErrModpackLocked, existing.Name, existing.ProjectSlug)
+		}
+		// If project identifiers are not set (e.g. file upload or generic url), check names
+		if (existing.ProjectID == "" && opts.ProjectID == "") && (existing.ProjectSlug == "" && opts.ProjectSlug == "") {
+			if manifest.Name != "" && existing.Name != "" {
+				name1 := strings.ToLower(strings.TrimSpace(manifest.Name))
+				name2 := strings.ToLower(strings.TrimSpace(existing.Name))
+				if name1 != name2 && !strings.Contains(name1, name2) && !strings.Contains(name2, name1) {
+					return nil, fmt.Errorf("%w: server is locked to modpack %q", ErrModpackLocked, existing.Name)
+				}
+			}
+		}
 	}
 
 	dataDir := s.dataPath(serverID)
@@ -707,20 +737,30 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 	}
 
 	installed := &InstalledModpack{
-		Name:             manifest.Name,
-		Version:          manifest.Version,
-		Summary:          manifest.Summary,
-		Author:           manifest.Author,
-		Format:           manifest.Format,
-		MinecraftVersion: manifest.MinecraftVersion,
-		Loader:           manifest.Loader,
-		LoaderVersion:    manifest.LoaderVersion,
-		InstalledAt:      time.Now().UTC().Format(time.RFC3339),
-		Source:           opts.Source,
-		ProjectID:        opts.ProjectID,
-		ProjectSlug:      opts.ProjectSlug,
-		InstalledFiles:   installedFiles,
-		IconURL:          manifest.IconURL,
+		Name:               manifest.Name,
+		Version:            manifest.Version,
+		Summary:            manifest.Summary,
+		Author:             manifest.Author,
+		Format:             manifest.Format,
+		MinecraftVersion:   manifest.MinecraftVersion,
+		Loader:             manifest.Loader,
+		LoaderVersion:      manifest.LoaderVersion,
+		InstalledAt:        time.Now().UTC().Format(time.RFC3339),
+		Source:             opts.Source,
+		ProjectID:          opts.ProjectID,
+		ProjectSlug:        opts.ProjectSlug,
+		InstalledFiles:     installedFiles,
+		IconURL:            manifest.IconURL,
+		CreatedWithModpack: createdWithModpack,
+	}
+	if installed.ProjectID == "" && existing != nil {
+		installed.ProjectID = existing.ProjectID
+	}
+	if installed.ProjectSlug == "" && existing != nil {
+		installed.ProjectSlug = existing.ProjectSlug
+	}
+	if installed.IconURL == "" && existing != nil {
+		installed.IconURL = existing.IconURL
 	}
 
 	// Persist installed modpack record

@@ -433,6 +433,73 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (path.includes('/command')) {
     return { ok: true, response: 'Command executed successfully.' } as T;
   }
+  if (path === '/api/servers' && init.method === 'POST') {
+    let name = 'New Server';
+    let serverType: ServerType = 'paper';
+    let version = '1.20.1';
+    let build = '1';
+    let ramMb = 2048;
+    if (init.body) {
+      try {
+        const parsed = JSON.parse(init.body as string);
+        if (parsed.name) name = parsed.name;
+        if (parsed.server_type) serverType = parsed.server_type;
+        if (parsed.version) version = parsed.version;
+        if (parsed.build) build = parsed.build;
+        if (parsed.ram_mb) ramMb = parsed.ram_mb;
+      } catch {
+        // ignore
+      }
+    }
+    const newServer: Server = {
+      id: `srv-${Date.now().toString(36)}`,
+      name,
+      server_type: serverType,
+      version,
+      build,
+      ram_mb: ramMb,
+      cpu_limit: 0,
+      memory_limit_mb: 0,
+      host_port: 25565,
+      extra_ports: [],
+      container_id: '',
+      state: 'stopped',
+      backup_enabled: false,
+      backup_interval_minutes: 60,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    return newServer as T;
+  }
+  if (path.startsWith('/api/servers/') && path.endsWith('/modpack/install') && init.method === 'POST') {
+    let createdWith = false;
+    let projId = '';
+    let projSlug = '';
+    if (init.body) {
+      try {
+        const parsed = JSON.parse(init.body as string);
+        if (parsed.created_with_modpack) createdWith = true;
+        if (parsed.project_id) projId = parsed.project_id;
+        if (parsed.project_slug) projSlug = parsed.project_slug;
+      } catch {
+        // ignore
+      }
+    }
+    return {
+      name: 'Installed Modpack',
+      version: '1.0.0',
+      format: 'modrinth',
+      minecraft_version: '1.20.1',
+      loader: 'fabric',
+      loader_version: '0.15.11',
+      installed_at: new Date().toISOString(),
+      source: 'modrinth',
+      project_id: projId,
+      project_slug: projSlug,
+      installed_files: [],
+      created_with_modpack: createdWith,
+    } as T;
+  }
   if (path.startsWith('/api/servers/')) {
     return {
       id: 'demo',
@@ -946,6 +1013,7 @@ export const api = {
     serverId: string,
     file: File,
     autoConfigureServer = true,
+    createdWithModpack = false,
     onProgress?: (loaded: number, total: number) => void,
   ) => {
     const cfKey = typeof window !== 'undefined' ? localStorage.getItem('mcm_curseforge_api_key') : null;
@@ -954,6 +1022,7 @@ export const api = {
       [
         ['file', file],
         ['auto_configure_server', String(autoConfigureServer)],
+        ['created_with_modpack', String(createdWithModpack)],
         ...(cfKey ? [['curseforge_api_key', cfKey] as [string, string]] : []),
       ],
       onProgress,

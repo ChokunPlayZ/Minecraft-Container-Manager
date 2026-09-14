@@ -611,6 +611,7 @@ export interface InstalledModpack {
   project_slug?: string;
   installed_files: string[];
   icon_url?: string;
+  created_with_modpack?: boolean;
 }
 
 export interface InstalledModpackResponse {
@@ -626,5 +627,7 @@ export interface InstallModpackOptions {
   version_id?: string;
   auto_configure_server?: boolean;
   curseforge_api_key?: string;
+  created_with_modpack?: boolean;
 }
+
 

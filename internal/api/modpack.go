@@ -166,14 +166,26 @@ func (s *Server) handleInstallModpack(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		createdWithModpack := false
+		if cwmVal := r.FormValue("created_with_modpack"); cwmVal != "" {
+			if parsed, err := strconv.ParseBool(cwmVal); err == nil {
+				createdWithModpack = parsed
+			}
+		}
+
 		opts := servers.InstallModpackOpts{
 			Source:              "upload",
 			AutoConfigureServer: autoConfig,
 			CurseForgeAPIKey:    cfKey,
+			CreatedWithModpack:  createdWithModpack,
 		}
 
 		installed, err := s.servers.InstallModpack(r.Context(), serverID, tmpPath, opts)
 		if err != nil {
+			if errors.Is(err, servers.ErrModpackLocked) {
+				writeError(w, http.StatusForbidden, "modpack_locked", err.Error())
+				return
+			}
 			if errors.Is(err, servers.ErrInvalidModpack) || errors.Is(err, servers.ErrInvalidArchive) {
 				writeError(w, http.StatusBadRequest, "invalid_modpack", err.Error())
 				return
@@ -195,6 +207,7 @@ func (s *Server) handleInstallModpack(w http.ResponseWriter, r *http.Request) {
 		VersionID           string `json:"version_id"`
 		AutoConfigureServer bool   `json:"auto_configure_server"`
 		CurseForgeAPIKey    string `json:"curseforge_api_key"`
+		CreatedWithModpack  bool   `json:"created_with_modpack"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -231,10 +244,15 @@ func (s *Server) handleInstallModpack(w http.ResponseWriter, r *http.Request) {
 		VersionID:           in.VersionID,
 		AutoConfigureServer: in.AutoConfigureServer,
 		CurseForgeAPIKey:    in.CurseForgeAPIKey,
+		CreatedWithModpack:  in.CreatedWithModpack,
 	}
 
 	installed, err := s.servers.InstallModpack(r.Context(), serverID, tmpPath, opts)
 	if err != nil {
+		if errors.Is(err, servers.ErrModpackLocked) {
+			writeError(w, http.StatusForbidden, "modpack_locked", err.Error())
+			return
+		}
 		if errors.Is(err, servers.ErrInvalidModpack) || errors.Is(err, servers.ErrInvalidArchive) {
 			writeError(w, http.StatusBadRequest, "invalid_modpack", err.Error())
 			return
@@ -250,6 +268,10 @@ func (s *Server) handleInstallModpack(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUninstallModpack(w http.ResponseWriter, r *http.Request) {
 	serverID := r.PathValue("id")
 	if err := s.servers.UninstallModpack(r.Context(), serverID); err != nil {
+		if errors.Is(err, servers.ErrModpackLocked) {
+			writeError(w, http.StatusForbidden, "modpack_locked", "servers created with a modpack cannot have their modpack removed")
+			return
+		}
 		if errors.Is(err, servers.ErrModpackNotFound) {
 			writeError(w, http.StatusNotFound, "modpack_not_found", "no modpack installed")
 			return

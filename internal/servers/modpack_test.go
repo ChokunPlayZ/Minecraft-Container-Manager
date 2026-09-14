@@ -331,3 +331,119 @@ func TestInstallGenericModpack(t *testing.T) {
 		t.Errorf("expected extracted config at %s: %v", cfgFile, err)
 	}
 }
+
+func TestCreatedWithModpackLockingAndUpdate(t *testing.T) {
+	store := newTestStore(t, "srv-locked", StateStopped)
+	ctx := context.Background()
+	serverID := "srv-locked"
+
+	idx1 := modrinthIndex{
+		FormatVersion: 1,
+		Game:          "minecraft",
+		VersionID:     "v1.0.0",
+		Name:          "Cobblemon Official",
+		Dependencies: map[string]string{
+			"minecraft":     "1.20.1",
+			"fabric-loader": "0.15.11",
+		},
+		Files: []modrinthIndexFile{
+			{
+				Path: "mods/cobblemon-1.0.jar",
+				Env: struct {
+					Client string `json:"client"`
+					Server string `json:"server"`
+				}{Client: "required", Server: "required"},
+			},
+		},
+	}
+	b1, _ := json.Marshal(idx1)
+	pack1Zip := createTestZip(t, map[string]string{
+		"modrinth.index.json": string(b1),
+	})
+	pack1Path := filepath.Join(t.TempDir(), "Cobblemon_v1.mrpack")
+	d1, _ := io.ReadAll(pack1Zip)
+	_ = os.WriteFile(pack1Path, d1, 0o644)
+
+	// 1. Install with CreatedWithModpack: true
+	installed, err := store.InstallModpack(ctx, serverID, pack1Path, InstallModpackOpts{
+		Source:             "modrinth",
+		ProjectID:          "cobblemon-proj",
+		ProjectSlug:        "cobblemon",
+		CreatedWithModpack: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to install initial modpack: %v", err)
+	}
+	if !installed.CreatedWithModpack {
+		t.Fatalf("expected CreatedWithModpack to be true")
+	}
+
+	// 2. Uninstall must fail with ErrModpackLocked
+	if err := store.UninstallModpack(ctx, serverID); !errors.Is(err, ErrModpackLocked) {
+		t.Fatalf("expected ErrModpackLocked on uninstall, got: %v", err)
+	}
+
+	// 3. Installing a different modpack must fail with ErrModpackLocked
+	idx2 := modrinthIndex{
+		FormatVersion: 1,
+		Game:          "minecraft",
+		VersionID:     "v2.0.0",
+		Name:          "All The Mods 9",
+		Dependencies: map[string]string{
+			"minecraft": "1.20.1",
+			"forge":     "47.2.0",
+		},
+	}
+	b2, _ := json.Marshal(idx2)
+	pack2Zip := createTestZip(t, map[string]string{
+		"modrinth.index.json": string(b2),
+	})
+	pack2Path := filepath.Join(t.TempDir(), "ATM9.mrpack")
+	d2, _ := io.ReadAll(pack2Zip)
+	_ = os.WriteFile(pack2Path, d2, 0o644)
+
+	_, err = store.InstallModpack(ctx, serverID, pack2Path, InstallModpackOpts{
+		Source:      "modrinth",
+		ProjectID:   "atm9-proj",
+		ProjectSlug: "all-the-mods-9",
+	})
+	if !errors.Is(err, ErrModpackLocked) {
+		t.Fatalf("expected ErrModpackLocked when changing to a different modpack, got: %v", err)
+	}
+
+	// 4. Updating the SAME modpack must succeed and preserve CreatedWithModpack
+	idxUpdate := modrinthIndex{
+		FormatVersion: 1,
+		Game:          "minecraft",
+		VersionID:     "v1.5.0",
+		Name:          "Cobblemon Official",
+		Dependencies: map[string]string{
+			"minecraft":     "1.20.1",
+			"fabric-loader": "0.15.11",
+		},
+	}
+	bUpdate, _ := json.Marshal(idxUpdate)
+	packUpdateZip := createTestZip(t, map[string]string{
+		"modrinth.index.json": string(bUpdate),
+	})
+	packUpdatePath := filepath.Join(t.TempDir(), "Cobblemon_v1.5.mrpack")
+	dUpdate, _ := io.ReadAll(packUpdateZip)
+	_ = os.WriteFile(packUpdatePath, dUpdate, 0o644)
+
+	updated, err := store.InstallModpack(ctx, serverID, packUpdatePath, InstallModpackOpts{
+		Source:      "modrinth",
+		ProjectID:   "cobblemon-proj",
+		ProjectSlug: "cobblemon",
+		VersionID:   "v1.5.0",
+	})
+	if err != nil {
+		t.Fatalf("failed to update same modpack: %v", err)
+	}
+	if updated.Version != "v1.5.0" {
+		t.Errorf("expected version v1.5.0, got %s", updated.Version)
+	}
+	if !updated.CreatedWithModpack {
+		t.Errorf("expected CreatedWithModpack to remain true after update")
+	}
+}
+
