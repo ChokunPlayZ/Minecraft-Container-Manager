@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   ArrowUpCircle,
@@ -47,13 +47,21 @@ export function ModsPanel({ server }: { server: Server }) {
 
   const unsupported = server.server_type === 'vanilla';
 
+  const itemsRef = useRef<Mod[]>([]);
+  itemsRef.current = items;
+  const checkingRef = useRef(false);
+
   const checkForUpdates = useCallback(
     async (installedList?: Mod[], force = false) => {
-      const list = installedList ?? items;
+      const list = installedList ?? itemsRef.current;
       if (unsupported || list.length === 0) {
         setUpdates({});
         return;
       }
+      if (checkingRef.current) {
+        return;
+      }
+      checkingRef.current = true;
       setCheckingUpdates(true);
       try {
         // Query server-side updates endpoint (cached, rate-limited, and paced on the server)
@@ -91,10 +99,11 @@ export function ModsPanel({ server }: { server: Server }) {
       } catch {
         // Server-side update check error (handled gracefully without client-side spamming)
       } finally {
+        checkingRef.current = false;
         setCheckingUpdates(false);
       }
     },
-    [items, server, unsupported],
+    [server.id, unsupported],
   );
 
   const load = useCallback(

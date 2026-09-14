@@ -124,7 +124,19 @@ export function ModJarPickerDialog({
       isMounted = false;
       controller.abort();
     };
-  }, [isOpen, mod, updateInfo, server]);
+  }, [
+    isOpen,
+    server.id,
+    server.server_type,
+    server.version,
+    mod?.name,
+    mod?.file,
+    mod?.sha1,
+    mod?.project_id,
+    mod?.project_slug,
+    mod?.provider,
+    updateInfo?.latestVersion,
+  ]);
 
   // Handle escape key
   useEffect(() => {

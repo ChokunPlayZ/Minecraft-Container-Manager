@@ -221,21 +221,48 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 		s.updatesMu.RUnlock()
 	}
 
-	// 2. Fetch list of installed mods
+	// 2. Coalesce concurrent requests for the same server
+	s.updatesFlightMu.Lock()
+	if s.updatesInFlight == nil {
+		s.updatesInFlight = make(map[string]*updatesFlightCall)
+	}
+	if call, ok := s.updatesInFlight[serverID]; ok {
+		s.updatesFlightMu.Unlock()
+		call.wg.Wait()
+		return call.resp, call.err
+	}
+	call := &updatesFlightCall{}
+	call.wg.Add(1)
+	s.updatesInFlight[serverID] = call
+	s.updatesFlightMu.Unlock()
+
+	var result *ServerModUpdatesResponse
+	var checkErr error
+	defer func() {
+		call.resp = result
+		call.err = checkErr
+		s.updatesFlightMu.Lock()
+		delete(s.updatesInFlight, serverID)
+		s.updatesFlightMu.Unlock()
+		call.wg.Done()
+	}()
+
+	// 3. Fetch list of installed mods
 	listRes, err := s.ListMods(ctx, serverID)
 	if err != nil {
-		return nil, err
+		checkErr = err
+		return nil, checkErr
 	}
 	installedMods := listRes.Items
 	if len(installedMods) == 0 {
-		empty := &ServerModUpdatesResponse{
+		result = &ServerModUpdatesResponse{
 			Updates:     make(map[string]ModUpdateInfo),
 			LastChecked: time.Now(),
 			TotalMods:   0,
 			UpdateCount: 0,
 		}
-		s.setUpdatesCache(serverID, empty)
-		return empty, nil
+		s.setUpdatesCache(serverID, result)
+		return result, nil
 	}
 
 	updates := make(map[string]ModUpdateInfo)
@@ -569,7 +596,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 		}
 	}
 
-	result := &ServerModUpdatesResponse{
+	result = &ServerModUpdatesResponse{
 		Updates:     updates,
 		LastChecked: time.Now(),
 		TotalMods:   len(installedMods),

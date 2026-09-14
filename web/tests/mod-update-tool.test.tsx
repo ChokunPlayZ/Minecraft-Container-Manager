@@ -486,5 +486,40 @@ describe('Mod Update Tool & Jar Picker', () => {
         expect(screen.getByRole('heading', { name: /Update Fabric API/i })).toBeInTheDocument();
       });
     });
+
+    it('does not repeatedly spam update check queries on mount or re-render', async () => {
+      const checkSpy = vi.spyOn(api, 'checkModUpdates').mockResolvedValue({
+        updates: {},
+        last_checked: new Date().toISOString(),
+      });
+
+      const installedMods: Mod[] = [
+        {
+          name: 'fabric-api',
+          title: 'Fabric API',
+          file: 'fabric-api-0.100.0.jar',
+          enabled: true,
+          version: '0.100.0',
+        },
+      ];
+
+      // Simulate network request returning fresh array reference each time
+      vi.spyOn(api, 'mods').mockImplementation(async () => ({
+        type: 'mods',
+        items: [...installedMods],
+      }));
+
+      render(<ModsPanel server={mockServer} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('fabric-api')).toBeInTheDocument();
+      });
+
+      // Allow any microtasks / effects to settle
+      await new Promise((r) => setTimeout(r, 150));
+
+      // Must be called exactly once, NOT spammed in a render loop
+      expect(checkSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

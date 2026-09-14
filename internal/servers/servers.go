@@ -168,21 +168,30 @@ type Store struct {
 	// dns optionally publishes/removes SRV records as servers start and stop.
 	dns dns.Publisher
 
-	proxyMu      sync.Mutex
-	proxy        *proxy.Service
-	updatesMu    sync.RWMutex
-	updatesCache map[string]*ServerModUpdatesResponse
+	proxyMu         sync.Mutex
+	proxy           *proxy.Service
+	updatesMu       sync.RWMutex
+	updatesCache    map[string]*ServerModUpdatesResponse
+	updatesFlightMu sync.Mutex
+	updatesInFlight map[string]*updatesFlightCall
+}
+
+type updatesFlightCall struct {
+	wg   sync.WaitGroup
+	resp *ServerModUpdatesResponse
+	err  error
 }
 
 // NewStore wires the server store together.
 func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, end int, dataDir, dataDirHost string) *Store {
 	return &Store{
-		db:          handle.DB,
-		docker:      dm,
-		jars:        jr,
-		ports:       ports.NewPool(handle.DB, start, end),
-		dataDir:     dataDir,
-		dataDirHost: dataDirHost,
+		db:              handle.DB,
+		docker:          dm,
+		jars:            jr,
+		ports:           ports.NewPool(handle.DB, start, end),
+		dataDir:         dataDir,
+		dataDirHost:     dataDirHost,
+		updatesInFlight: make(map[string]*updatesFlightCall),
 	}
 }
 

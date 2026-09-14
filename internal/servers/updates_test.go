@@ -11,10 +11,40 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mcm-panel/mcm/internal/proxy"
 )
+
+func TestCheckModUpdatesConcurrentCoalescing(t *testing.T) {
+	st, serverID := newModTestStore(t, "paper")
+	ctx := context.Background()
+
+	srvDir := filepath.Join(st.dataPath(serverID), "plugins")
+	_ = os.MkdirAll(srvDir, 0o755)
+	pluginJar := filepath.Join(srvDir, "test-plugin.jar")
+	_ = os.WriteFile(pluginJar, []byte("fake content"), 0o644)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 5)
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := st.CheckModUpdates(ctx, serverID, true)
+			if err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("concurrent CheckModUpdates error: %v", err)
+	}
+}
 
 func TestCheckModUpdatesAndCache(t *testing.T) {
 	st, serverID := newModTestStore(t, "paper")
