@@ -35,7 +35,7 @@ describe('ModpacksPanel Component', () => {
     vi.clearAllMocks();
   });
 
-  it('renders with no installed modpack and displays 4 source tabs', async () => {
+  it('renders with no installed modpack and displays informative empty state with no install hub', async () => {
     vi.spyOn(api, 'getInstalledModpack').mockResolvedValue({
       installed: false,
       modpack: null,
@@ -47,10 +47,11 @@ describe('ModpacksPanel Component', () => {
       expect(screen.getByText(/No Modpack Installed/i)).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: /Modrinth/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /CurseForge/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Upload File/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /From URL/i })).toBeInTheDocument();
+    // Check that install catalog tabs are NOT present on existing server
+    expect(screen.queryByRole('button', { name: /Modrinth/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /CurseForge/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Upload File/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /From URL/i })).not.toBeInTheDocument();
   });
 
   it('renders active installed modpack hero card', async () => {
@@ -76,7 +77,7 @@ describe('ModpacksPanel Component', () => {
     render(<ModpacksPanel server={mockServer} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Better MC [FABRIC]')).toBeInTheDocument();
+      expect(screen.getAllByText(/Better MC/i).length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText(/Active Modpack/i)).toBeInTheDocument();
@@ -161,47 +162,39 @@ describe('ModpacksPanel Component', () => {
     });
   });
 
-  it('switches to Upload tab and shows dropzone', async () => {
-    const user = userEvent.setup();
+  it('displays manual update archive dropzone for installed modpack', async () => {
+    const lockedModpack: InstalledModpack = {
+      name: 'Cobblemon Official',
+      version: 'v1.5.0',
+      summary: 'Gotta catch em all',
+      author: 'Cobblemon Team',
+      format: 'modrinth',
+      minecraft_version: '1.20.1',
+      loader: 'fabric',
+      loader_version: '0.15.11',
+      installed_at: '2026-09-14T10:00:00Z',
+      source: 'modrinth',
+      installed_files: ['mods/cobblemon.jar'],
+      created_with_modpack: true,
+    };
 
     vi.spyOn(api, 'getInstalledModpack').mockResolvedValue({
-      installed: false,
-      modpack: null,
+      installed: true,
+      modpack: lockedModpack,
     });
+
+    vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => [],
+    } as Response);
 
     render(<ModpacksPanel server={mockServer} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/No Modpack Installed/i)).toBeInTheDocument();
+      expect(screen.getByText(/Upload Updated Modpack Archive/i)).toBeInTheDocument();
     });
 
-    const uploadTab = screen.getByRole('button', { name: /Upload File/i });
-    await user.click(uploadTab);
-
-    expect(
-      screen.getByText(/Choose or drop a modpack archive/i),
-    ).toBeInTheDocument();
-  });
-
-  it('switches to From URL tab and displays input', async () => {
-    const user = userEvent.setup();
-
-    vi.spyOn(api, 'getInstalledModpack').mockResolvedValue({
-      installed: false,
-      modpack: null,
-    });
-
-    render(<ModpacksPanel server={mockServer} />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/No Modpack Installed/i)).toBeInTheDocument();
-    });
-
-    const urlTab = screen.getByRole('button', { name: /From URL/i });
-    await user.click(urlTab);
-
-    expect(screen.getByPlaceholderText(/cdn\.modrinth\.com/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Inspect URL/i })).toBeInTheDocument();
+    expect(screen.getByText(/Choose Update File/i)).toBeInTheDocument();
   });
 });
 

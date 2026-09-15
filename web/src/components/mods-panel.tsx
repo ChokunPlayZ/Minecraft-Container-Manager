@@ -245,13 +245,8 @@ export function ModsPanel({ server }: { server: Server }) {
           </CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Vanilla servers do not support individual mod jars. You can install an official Modpack
-              to automatically convert this server to Fabric or Forge.
+              Vanilla servers do not support individual mod jars or plugins. To run mods or modpacks, please create a modded or modpack server from the server creation menu.
             </p>
-            <Button onClick={() => setActiveTab('modpacks')} className="gap-2 text-xs font-semibold">
-              <Package className="h-4 w-4" />
-              Browse &amp; Install Modpacks
-            </Button>
           </CardContent>
         </Card>
       </div>

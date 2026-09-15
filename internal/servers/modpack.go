@@ -384,8 +384,10 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 
 	existing, _ := s.GetInstalledModpack(ctx, serverID)
 	createdWithModpack := opts.CreatedWithModpack
-	if existing != nil && existing.CreatedWithModpack {
-		createdWithModpack = true
+	if existing != nil {
+		if existing.CreatedWithModpack {
+			createdWithModpack = true
+		}
 		// Verify this is an update of the same modpack, not a switch to a different modpack
 		if existing.ProjectID != "" && opts.ProjectID != "" && existing.ProjectID != opts.ProjectID {
 			return nil, fmt.Errorf("%w: server is locked to modpack %q (project %s)", ErrModpackLocked, existing.Name, existing.ProjectID)

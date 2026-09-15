@@ -20,6 +20,7 @@ interface ModpackInstallDialogProps {
   manifest: ModpackManifest;
   installOptions: InstallModpackOptions;
   modpackFile?: File;
+  isUpdate?: boolean;
   onClose: () => void;
   onInstalled: () => void;
 }
@@ -29,6 +30,7 @@ export function ModpackInstallDialog({
   manifest,
   installOptions,
   modpackFile,
+  isUpdate = false,
   onClose,
   onInstalled,
 }: ModpackInstallDialogProps) {
@@ -54,15 +56,16 @@ export function ModpackInstallDialog({
     setInstalling(true);
     setError(null);
     setProgress(10);
-    setStatusText('Preparing modpack installation...');
+    setStatusText(isUpdate ? 'Preparing modpack update...' : 'Preparing modpack installation...');
 
     try {
       if (modpackFile) {
-        setStatusText('Uploading & extracting modpack...');
+        setStatusText(isUpdate ? 'Uploading & applying modpack update...' : 'Uploading & extracting modpack...');
         await api.installModpackFile(
           server.id,
           modpackFile,
           autoConfigure,
+          false,
           (loaded, total) => {
             if (total > 0) {
               const pct = Math.round((loaded / total) * 60);
@@ -72,7 +75,7 @@ export function ModpackInstallDialog({
           },
         );
       } else {
-        setStatusText('Downloading & installing modpack files...');
+        setStatusText(isUpdate ? 'Downloading & updating modpack files...' : 'Downloading & installing modpack files...');
         setProgress(40);
         await api.installModpackRemote(server.id, {
           ...installOptions,
@@ -81,14 +84,14 @@ export function ModpackInstallDialog({
       }
 
       setProgress(100);
-      setStatusText('Installation complete!');
+      setStatusText(isUpdate ? 'Update complete!' : 'Installation complete!');
       setSuccess(true);
       setTimeout(() => {
         onInstalled();
         onClose();
       }, 1200);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Failed to install modpack');
+      setError(err instanceof ApiError ? err.detail : (isUpdate ? 'Failed to update modpack' : 'Failed to install modpack'));
       setProgress(null);
     } finally {
       setInstalling(false);
@@ -126,6 +129,11 @@ export function ModpackInstallDialog({
                 <Badge variant="outline" className="text-[10px] font-semibold uppercase">
                   {manifest.format}
                 </Badge>
+                {isUpdate && (
+                  <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20 text-[10px] font-semibold uppercase">
+                    Update
+                  </Badge>
+                )}
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Version {manifest.version}
@@ -262,7 +270,7 @@ export function ModpackInstallDialog({
           {success && (
             <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-800 dark:text-emerald-300 font-medium">
               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              Modpack installed successfully! Refreshing server...
+              {isUpdate ? 'Modpack updated successfully! Refreshing server...' : 'Modpack installed successfully! Refreshing server...'}
             </div>
           )}
 
@@ -293,12 +301,12 @@ export function ModpackInstallDialog({
             {installing ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Installing...
+                {isUpdate ? 'Updating...' : 'Installing...'}
               </>
             ) : (
               <>
                 <Download className="h-4 w-4" />
-                Install Modpack
+                {isUpdate ? 'Update Modpack' : 'Install Modpack'}
               </>
             )}
           </Button>
