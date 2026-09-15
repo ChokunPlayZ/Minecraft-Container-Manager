@@ -350,6 +350,13 @@ export interface ModrinthVersionFile {
   file_type?: string | null;
 }
 
+export interface ModrinthDependency {
+  version_id: string | null;
+  project_id: string | null;
+  file_name: string | null;
+  dependency_type: 'required' | 'optional' | 'incompatible' | 'embedded';
+}
+
 export interface ModrinthVersion {
   id: string;
   project_id: string;
@@ -365,6 +372,7 @@ export interface ModrinthVersion {
   downloads: number;
   changelog?: string;
   files: ModrinthVersionFile[];
+  dependencies?: ModrinthDependency[];
 }
 
 export interface ModrinthProject {
@@ -533,6 +541,11 @@ export interface CurseForgeFileHash {
   algo: number;
 }
 
+export interface CurseForgeFileDependency {
+  modId: number;
+  relationType: number; // 1 = Embedded, 2 = Optional, 3 = Required, 4 = Tool, 5 = Incompatible, 6 = Include
+}
+
 export interface CurseForgeFile {
   id: number;
   gameId: number;
@@ -548,6 +561,7 @@ export interface CurseForgeFile {
   downloadCount: number;
   downloadUrl: string | null;
   gameVersions: string[];
+  dependencies?: CurseForgeFileDependency[];
 }
 
 export interface CurseForgeModAuthor {

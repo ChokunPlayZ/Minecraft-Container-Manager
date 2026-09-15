@@ -37,6 +37,11 @@ import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { ModUpdateDialog } from './mod-update-dialog';
+import { ModDependenciesDialog } from './mod-dependencies-dialog';
+import {
+  resolveCurseForgeDependencies,
+  type ResolvedDependency,
+} from '../api/mod-dependencies';
 import { PluginCard, PluginEmptyState, PluginGridSkeleton } from './plugin-card';
 import { useModal } from './ui/modal';
 
@@ -203,6 +208,27 @@ export function CurseForgeBrowser({
     modName?: string;
   } | null>(null);
 
+  const [dependencyPrompt, setDependencyPrompt] = useState<{
+    primaryMod: {
+      title: string;
+      versionNumber?: string;
+      filename: string;
+      iconUrl?: string | null;
+      url: string;
+      modId?: number | string;
+      modSlug?: string;
+      modName?: string;
+    };
+    dependencies: ResolvedDependency[];
+  } | null>(null);
+
+  const [isBatchInstalling, setIsBatchInstalling] = useState(false);
+  const [installProgress, setInstallProgress] = useState<{
+    current: number;
+    total: number;
+    currentName: string;
+  } | null>(null);
+
   function findExistingOldJar(
     targetFilename: string,
     mod?: Pick<CurseForgeMod, 'name' | 'slug'>,
@@ -317,6 +343,102 @@ export function CurseForgeBrowser({
     }
   }
 
+  async function handleConfirmInstallWithDependencies(selectedDeps: ResolvedDependency[]) {
+    if (!dependencyPrompt) return;
+    const { primaryMod } = dependencyPrompt;
+    setIsBatchInstalling(true);
+    setError(null);
+
+    const totalCount = 1 + selectedDeps.length;
+
+    try {
+      // 1. Install primary mod
+      setInstallProgress({
+        current: 1,
+        total: totalCount,
+        currentName: primaryMod.title,
+      });
+
+      const primaryExistingMod = findExistingOldJar(primaryMod.filename, {
+        name: primaryMod.modName || primaryMod.title,
+        slug: primaryMod.modSlug || '',
+      });
+
+      const downloadedPrimary = await api.downloadMod(
+        server.id,
+        primaryMod.url,
+        primaryMod.filename,
+        primaryExistingMod?.name,
+        {
+          projectId: primaryMod.modId !== undefined ? String(primaryMod.modId) : undefined,
+          projectSlug: primaryMod.modSlug,
+          provider: 'curseforge',
+        },
+      );
+
+      onModInstalled(downloadedPrimary);
+      if (primaryExistingMod) {
+        onModDeleted?.(primaryExistingMod.name);
+      }
+      if (primaryMod.modSlug) {
+        setInstalledSlugs((prev) => new Set([...prev, primaryMod.modSlug!, primaryMod.title.toLowerCase()]));
+      }
+
+      // 2. Install each selected dependency
+      for (let i = 0; i < selectedDeps.length; i++) {
+        const dep = selectedDeps[i];
+        if (!dep.downloadUrl || !dep.filename) continue;
+
+        setInstallProgress({
+          current: i + 2,
+          total: totalCount,
+          currentName: dep.title,
+        });
+
+        const depExistingMod = findExistingOldJar(dep.filename, {
+          name: dep.title,
+          slug: dep.slug,
+        });
+
+        const downloadedDep = await api.downloadMod(
+          server.id,
+          dep.downloadUrl,
+          dep.filename,
+          depExistingMod?.name,
+          {
+            projectId: dep.id,
+            projectSlug: dep.slug,
+            provider: 'curseforge',
+          },
+        );
+
+        onModInstalled(downloadedDep);
+        if (depExistingMod) {
+          onModDeleted?.(depExistingMod.name);
+        }
+        setInstalledSlugs((prev) => new Set([...prev, dep.slug, dep.title.toLowerCase()]));
+      }
+
+      setNotification({
+        type: 'success',
+        text:
+          selectedDeps.length > 0
+            ? `Successfully installed ${primaryMod.title} and ${selectedDeps.length} dependencies`
+            : `Installed ${primaryMod.title}`,
+      });
+      setDependencyPrompt(null);
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Batch installation failed',
+      });
+    } finally {
+      setIsBatchInstalling(false);
+      setInstallProgress(null);
+      setInstallingId(null);
+    }
+  }
+
   async function handleOneClickInstall(mod: CurseForgeMod) {
     if (!apiKey) return;
     setInstallingId(mod.id);
@@ -352,6 +474,41 @@ export function CurseForgeBrowser({
         downloadUrl = await getCurseForgeDownloadUrl(mod.id, targetFile.id, apiKey);
       }
 
+      // Check for dependencies before proceeding
+      if (targetFile.dependencies && targetFile.dependencies.length > 0) {
+        try {
+          const resolution = await resolveCurseForgeDependencies({
+            file: targetFile,
+            primaryMod: mod,
+            apiKey,
+            gameVersion: server.version,
+            modLoaderType: loaderType,
+            installedMods,
+            installedSlugs,
+          });
+
+          if (resolution.missingCount > 0) {
+            setInstallingId(null);
+            setDependencyPrompt({
+              primaryMod: {
+                title: mod.name,
+                versionNumber: targetFile.displayName || targetFile.fileName,
+                filename: targetFile.fileName,
+                iconUrl: mod.logo?.thumbnailUrl || mod.logo?.url,
+                url: downloadUrl,
+                modId: mod.id,
+                modSlug: mod.slug,
+                modName: mod.name,
+              },
+              dependencies: resolution.dependencies,
+            });
+            return;
+          }
+        } catch {
+          // If resolution encounters an error, proceed with standard install
+        }
+      }
+
       const existingMod = findExistingOldJar(targetFile.fileName, mod);
       if (existingMod) {
         setInstallingId(null);
@@ -385,6 +542,40 @@ export function CurseForgeBrowser({
       let downloadUrl = file.downloadUrl;
       if (!downloadUrl) {
         downloadUrl = await getCurseForgeDownloadUrl(selectedMod.id, file.id, apiKey);
+      }
+
+      if (file.dependencies && file.dependencies.length > 0) {
+        try {
+          const resolution = await resolveCurseForgeDependencies({
+            file,
+            primaryMod: selectedMod ?? undefined,
+            apiKey,
+            gameVersion: server.version,
+            modLoaderType: loaderType,
+            installedMods,
+            installedSlugs,
+          });
+
+          if (resolution.missingCount > 0) {
+            setInstallingId(null);
+            setDependencyPrompt({
+              primaryMod: {
+                title: modName,
+                versionNumber: file.displayName || file.fileName,
+                filename: file.fileName,
+                iconUrl: selectedMod?.logo?.thumbnailUrl || selectedMod?.logo?.url,
+                url: downloadUrl,
+                modId: selectedMod?.id,
+                modSlug: selectedMod?.slug,
+                modName: selectedMod?.name,
+              },
+              dependencies: resolution.dependencies,
+            });
+            return;
+          }
+        } catch {
+          // Ignore
+        }
       }
 
       const existingMod = findExistingOldJar(file.fileName, selectedMod);
@@ -499,6 +690,49 @@ export function CurseForgeBrowser({
   return (
     <div className="space-y-4">
       {dialog}
+
+      {dependencyPrompt && (
+        <ModDependenciesDialog
+          isOpen={true}
+          primaryMod={dependencyPrompt.primaryMod}
+          dependencies={dependencyPrompt.dependencies}
+          isInstalling={isBatchInstalling}
+          installProgress={installProgress}
+          onConfirmInstall={handleConfirmInstallWithDependencies}
+          onSkipAndInstallPrimaryOnly={() => {
+            const { primaryMod } = dependencyPrompt;
+            setDependencyPrompt(null);
+            const existingMod = findExistingOldJar(primaryMod.filename, {
+              name: primaryMod.modName || primaryMod.title,
+              slug: primaryMod.modSlug || '',
+            });
+            if (existingMod) {
+              setUpdatePrompt({
+                projectTitle: primaryMod.title,
+                existingMod,
+                targetUrl: primaryMod.url,
+                targetFilename: primaryMod.filename,
+                modId: primaryMod.modId,
+                modSlug: primaryMod.modSlug,
+                modName: primaryMod.modName,
+              });
+              return;
+            }
+            void executeInstall(
+              primaryMod.url,
+              primaryMod.filename,
+              primaryMod.title,
+              primaryMod.modId,
+              primaryMod.modSlug,
+              primaryMod.modName,
+            );
+          }}
+          onCancel={() => {
+            setDependencyPrompt(null);
+            setInstallingId(null);
+          }}
+        />
+      )}
 
       {/* Update / Replace Dialog */}
       {updatePrompt && (

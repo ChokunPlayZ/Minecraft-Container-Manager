@@ -436,3 +436,60 @@ export async function checkModrinthUpdates(
     return {};
   }
 }
+
+/**
+ * Retrieves multiple projects by their IDs or slugs in a single batch request.
+ * Endpoint: GET /v2/projects?ids=["id1","id2"]
+ */
+export async function getProjects(
+  ids: string[],
+  signal?: AbortSignal,
+): Promise<ModrinthProject[]> {
+  if (ids.length === 0) return [];
+  const url = `${MODRINTH_API_BASE}/projects?ids=${encodeURIComponent(JSON.stringify(ids))}`;
+  try {
+    return await rateLimitedFetchJson<ModrinthProject[]>(
+      url,
+      {
+        headers: {
+          Accept: 'application/json',
+        },
+      },
+      {
+        cacheTtlMs: 300000, // 5 minutes
+        signal,
+      },
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Retrieves multiple versions by their IDs in a single batch request.
+ * Endpoint: GET /v2/versions?ids=["id1","id2"]
+ */
+export async function getVersions(
+  ids: string[],
+  signal?: AbortSignal,
+): Promise<ModrinthVersion[]> {
+  if (ids.length === 0) return [];
+  const url = `${MODRINTH_API_BASE}/versions?ids=${encodeURIComponent(JSON.stringify(ids))}`;
+  try {
+    return await rateLimitedFetchJson<ModrinthVersion[]>(
+      url,
+      {
+        headers: {
+          Accept: 'application/json',
+        },
+      },
+      {
+        cacheTtlMs: 300000, // 5 minutes
+        signal,
+      },
+    );
+  } catch {
+    return [];
+  }
+}
+

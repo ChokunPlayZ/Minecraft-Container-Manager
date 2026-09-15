@@ -589,6 +589,191 @@ describe('ModrinthBrowser component', () => {
       ]);
     });
   });
+
+  it('prompts user with ModDependenciesDialog when installing a mod with missing dependencies and installs all selected', async () => {
+    const user = userEvent.setup();
+    const onModInstalled = vi.fn();
+
+    const mockIrisHit: ModrinthSearchHit = {
+      project_id: 'proj-iris',
+      project_type: 'mod',
+      slug: 'iris',
+      author: 'coderbot',
+      title: 'Iris Shaders',
+      description: 'An open-source shaders mod',
+      categories: ['fabric', 'optimization'],
+      versions: ['1.21.4'],
+      downloads: 5000000,
+      follows: 10000,
+      icon_url: 'https://cdn.modrinth.com/iris.png',
+      date_created: '2021-01-01T00:00:00Z',
+      date_modified: '2026-01-01T00:00:00Z',
+      latest_version: 'v1.7',
+      license: 'LGPL-3.0',
+      client_side: 'required',
+      server_side: 'required',
+    };
+
+    const mockIrisVersion: ModrinthVersion = {
+      id: 'ver-iris-1',
+      project_id: 'proj-iris',
+      author_id: 'author-1',
+      name: 'Iris 1.7.0',
+      version_number: '1.7.0',
+      game_versions: ['1.21.4'],
+      version_type: 'release',
+      loaders: ['paper', 'spigot'],
+      featured: true,
+      status: 'listed',
+      date_published: '2026-01-01T00:00:00Z',
+      downloads: 10000,
+      files: [
+        {
+          filename: 'iris-1.7.0.jar',
+          url: 'https://cdn.modrinth.com/iris.jar',
+          primary: true,
+          size: 2048000,
+        },
+      ],
+      dependencies: [
+        {
+          project_id: 'proj-sodium',
+          version_id: null,
+          file_name: null,
+          dependency_type: 'required',
+        },
+      ],
+    };
+
+    const mockSodiumProj = {
+      id: 'proj-sodium',
+      slug: 'sodium',
+      title: 'Sodium',
+      description: 'Optimization engine',
+      categories: ['optimization', 'library'],
+      client_side: 'required',
+      server_side: 'required',
+      icon_url: 'https://cdn.modrinth.com/sodium.png',
+      downloads: 10000000,
+      followers: 20000,
+    };
+
+    const mockSodiumVersion: ModrinthVersion = {
+      id: 'ver-sodium-1',
+      project_id: 'proj-sodium',
+      author_id: 'author-sodium',
+      name: 'Sodium 0.5.8',
+      version_number: '0.5.8',
+      game_versions: ['1.21.4'],
+      version_type: 'release',
+      loaders: ['paper', 'spigot'],
+      featured: true,
+      status: 'listed',
+      date_published: '2026-01-01T00:00:00Z',
+      downloads: 50000,
+      files: [
+        {
+          filename: 'sodium-0.5.8.jar',
+          url: 'https://cdn.modrinth.com/sodium.jar',
+          primary: true,
+          size: 1024000,
+        },
+      ],
+      dependencies: [],
+    };
+
+    vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/search')) {
+        return {
+          ok: true,
+          json: async () => ({
+            hits: [mockIrisHit],
+            offset: 0,
+            limit: 20,
+            total_hits: 1,
+          }),
+        } as Response;
+      }
+      if (urlStr.includes('/project/iris/version')) {
+        return {
+          ok: true,
+          json: async () => [mockIrisVersion],
+        } as Response;
+      }
+      if (urlStr.includes('/projects?ids=')) {
+        return {
+          ok: true,
+          json: async () => [mockSodiumProj],
+        } as Response;
+      }
+      if (urlStr.includes('/project/sodium/version')) {
+        return {
+          ok: true,
+          json: async () => [mockSodiumVersion],
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    });
+
+    const downloadSpy = vi.spyOn(api, 'downloadMod').mockImplementation(async (_sid, url, filename) => ({
+      name: filename.replace('.jar', ''),
+      file: filename,
+      enabled: true,
+    }));
+
+    render(
+      <ModrinthBrowser
+        server={mockServer}
+        installedMods={[]}
+        onModInstalled={onModInstalled}
+      />,
+    );
+
+    // Wait for card to appear
+    await waitFor(() => {
+      expect(screen.getByText('Iris Shaders')).toBeInTheDocument();
+    });
+
+    // Click "Install" on the Iris card
+    const installBtn = screen.getByRole('button', { name: /^Install$/i });
+    await user.click(installBtn);
+
+    // Dialog should open prompting the user about the missing Sodium dependency
+    await waitFor(() => {
+      expect(screen.getByText('Mod Dependencies Detected')).toBeInTheDocument();
+      expect(screen.getByText('Sodium')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Install 2 Mods/i })).toBeInTheDocument();
+    });
+
+    // Confirm installing both mods
+    const confirmBtn = screen.getByRole('button', { name: /Install 2 Mods/i });
+    await user.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(downloadSpy).toHaveBeenCalledTimes(2);
+      expect(downloadSpy).toHaveBeenCalledWith(
+        'server-1',
+        'https://cdn.modrinth.com/iris.jar',
+        'iris-1.7.0.jar',
+        undefined,
+        expect.objectContaining({ provider: 'modrinth', projectId: 'proj-iris' }),
+      );
+      expect(downloadSpy).toHaveBeenCalledWith(
+        'server-1',
+        'https://cdn.modrinth.com/sodium.jar',
+        'sodium-0.5.8.jar',
+        undefined,
+        expect.objectContaining({ provider: 'modrinth', projectId: 'proj-sodium' }),
+      );
+      expect(onModInstalled).toHaveBeenCalledTimes(2);
+    });
+
+    // Success notification
+    await waitFor(() => {
+      expect(screen.getByText(/Successfully installed Iris Shaders and 1 dependencies/)).toBeInTheDocument();
+    });
+  });
 });
 
 describe('ModsPanel with tabs', () => {

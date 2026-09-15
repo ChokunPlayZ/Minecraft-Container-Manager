@@ -42,6 +42,11 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { ModUpdateDialog } from './mod-update-dialog';
+import { ModDependenciesDialog } from './mod-dependencies-dialog';
+import {
+  resolveModrinthDependencies,
+  type ResolvedDependency,
+} from '../api/mod-dependencies';
 import { PluginCard, PluginEmptyState, PluginGridSkeleton } from './plugin-card';
 import { useModal } from './ui/modal';
 
@@ -311,6 +316,26 @@ export function ModrinthBrowser({
     projectSlug?: string;
   } | null>(null);
 
+  const [dependencyPrompt, setDependencyPrompt] = useState<{
+    primaryMod: {
+      title: string;
+      versionNumber?: string;
+      filename: string;
+      iconUrl?: string | null;
+      url: string;
+      projectId?: string;
+      projectSlug?: string;
+    };
+    dependencies: ResolvedDependency[];
+  } | null>(null);
+
+  const [isBatchInstalling, setIsBatchInstalling] = useState(false);
+  const [installProgress, setInstallProgress] = useState<{
+    current: number;
+    total: number;
+    currentName: string;
+  } | null>(null);
+
   function findExistingOldJar(
     targetFilename: string,
     project?: Pick<ModrinthSearchHit, 'slug' | 'title'> & { project_id?: string },
@@ -444,6 +469,138 @@ export function ModrinthBrowser({
     }
   }
 
+  async function handleConfirmInstallWithDependencies(selectedDeps: ResolvedDependency[]) {
+    if (!dependencyPrompt) return;
+    const { primaryMod } = dependencyPrompt;
+    setIsBatchInstalling(true);
+    setError(null);
+
+    const totalCount = 1 + selectedDeps.length;
+
+    try {
+      // 1. Install primary mod
+      setInstallProgress({
+        current: 1,
+        total: totalCount,
+        currentName: primaryMod.title,
+      });
+
+      const primaryExistingMod = findExistingOldJar(primaryMod.filename, {
+        slug: primaryMod.projectSlug || '',
+        title: primaryMod.title,
+        project_id: primaryMod.projectId,
+      });
+
+      const downloadedPrimary = primaryExistingMod
+        ? await api.downloadMod(
+            server.id,
+            primaryMod.url,
+            primaryMod.filename,
+            primaryExistingMod.name,
+            { projectId: primaryMod.projectId, projectSlug: primaryMod.projectSlug, provider: 'modrinth' },
+          )
+        : await api.downloadMod(
+            server.id,
+            primaryMod.url,
+            primaryMod.filename,
+            undefined,
+            { projectId: primaryMod.projectId, projectSlug: primaryMod.projectSlug, provider: 'modrinth' },
+          );
+
+      onModInstalled(downloadedPrimary);
+      if (primaryExistingMod) {
+        onModDeleted?.(primaryExistingMod.name);
+        setInstalledFiles((prev) => {
+          const next = new Set(prev);
+          next.delete(primaryExistingMod.file.toLowerCase());
+          next.delete(`${primaryExistingMod.file.toLowerCase()}.disabled`);
+          return next;
+        });
+      }
+
+      setInstalledFiles((prev) => new Set([...prev, primaryMod.filename.toLowerCase()]));
+      if (primaryMod.projectId || primaryMod.projectSlug) {
+        setInstalledIds((prev) => {
+          const next = new Set(prev);
+          if (primaryMod.projectId) next.add(primaryMod.projectId);
+          if (primaryMod.projectSlug) next.add(primaryMod.projectSlug);
+          return next;
+        });
+      }
+
+      // 2. Install each selected dependency
+      for (let i = 0; i < selectedDeps.length; i++) {
+        const dep = selectedDeps[i];
+        if (!dep.downloadUrl || !dep.filename) continue;
+
+        setInstallProgress({
+          current: i + 2,
+          total: totalCount,
+          currentName: dep.title,
+        });
+
+        const depExistingMod = findExistingOldJar(dep.filename, {
+          slug: dep.slug,
+          title: dep.title,
+          project_id: dep.id,
+        });
+
+        const downloadedDep = depExistingMod
+          ? await api.downloadMod(
+              server.id,
+              dep.downloadUrl,
+              dep.filename,
+              depExistingMod.name,
+              { projectId: dep.id, projectSlug: dep.slug, provider: 'modrinth' },
+            )
+          : await api.downloadMod(
+              server.id,
+              dep.downloadUrl,
+              dep.filename,
+              undefined,
+              { projectId: dep.id, projectSlug: dep.slug, provider: 'modrinth' },
+            );
+
+        onModInstalled(downloadedDep);
+        if (depExistingMod) {
+          onModDeleted?.(depExistingMod.name);
+          setInstalledFiles((prev) => {
+            const next = new Set(prev);
+            next.delete(depExistingMod.file.toLowerCase());
+            next.delete(`${depExistingMod.file.toLowerCase()}.disabled`);
+            return next;
+          });
+        }
+
+        setInstalledFiles((prev) => new Set([...prev, dep.filename!.toLowerCase()]));
+        setInstalledIds((prev) => {
+          const next = new Set(prev);
+          next.add(dep.id);
+          next.add(dep.slug);
+          return next;
+        });
+      }
+
+      setNotification({
+        type: 'success',
+        text:
+          selectedDeps.length > 0
+            ? `Successfully installed ${primaryMod.title} and ${selectedDeps.length} dependencies`
+            : `Installed ${primaryMod.title}`,
+      });
+      setDependencyPrompt(null);
+    } catch (err: unknown) {
+      setNotification({
+        type: 'error',
+        text: err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Batch installation failed',
+      });
+    } finally {
+      setIsBatchInstalling(false);
+      setInstallProgress(null);
+      setInstallingId(null);
+    }
+  }
+
   // One-click install for a search hit
   async function handleOneClickInstall(project: ModrinthSearchHit) {
     setInstallingId(project.project_id);
@@ -471,6 +628,40 @@ export function ModrinthBrowser({
       const primaryFile = latest.files.find((f) => f.primary) || latest.files[0];
       if (!primaryFile) {
         throw new Error('No installable file found in release.');
+      }
+
+      // Check for dependencies before proceeding
+      if (latest.dependencies && latest.dependencies.length > 0) {
+        try {
+          const resolution = await resolveModrinthDependencies({
+            version: latest,
+            primaryProject: { id: project.project_id, slug: project.slug, title: project.title },
+            serverLoaders: activeLoaders,
+            serverVersion: activeVersion,
+            installedMods,
+            hashProjectMap,
+            installedIds,
+          });
+
+          if (resolution.missingCount > 0) {
+            setInstallingId(null);
+            setDependencyPrompt({
+              primaryMod: {
+                title: project.title,
+                versionNumber: latest.version_number,
+                filename: primaryFile.filename,
+                iconUrl: project.icon_url,
+                url: primaryFile.url,
+                projectId: project.project_id,
+                projectSlug: project.slug,
+              },
+              dependencies: resolution.dependencies,
+            });
+            return;
+          }
+        } catch {
+          // If dependency resolution encounters an error, proceed with standard install
+        }
       }
 
       const existingMod = findExistingOldJar(primaryFile.filename, project);
@@ -504,7 +695,41 @@ export function ModrinthBrowser({
   }
 
   // Install a specific version file from the dialog
-  async function handleInstallVersion(file: ModrinthVersionFile, projectTitle: string) {
+  async function handleInstallVersion(file: ModrinthVersionFile, projectTitle: string, ver?: ModrinthVersion) {
+    if (ver?.dependencies && ver.dependencies.length > 0) {
+      try {
+        const resolution = await resolveModrinthDependencies({
+          version: ver,
+          primaryProject: selectedProject
+            ? { id: selectedProject.project_id, slug: selectedProject.slug, title: selectedProject.title }
+            : { title: projectTitle },
+          serverLoaders: activeLoaders,
+          serverVersion: activeVersion,
+          installedMods,
+          hashProjectMap,
+          installedIds,
+        });
+
+        if (resolution.missingCount > 0) {
+          setDependencyPrompt({
+            primaryMod: {
+              title: projectTitle,
+              versionNumber: ver.version_number,
+              filename: file.filename,
+              iconUrl: selectedProject?.icon_url,
+              url: file.url,
+              projectId: selectedProject?.project_id,
+              projectSlug: selectedProject?.slug,
+            },
+            dependencies: resolution.dependencies,
+          });
+          return;
+        }
+      } catch {
+        // Fallback to standard install
+      }
+    }
+
     const existingMod = findExistingOldJar(file.filename, selectedProject ?? undefined);
     if (existingMod) {
       setUpdatePrompt({
@@ -537,6 +762,48 @@ export function ModrinthBrowser({
   return (
     <div className="space-y-4">
       {dialog}
+
+      {dependencyPrompt && (
+        <ModDependenciesDialog
+          isOpen={true}
+          primaryMod={dependencyPrompt.primaryMod}
+          dependencies={dependencyPrompt.dependencies}
+          isInstalling={isBatchInstalling}
+          installProgress={installProgress}
+          onConfirmInstall={handleConfirmInstallWithDependencies}
+          onSkipAndInstallPrimaryOnly={() => {
+            const { primaryMod } = dependencyPrompt;
+            setDependencyPrompt(null);
+            const existingMod = findExistingOldJar(primaryMod.filename, {
+              slug: primaryMod.projectSlug || '',
+              title: primaryMod.title,
+              project_id: primaryMod.projectId,
+            });
+            if (existingMod) {
+              setUpdatePrompt({
+                projectTitle: primaryMod.title,
+                existingMod,
+                targetUrl: primaryMod.url,
+                targetFilename: primaryMod.filename,
+                projectId: primaryMod.projectId,
+                projectSlug: primaryMod.projectSlug,
+              });
+              return;
+            }
+            void executeInstall(
+              primaryMod.url,
+              primaryMod.filename,
+              primaryMod.title,
+              primaryMod.projectId,
+              primaryMod.projectSlug,
+            );
+          }}
+          onCancel={() => {
+            setDependencyPrompt(null);
+            setInstallingId(null);
+          }}
+        />
+      )}
 
       {updatePrompt && (
         <ModUpdateDialog
@@ -1155,7 +1422,7 @@ export function ModrinthBrowser({
                                 size="sm"
                                 variant="outline"
                                 disabled={isDownloadingThis}
-                                onClick={() => void handleInstallVersion(primaryFile, selectedProject.title)}
+                                onClick={() => void handleInstallVersion(primaryFile, selectedProject.title, ver)}
                                 className="h-8 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300 text-xs"
                                 title="Reinstall this version"
                               >
@@ -1196,7 +1463,7 @@ export function ModrinthBrowser({
                             <Button
                               size="sm"
                               disabled={isDownloadingThis}
-                              onClick={() => void handleInstallVersion(primaryFile, selectedProject.title)}
+                              onClick={() => void handleInstallVersion(primaryFile, selectedProject.title, ver)}
                               className="shrink-0 gap-1.5"
                             >
                               {isDownloadingThis ? (

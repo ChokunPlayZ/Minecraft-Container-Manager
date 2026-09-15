@@ -272,3 +272,38 @@ export function isCurseForgeModInstalled(
 ): boolean {
   return findInstalledCurseForgeMod(mod, installedMods) !== undefined;
 }
+
+/**
+ * Retrieves multiple mods from CurseForge by their IDs in a single batch request.
+ * Endpoint: POST /v1/mods
+ */
+export async function getCurseForgeMods(
+  modIds: number[],
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<CurseForgeMod[]> {
+  if (modIds.length === 0 || !apiKey.trim()) return [];
+  const url = `${CURSEFORGE_API_BASE}/mods`;
+  try {
+    const res = await rateLimitedFetchJson<{ data: CurseForgeMod[] }>(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'x-api-key': apiKey.trim(),
+        },
+        body: JSON.stringify({ modIds }),
+      },
+      {
+        cacheTtlMs: 300000,
+        signal,
+      },
+    );
+    return res.data ?? [];
+  } catch {
+    return [];
+  }
+}
+
