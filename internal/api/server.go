@@ -196,7 +196,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/backups/{backupId}", s.requireAuth(s.wrapJSON(s.handleDeleteBackup)))
 	s.mux.HandleFunc("GET /api/backups/{backupId}/download", s.requireAuth(s.handleDownloadBackup))
 
-	// Jars.
+	// Jars and Java runtime.
+	s.mux.HandleFunc("GET /api/system/java-versions", s.requireAuth(s.wrapJSON(s.handleSystemJavaVersions)))
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions", s.requireAuth(s.wrapJSON(s.handleJarVersions)))
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions/{v}/builds", s.requireAuth(s.wrapJSON(s.handleJarBuilds)))
 

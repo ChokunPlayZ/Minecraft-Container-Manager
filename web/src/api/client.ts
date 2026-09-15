@@ -6,6 +6,7 @@ import type {
   Server,
   ServerStatus,
   ServerType,
+  JavaRelease,
   BackupRecord,
   BackupProgress,
   BackupProgressResponse,
@@ -654,6 +655,8 @@ export const api = {
   jarBuilds: (type: ServerType, version: string) =>
     request<VersionInfo[]>(`/api/jars/${type}/versions/${encodeURIComponent(version)}/builds`),
 
+  javaVersions: () => request<JavaRelease[]>('/api/system/java-versions'),
+
   availablePorts: () => request<AvailablePortsResponse>('/api/ports/available'),
 
   getSettings: () => request<{ settings: Record<string, string> }>('/api/settings'),
@@ -1133,6 +1136,7 @@ export interface CreateServerInput {
   build: string;
   ram_mb: number;
   host_port?: number;
+  java_version?: number;
   extra_ports?: ExtraPort[];
 }
 
@@ -1140,6 +1144,7 @@ export interface UpdateServerInput {
   name: string;
   ram_mb: number;
   host_port?: number;
+  java_version?: number;
   cpu_limit?: number;
   memory_limit_mb?: number;
   backup_enabled?: boolean;

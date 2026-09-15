@@ -3,6 +3,7 @@ import { Compass, Flame, Layers, Package } from 'lucide-react';
 import type { Mod, ModProvider, Server } from '../api/types';
 import type { ModUpdateInfo } from '../api/mod-updates';
 import { Badge } from './ui/badge';
+import { isPluginServerType } from '../api/curseforge';
 import { CurseForgeBrowser } from './curseforge-browser';
 import { HangarBrowser } from './hangar-browser';
 import { ModrinthBrowser } from './modrinth-browser';
@@ -29,7 +30,7 @@ export function CatalogBrowser({
 }: CatalogBrowserProps) {
   const [activeProvider, setActiveProvider] = useState<ModProvider>(defaultProvider);
 
-  const isPluginServer = server.server_type === 'paper' || server.server_type === 'spigot';
+  const isPluginServer = isPluginServerType(server.server_type);
 
   const providers: {
     id: ModProvider;

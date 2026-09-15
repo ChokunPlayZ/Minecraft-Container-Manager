@@ -69,6 +69,32 @@ func TestPortBindings(t *testing.T) {
 	check("19132/udp", "19133")
 }
 
+func TestPortBindingsProxyAndGeyser(t *testing.T) {
+	pmBungee := portBindings(CreateOpts{
+		ServerType: "bungeecord",
+		HostPort:   25577,
+	})
+	if b, ok := pmBungee[nat.Port("25577/tcp")]; !ok || b[0].HostPort != "25577" {
+		t.Fatalf("expected bungeecord binding for 25577/tcp, got %v", pmBungee)
+	}
+
+	pmWaterfall := portBindings(CreateOpts{
+		ServerType: "waterfall",
+		HostPort:   25577,
+	})
+	if b, ok := pmWaterfall[nat.Port("25577/tcp")]; !ok || b[0].HostPort != "25577" {
+		t.Fatalf("expected waterfall binding for 25577/tcp, got %v", pmWaterfall)
+	}
+
+	pmGeyser := portBindings(CreateOpts{
+		ServerType: "geysermc",
+		HostPort:   19132,
+	})
+	if b, ok := pmGeyser[nat.Port("19132/udp")]; !ok || b[0].HostPort != "19132" {
+		t.Fatalf("expected geysermc binding for 19132/udp, got %v", pmGeyser)
+	}
+}
+
 func TestItzgEnv(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -1,5 +1,33 @@
-export type ServerType = 'paper' | 'fabric' | 'vanilla' | 'forge' | 'neoforge' | 'spigot';
+export type ServerType =
+  | 'paper'
+  | 'fabric'
+  | 'vanilla'
+  | 'forge'
+  | 'neoforge'
+  | 'spigot'
+  | 'purpur'
+  | 'ketting'
+  | 'mohist'
+  | 'sponge'
+  | 'limbo'
+  | 'nanolimbo'
+  | 'crucible'
+  | 'pufferfish'
+  | 'leaf'
+  | 'folia'
+  | 'quilt'
+  | 'custom'
+  | 'waterfall'
+  | 'bungeecord'
+  | 'geysermc';
+
 export type ServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
+
+export interface JavaRelease {
+  version: number;
+  is_lts: boolean;
+  name: string;
+}
 
 export interface ExtraPort {
   id: string;
@@ -19,6 +47,7 @@ export interface Server {
   cpu_limit: number;
   memory_limit_mb: number;
   host_port: number;
+  java_version?: number;
   extra_ports: ExtraPort[];
   container_id: string | null;
   state: ServerState;

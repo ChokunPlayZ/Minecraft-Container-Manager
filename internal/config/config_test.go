@@ -186,8 +186,8 @@ func TestLoadHardeningDefaults(t *testing.T) {
 	if cfg.DefaultCPULimit != 0 || cfg.DefaultMemoryMB != 0 {
 		t.Errorf("default resource limits = %v / %d, want 0/0", cfg.DefaultCPULimit, cfg.DefaultMemoryMB)
 	}
-	if cfg.ServerImage != "itzg/minecraft-server" {
-		t.Errorf("ServerImage = %q, want itzg/minecraft-server", cfg.ServerImage)
+	if cfg.ServerImage != "eclipse-temurin:21-jre-alpine" {
+		t.Errorf("ServerImage = %q, want eclipse-temurin:21-jre-alpine", cfg.ServerImage)
 	}
 }
 

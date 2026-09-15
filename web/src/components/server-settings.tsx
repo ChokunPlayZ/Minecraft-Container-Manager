@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../api/client';
-import type { ExtraPort, Server } from '../api/types';
+import type { ExtraPort, JavaRelease, Server } from '../api/types';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
@@ -34,6 +34,15 @@ export function ServerSettings({
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
   const [hostPort, setHostPort] = useState(server.host_port);
+  const [javaVersion, setJavaVersion] = useState(server.java_version ?? 21);
+  const [javaReleases, setJavaReleases] = useState<JavaRelease[]>([
+    { version: 25, is_lts: true, name: 'Java 25 (LTS)' },
+    { version: 24, is_lts: false, name: 'Java 24' },
+    { version: 21, is_lts: true, name: 'Java 21 (LTS - Recommended)' },
+    { version: 17, is_lts: true, name: 'Java 17 (LTS)' },
+    { version: 11, is_lts: true, name: 'Java 11 (LTS)' },
+    { version: 8, is_lts: true, name: 'Java 8 (LTS)' },
+  ]);
   const [cpuLimit, setCpuLimit] = useState(server.cpu_limit ?? 0);
   const [memoryLimitMb, setMemoryLimitMb] = useState(server.memory_limit_mb ?? 0);
   const [backupEnabled, setBackupEnabled] = useState(server.backup_enabled ?? true);
@@ -43,6 +52,20 @@ export function ServerSettings({
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.javaVersions()
+      .then((releases) => {
+        if (!cancelled && releases && releases.length > 0) {
+          setJavaReleases(releases);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function newPort(): ExtraPort {
     return {
@@ -72,6 +95,7 @@ export function ServerSettings({
         name: name.trim(),
         ram_mb: ramMb,
         host_port: hostPort,
+        java_version: javaVersion,
         cpu_limit: cpuLimit,
         memory_limit_mb: memoryLimitMb,
         backup_enabled: backupEnabled,
@@ -196,6 +220,23 @@ export function ServerSettings({
                   value={ramMb}
                   onChange={(e) => setRamMb(Number(e.target.value))}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Changes take effect after rebuilding the container.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-java">Java Runtime Version</Label>
+                <Select
+                  id="edit-java"
+                  value={String(javaVersion)}
+                  onChange={(e) => setJavaVersion(parseInt(e.target.value, 10))}
+                >
+                  {javaReleases.map((jr) => (
+                    <option key={jr.version} value={jr.version}>
+                      {jr.name}
+                    </option>
+                  ))}
+                </Select>
                 <p className="text-xs text-muted-foreground">
                   Changes take effect after rebuilding the container.
                 </p>

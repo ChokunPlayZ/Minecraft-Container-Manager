@@ -197,3 +197,31 @@ func isFriendlyErrorBody(t *testing.T, body []byte) bool {
 	}
 	return true
 }
+
+func TestSystemJavaVersions(t *testing.T) {
+	s := &Server{jars: jars.NewResolver()}
+	req := httptest.NewRequest(http.MethodGet, "/api/system/java-versions", nil)
+	rr := httptest.NewRecorder()
+	s.handleSystemJavaVersions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var releases []jars.JavaRelease
+	if err := json.Unmarshal(rr.Body.Bytes(), &releases); err != nil {
+		t.Fatalf("unmarshal releases: %v", err)
+	}
+	if len(releases) == 0 {
+		t.Fatalf("expected non-empty java releases")
+	}
+	found21 := false
+	for _, r := range releases {
+		if r.Version == 21 {
+			found21 = true
+			break
+		}
+	}
+	if !found21 {
+		t.Errorf("expected Java 21 to be in available java releases, got: %v", releases)
+	}
+}

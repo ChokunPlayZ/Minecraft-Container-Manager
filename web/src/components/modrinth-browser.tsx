@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
+import { isPluginServerType } from '../api/curseforge';
 import {
   extractModId,
   findInstalledMod,
@@ -885,7 +886,7 @@ export function ModrinthBrowser({
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Showing {server.server_type === 'paper' || server.server_type === 'spigot' ? 'plugins' : 'mods'} verified for your current server environment.
+                Showing {isPluginServerType(server.server_type) ? 'plugins' : 'mods'} verified for your current server environment.
               </p>
             </div>
           </div>
@@ -959,7 +960,7 @@ export function ModrinthBrowser({
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={`Search Modrinth for ${server.server_type === 'paper' || server.server_type === 'spigot' ? 'plugins' : 'mods'} (e.g. WorldEdit, Essentials, Chunky)...`}
+              placeholder={`Search Modrinth for ${isPluginServerType(server.server_type) ? 'plugins' : 'mods'} (e.g. WorldEdit, Essentials, Chunky)...`}
               className="pl-9 pr-8"
             />
             {query && (

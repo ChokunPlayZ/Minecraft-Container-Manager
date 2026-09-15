@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,30 +25,133 @@ var ErrUpstream = errors.New("upstream provider error")
 type JarType string
 
 const (
-	TypePaper    JarType = "paper"
-	TypeFabric   JarType = "fabric"
-	TypeVanilla  JarType = "vanilla"
-	TypeForge    JarType = "forge"
-	TypeNeoForge JarType = "neoforge"
-	TypeSpigot   JarType = "spigot"
+	TypePaper      JarType = "paper"
+	TypeFabric     JarType = "fabric"
+	TypeVanilla    JarType = "vanilla"
+	TypeForge      JarType = "forge"
+	TypeNeoForge   JarType = "neoforge"
+	TypeSpigot     JarType = "spigot"
+	TypePurpur     JarType = "purpur"
+	TypeFolia      JarType = "folia"
+	TypeQuilt      JarType = "quilt"
+	TypeMohist     JarType = "mohist"
+	TypeKetting    JarType = "ketting"
+	TypeSponge     JarType = "sponge"
+	TypeLimbo      JarType = "limbo"
+	TypeNanoLimbo  JarType = "nanolimbo"
+	TypeCrucible   JarType = "crucible"
+	TypePufferfish JarType = "pufferfish"
+	TypeLeaf       JarType = "leaf"
+	TypeWaterfall  JarType = "waterfall"
+	TypeBungeeCord JarType = "bungeecord"
+	TypeGeyser     JarType = "geysermc"
+	TypeCustom     JarType = "custom"
 )
 
 // ParseJarType validates a platform string.
 func ParseJarType(s string) (JarType, error) {
-	switch JarType(s) {
-	case TypePaper, TypeFabric, TypeVanilla, TypeForge, TypeNeoForge, TypeSpigot:
-		return JarType(s), nil
+	switch JarType(strings.ToLower(s)) {
+	case TypePaper, TypeFabric, TypeVanilla, TypeForge, TypeNeoForge, TypeSpigot,
+		TypePurpur, TypeFolia, TypeQuilt, TypeMohist, TypeKetting, TypeSponge,
+		TypeLimbo, TypeNanoLimbo, TypeCrucible, TypePufferfish, TypeLeaf,
+		TypeWaterfall, TypeBungeeCord, TypeGeyser, TypeCustom:
+		return JarType(strings.ToLower(s)), nil
 	default:
 		return "", fmt.Errorf("unsupported jar type %q", s)
 	}
 }
+
+// JavaRelease describes an available Java runtime version.
+type JavaRelease struct {
+	Version int    `json:"version"`
+	IsLTS   bool   `json:"is_lts"`
+	Name    string `json:"name"`
+}
+
+// AvailableJavaVersions queries the Adoptium API for available Java releases,
+// returning versions sorted descending. It falls back to a curated LTS list.
+func (r *Resolver) AvailableJavaVersions(ctx context.Context) ([]JavaRelease, error) {
+	var resp struct {
+		AvailableReleases    []int `json:"available_releases"`
+		AvailableLtsReleases []int `json:"available_lts_releases"`
+	}
+
+	ltsMap := map[int]bool{8: true, 11: true, 17: true, 21: true, 25: true}
+
+	if err := r.getJSON(ctx, "https://api.adoptium.net/v3/info/available_releases", &resp); err == nil && len(resp.AvailableReleases) > 0 {
+		for _, l := range resp.AvailableLtsReleases {
+			ltsMap[l] = true
+		}
+		// Sort descending
+		sort.Slice(resp.AvailableReleases, func(i, j int) bool {
+			return resp.AvailableReleases[i] > resp.AvailableReleases[j]
+		})
+
+		out := make([]JavaRelease, 0, len(resp.AvailableReleases))
+		for _, v := range resp.AvailableReleases {
+			// Only include realistic Java versions for Minecraft (>= 8)
+			if v < 8 {
+				continue
+			}
+			isLTS := ltsMap[v]
+			name := fmt.Sprintf("Java %d", v)
+			if isLTS {
+				if v == 21 {
+					name = fmt.Sprintf("Java %d (LTS - Recommended)", v)
+				} else {
+					name = fmt.Sprintf("Java %d (LTS)", v)
+				}
+			}
+			out = append(out, JavaRelease{Version: v, IsLTS: isLTS, Name: name})
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+	}
+
+	// Curated fallback
+	return []JavaRelease{
+		{Version: 25, IsLTS: true, Name: "Java 25 (LTS)"},
+		{Version: 24, IsLTS: false, Name: "Java 24"},
+		{Version: 21, IsLTS: true, Name: "Java 21 (LTS - Recommended)"},
+		{Version: 17, IsLTS: true, Name: "Java 17 (LTS)"},
+		{Version: 11, IsLTS: true, Name: "Java 11 (LTS)"},
+		{Version: 8, IsLTS: true, Name: "Java 8 (LTS)"},
+	}, nil
+}
+
+// RecommendJavaVersion returns the recommended Java major version for a given Minecraft version.
+func RecommendJavaVersion(mcVersion string) int {
+	parts := strings.Split(mcVersion, ".")
+	if len(parts) >= 2 {
+		minor, _ := strconv.Atoi(parts[1])
+		patch := 0
+		if len(parts) >= 3 {
+			patch, _ = strconv.Atoi(parts[2])
+		}
+		if minor >= 21 || (minor == 20 && patch >= 5) {
+			return 21
+		}
+		if minor >= 18 {
+			return 17
+		}
+		if minor == 17 {
+			return 17
+		}
+		if minor > 0 && minor <= 16 {
+			return 8
+		}
+	}
+	return 21
+}
+
 
 const (
 	defaultPaperBase    = "https://fill.papermc.io/v3"
 	defaultFabricBase   = "https://meta.fabricmc.net/v2"
 	defaultMojangManf   = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 	defaultForgeBase    = "https://files.minecraftforge.net/net/minecraftforge/forge"
-	defaultNeoForgeBase = "https://api.neoforged.net/neoforges"
+	defaultNeoForgeBase = "https://maven.neoforged.net"
 	defaultSpigotBase   = "https://hub.spigotmc.org/versions"
 	requestTimeout      = 20 * time.Second
 )
@@ -117,6 +223,7 @@ type PaperBuild struct {
 type ManifestEntry struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
+	URL  string `json:"url"`
 }
 
 // VersionManifest is the root of Mojang's version manifest.
@@ -134,26 +241,7 @@ func (r *Resolver) PaperVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, r.PaperBase+"/projects/paper", &p); err != nil {
 		return nil, err
 	}
-	// Fill groups versions by version group; flatten deterministically so the
-	// dropdown ordering is stable. A version may appear in multiple groups
-	// (e.g. a snapshot and its release), so deduplicate.
-	groups := make([]string, 0, len(p.Versions))
-	for g := range p.Versions {
-		groups = append(groups, g)
-	}
-	sort.Strings(groups)
-	seen := map[string]bool{}
-	var out []string
-	for _, g := range groups {
-		for _, v := range p.Versions[g] {
-			if seen[v] {
-				continue
-			}
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
-	return out, nil
+	return flattenPaperVersions(p.Versions), nil
 }
 
 // PaperBuilds returns the build numbers for a Paper version.
@@ -166,8 +254,6 @@ func (r *Resolver) PaperBuilds(ctx context.Context, version string) ([]Build, er
 	for _, b := range raw {
 		builds = append(builds, Build{Number: b.ID})
 	}
-	// Fill returns builds newest-first; normalize to ascending so consumers can
-	// rely on the last entry being the newest.
 	sort.Slice(builds, func(i, j int) bool { return builds[i].Number < builds[j].Number })
 	return builds, nil
 }
@@ -296,6 +382,88 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 			return Resolved{}, fmt.Errorf("spigot version %q not found", version)
 		}
 		return Resolved{Type: TypeSpigot, Version: version}, nil
+	case TypePurpur:
+		builds, err := r.PurpurBuilds(ctx, version)
+		if err != nil || len(builds) == 0 {
+			return Resolved{Type: TypePurpur, Version: version, Build: "latest"}, nil
+		}
+		b, err := selectString(builds, build)
+		if err != nil {
+			b = builds[len(builds)-1]
+		}
+		return Resolved{Type: TypePurpur, Version: version, Build: b}, nil
+	case TypeFolia:
+		builds, err := r.FoliaBuilds(ctx, version)
+		if err != nil || len(builds) == 0 {
+			return Resolved{Type: TypeFolia, Version: version, Build: "latest"}, nil
+		}
+		b, err := selectString(builds, build)
+		if err != nil {
+			b = builds[len(builds)-1]
+		}
+		return Resolved{Type: TypeFolia, Version: version, Build: b}, nil
+	case TypeWaterfall:
+		builds, err := r.WaterfallBuilds(ctx, version)
+		if err != nil || len(builds) == 0 {
+			return Resolved{Type: TypeWaterfall, Version: version, Build: "latest"}, nil
+		}
+		b, err := selectString(builds, build)
+		if err != nil {
+			b = builds[len(builds)-1]
+		}
+		return Resolved{Type: TypeWaterfall, Version: version, Build: b}, nil
+	case TypeQuilt:
+		loaders, err := r.QuiltLoaders(ctx, version)
+		if err != nil || len(loaders) == 0 {
+			return Resolved{Type: TypeQuilt, Version: version, Build: "latest"}, nil
+		}
+		loader, err := selectString(loaders, build)
+		if err != nil {
+			loader = loaders[0]
+		}
+		return Resolved{Type: TypeQuilt, Version: version, Build: loader}, nil
+	case TypeMohist:
+		builds, err := r.MohistBuilds(ctx, version)
+		if err != nil || len(builds) == 0 {
+			return Resolved{Type: TypeMohist, Version: version, Build: "latest"}, nil
+		}
+		b, err := selectString(builds, build)
+		if err != nil {
+			b = builds[0]
+		}
+		return Resolved{Type: TypeMohist, Version: version, Build: b}, nil
+	case TypeKetting:
+		return Resolved{Type: TypeKetting, Version: version, Build: "latest"}, nil
+	case TypeSponge:
+		return Resolved{Type: TypeSponge, Version: version, Build: "latest"}, nil
+	case TypeLimbo:
+		return Resolved{Type: TypeLimbo, Version: version, Build: "latest"}, nil
+	case TypeNanoLimbo:
+		return Resolved{Type: TypeNanoLimbo, Version: version, Build: "latest"}, nil
+	case TypeCrucible:
+		return Resolved{Type: TypeCrucible, Version: "1.7.10", Build: "latest"}, nil
+	case TypePufferfish:
+		return Resolved{Type: TypePufferfish, Version: version, Build: "latest"}, nil
+	case TypeLeaf:
+		return Resolved{Type: TypeLeaf, Version: version, Build: "latest"}, nil
+	case TypeBungeeCord:
+		if build == "" {
+			build = "latest"
+		}
+		return Resolved{Type: TypeBungeeCord, Version: "latest", Build: build}, nil
+	case TypeGeyser:
+		if build == "" {
+			build = "latest"
+		}
+		return Resolved{Type: TypeGeyser, Version: version, Build: build}, nil
+	case TypeCustom:
+		if build == "" {
+			build = "server.jar"
+		}
+		if version == "" {
+			version = "custom"
+		}
+		return Resolved{Type: TypeCustom, Version: version, Build: build}, nil
 	default:
 		return Resolved{}, fmt.Errorf("unsupported jar type %q", jt)
 	}
@@ -374,3 +542,218 @@ func (r *Resolver) getJSON(ctx context.Context, url string, out any) error {
 	}
 	return nil
 }
+
+// DownloadServerJar resolves and downloads the server executable jar to destDir/server.jar,
+// and ensures eula.txt is accepted.
+func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, build, destDir string) error {
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+
+	targetJar := filepath.Join(destDir, "server.jar")
+	writeEULA(destDir)
+
+	var dlURL string
+	switch jt {
+	case TypePaper:
+		if build == "" || build == "latest" {
+			builds, err := r.PaperBuilds(ctx, version)
+			if err != nil || len(builds) == 0 {
+				return fmt.Errorf("resolve paper build: %w", err)
+			}
+			build = strconv.Itoa(builds[len(builds)-1].Number)
+		}
+		dlURL = fmt.Sprintf("%s/projects/paper/versions/%s/builds/%s/downloads/paper-%s-%s.jar", r.PaperBase, version, build, version, build)
+
+	case TypeFabric:
+		if build == "" || build == "latest" {
+			loaders, err := r.FabricLoaders(ctx, version)
+			if err != nil || len(loaders) == 0 {
+				return fmt.Errorf("resolve fabric loader: %w", err)
+			}
+			build = loaders[0]
+		}
+		dlURL = fmt.Sprintf("https://meta.fabricmc.net/v2/versions/loader/%s/%s/1.0.1/server/jar", version, build)
+
+	case TypeVanilla:
+		m, err := r.MojangVersions(ctx)
+		if err != nil {
+			return fmt.Errorf("fetch mojang manifest: %w", err)
+		}
+		var pkgURL string
+		for _, v := range m.Versions {
+			if v.ID == version {
+				pkgURL = v.URL
+				break
+			}
+		}
+		if pkgURL == "" {
+			return fmt.Errorf("vanilla version %q not found in manifest", version)
+		}
+		var pkg struct {
+			Downloads struct {
+				Server struct {
+					URL string `json:"url"`
+				} `json:"server"`
+			} `json:"downloads"`
+		}
+		if err := r.getJSON(ctx, pkgURL, &pkg); err != nil {
+			return fmt.Errorf("fetch vanilla package: %w", err)
+		}
+		if pkg.Downloads.Server.URL == "" {
+			return fmt.Errorf("no server jar found for vanilla version %q", version)
+		}
+		dlURL = pkg.Downloads.Server.URL
+
+	case TypePurpur:
+		if build == "" || build == "latest" {
+			builds, err := r.PurpurBuilds(ctx, version)
+			if err == nil && len(builds) > 0 {
+				build = builds[len(builds)-1]
+			} else {
+				build = "latest"
+			}
+		}
+		dlURL = fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s/%s/download", version, build)
+
+	case TypeFolia:
+		if build == "" || build == "latest" {
+			builds, err := r.FoliaBuilds(ctx, version)
+			if err != nil || len(builds) == 0 {
+				return fmt.Errorf("resolve folia build: %w", err)
+			}
+			build = builds[len(builds)-1]
+		}
+		dlURL = fmt.Sprintf("%s/projects/folia/versions/%s/builds/%s/downloads/folia-%s-%s.jar", r.PaperBase, version, build, version, build)
+
+	case TypeWaterfall:
+		if build == "" || build == "latest" {
+			builds, err := r.WaterfallBuilds(ctx, version)
+			if err != nil || len(builds) == 0 {
+				return fmt.Errorf("resolve waterfall build: %w", err)
+			}
+			build = builds[len(builds)-1]
+		}
+		dlURL = fmt.Sprintf("%s/projects/waterfall/versions/%s/builds/%s/downloads/waterfall-%s-%s.jar", r.PaperBase, version, build, version, build)
+
+	case TypeSpigot:
+		dlURL = fmt.Sprintf("https://cdn.getbukkit.org/spigot/spigot-%s.jar", version)
+
+	case TypeQuilt:
+		if build == "" || build == "latest" {
+			loaders, err := r.QuiltLoaders(ctx, version)
+			if err == nil && len(loaders) > 0 {
+				build = loaders[0]
+			} else {
+				build = "0.27.0"
+			}
+		}
+		dlURL = fmt.Sprintf("https://meta.quiltmc.org/v3/versions/loader/%s/%s/0.9.3/server/jar", version, build)
+
+	case TypeMohist:
+		if build == "" || build == "latest" {
+			builds, err := r.MohistBuilds(ctx, version)
+			if err == nil && len(builds) > 0 {
+				build = builds[0]
+			} else {
+				build = "latest"
+			}
+		}
+		dlURL = fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds/%s/download", version, build)
+
+	case TypeKetting:
+		dlURL = "https://github.com/kettingpowered/kettinglauncher/releases/latest/download/kettinglauncher.jar"
+
+	case TypeLimbo:
+		dlURL = "https://github.com/LOOHP/Limbo/releases/latest/download/Limbo.jar"
+
+	case TypeNanoLimbo:
+		dlURL = "https://github.com/BoomEaro/NanoLimbo/releases/latest/download/nanolimbo.jar"
+
+	case TypeCrucible:
+		dlURL = "https://github.com/CrucibleMC/Crucible/releases/latest/download/crucible.jar"
+
+	case TypePufferfish:
+		dlURL = "https://ci.pufferfish.host/job/Pufferfish-1.20/lastSuccessfulBuild/artifact/build/libs/pufferfish-paperclip-1.20.4-R0.1-SNAPSHOT-reobf.jar"
+
+	case TypeLeaf:
+		dlURL = fmt.Sprintf("https://github.com/Winds-Studio/Leaf/releases/latest/download/leaf-%s.jar", version)
+
+	case TypeBungeeCord:
+		if build == "" || build == "latest" {
+			dlURL = "https://ci.md-5.net/job/BungeeCord/lastSuccessfulBuild/artifact/bootstrap/target/BungeeCord.jar"
+		} else {
+			dlURL = fmt.Sprintf("https://ci.md-5.net/job/BungeeCord/%s/artifact/bootstrap/target/BungeeCord.jar", build)
+		}
+
+	case TypeGeyser:
+		if build == "" || build == "latest" {
+			builds, err := r.GeyserBuilds(ctx, version)
+			if err == nil && len(builds) > 0 {
+				build = builds[0]
+			} else {
+				build = "latest"
+			}
+		}
+		dlURL = fmt.Sprintf("https://download.geysermc.org/v2/projects/geyser/versions/%s/builds/%s/downloads/standalone", version, build)
+
+	case TypeForge:
+		// Forge installer
+		forgeVer := build
+		if !strings.Contains(forgeVer, "-") && version != "" {
+			forgeVer = version + "-" + forgeVer
+		}
+		dlURL = fmt.Sprintf("https://maven.minecraftforge.net/net/minecraftforge/forge/%s/forge-%s-installer.jar", forgeVer, forgeVer)
+		installerPath := filepath.Join(destDir, "installer.jar")
+		if err := r.DownloadFile(ctx, dlURL, installerPath); err != nil {
+			return err
+		}
+		return nil
+
+	case TypeNeoForge:
+		// NeoForge installer
+		nfVer := build
+		if version == "1.20.1" {
+			if !strings.Contains(nfVer, "-") {
+				nfVer = "1.20.1-" + nfVer
+			}
+			dlURL = fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/forge/%s/forge-%s-installer.jar", nfVer, nfVer)
+		} else {
+			dlURL = fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", nfVer, nfVer)
+		}
+		installerPath := filepath.Join(destDir, "installer.jar")
+		if err := r.DownloadFile(ctx, dlURL, installerPath); err != nil {
+			return err
+		}
+		return nil
+
+	case TypeCustom:
+		if strings.HasPrefix(build, "http://") || strings.HasPrefix(build, "https://") {
+			return r.DownloadFile(ctx, build, targetJar)
+		}
+		// If custom jar file was specified by name, check if it exists in destDir
+		if build != "" && build != "server.jar" {
+			src := filepath.Join(destDir, build)
+			if _, err := os.Stat(src); err == nil {
+				// Copy or link to server.jar if needed
+				return nil
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported platform download %q", jt)
+	}
+
+	if dlURL != "" {
+		return r.DownloadFile(ctx, dlURL, targetJar)
+	}
+
+	return nil
+}
+
+func writeEULA(destDir string) {
+	eulaFile := filepath.Join(destDir, "eula.txt")
+	_ = os.WriteFile(eulaFile, []byte("eula=true\n"), 0644)
+}
+

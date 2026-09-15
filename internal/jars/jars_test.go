@@ -147,15 +147,45 @@ func TestVanillaValidate(t *testing.T) {
 }
 
 func TestParseJarType(t *testing.T) {
-	for _, ok := range []string{"paper", "fabric", "vanilla", "forge", "neoforge", "spigot"} {
+	allTypes := []string{
+		"paper", "fabric", "vanilla", "forge", "neoforge", "spigot",
+		"purpur", "folia", "quilt", "mohist", "ketting", "sponge",
+		"limbo", "nanolimbo", "crucible", "pufferfish", "leaf",
+		"waterfall", "bungeecord", "geysermc", "custom",
+	}
+	for _, ok := range allTypes {
 		if _, err := ParseJarType(ok); err != nil {
 			t.Fatalf("ParseJarType(%q): %v", ok, err)
 		}
 	}
-	if _, err := ParseJarType("bungee"); err == nil {
+	if _, err := ParseJarType("unknown_server_type"); err == nil {
 		t.Fatal("expected error for unsupported jar type")
 	}
 }
+
+func TestAvailableJavaVersions(t *testing.T) {
+	r := NewResolver()
+	releases, err := r.AvailableJavaVersions(context.Background())
+	if err != nil {
+		t.Fatalf("AvailableJavaVersions error: %v", err)
+	}
+	if len(releases) == 0 {
+		t.Fatal("expected at least one java release")
+	}
+	has21 := false
+	for _, rel := range releases {
+		if rel.Version == 21 {
+			has21 = true
+			if !rel.IsLTS {
+				t.Errorf("expected Java 21 to be LTS")
+			}
+		}
+	}
+	if !has21 {
+		t.Errorf("expected Java 21 in releases list: %+v", releases)
+	}
+}
+
 
 func TestForgeResolve(t *testing.T) {
 	r, paper, fabric, mojang := newTestResolver(t)

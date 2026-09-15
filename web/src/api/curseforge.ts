@@ -52,11 +52,27 @@ export const CF_CLASS_MODS = 6;
 export const CF_CLASS_PLUGINS = 5;
 export const CF_CLASS_MODPACKS = 4471;
 
+export function isPluginServerType(serverType: ServerType): boolean {
+  return [
+    'paper',
+    'spigot',
+    'purpur',
+    'pufferfish',
+    'leaf',
+    'folia',
+    'waterfall',
+    'bungeecord',
+    'limbo',
+    'nanolimbo',
+    'geysermc',
+  ].includes(serverType);
+}
+
 /**
  * Returns appropriate CurseForge classId: 6 for mods, 5 for plugins.
  */
 export function getCurseForgeClassId(serverType: ServerType): number {
-  if (serverType === 'paper' || serverType === 'spigot') {
+  if (isPluginServerType(serverType)) {
     return CF_CLASS_PLUGINS; // Bukkit Plugins
   }
   return CF_CLASS_MODS; // Mods

@@ -116,7 +116,7 @@ const (
 	defaultRateLimitWindow  = time.Minute
 	defaultCPULimit         = 0
 	defaultMemoryMB         = 0
-	defaultServerImage      = "itzg/minecraft-server"
+	defaultServerImage      = "eclipse-temurin:21-jre-alpine"
 )
 
 // Load builds a Config from the environment. Missing variables fall back to

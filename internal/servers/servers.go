@@ -81,6 +81,7 @@ type Server struct {
 	CPULimit      float64     `json:"cpu_limit"`
 	MemoryLimitMB int         `json:"memory_limit_mb"`
 	HostPort      int         `json:"host_port"`
+	JavaVersion   int         `json:"java_version"`
 	ExtraPorts    []ExtraPort `json:"extra_ports"`
 	ContainerID   string      `json:"container_id,omitempty"`
 	State         string      `json:"state"`
@@ -116,6 +117,7 @@ type CreateInput struct {
 	HostPort      int          `json:"host_port,omitempty"`
 	CPULimit      float64      `json:"cpu_limit"`
 	MemoryLimitMB int          `json:"memory_limit_mb"`
+	JavaVersion   int          `json:"java_version"`
 	ExtraPorts    []ExtraPort  `json:"extra_ports"`
 }
 
@@ -131,6 +133,7 @@ type UpdateInput struct {
 	MemoryLimitMB         *int          `json:"memory_limit_mb"`
 	BackupEnabled         *bool         `json:"backup_enabled"`
 	BackupIntervalMinutes *int          `json:"backup_interval_minutes"`
+	JavaVersion           *int          `json:"java_version"`
 	ExtraPorts            *[]ExtraPort  `json:"extra_ports"`
 }
 
@@ -141,6 +144,7 @@ type CopyInput struct {
 	RAMMB             int      `json:"ram_mb,omitempty"`
 	CPULimit          float64  `json:"cpu_limit,omitempty"`
 	MemoryLimitMB     int      `json:"memory_limit_mb,omitempty"`
+	JavaVersion       int      `json:"java_version,omitempty"`
 	IncludeWorld      *bool    `json:"include_world,omitempty"`
 	IncludeConfig     *bool    `json:"include_config,omitempty"`
 	IncludePlugins    *bool    `json:"include_plugins,omitempty"`
@@ -186,6 +190,7 @@ type ContainerConfig struct {
 	CPULimit      float64     `json:"cpu_limit"`
 	MemoryLimitMB int         `json:"memory_limit_mb"`
 	HostPort      int         `json:"host_port"`
+	JavaVersion   int         `json:"java_version"`
 	ExtraPorts    []ExtraPort `json:"extra_ports"`
 }
 
@@ -208,6 +213,7 @@ func currentContainerConfig(srv *Server) ContainerConfig {
 		CPULimit:      srv.CPULimit,
 		MemoryLimitMB: srv.MemoryLimitMB,
 		HostPort:      srv.HostPort,
+		JavaVersion:   srv.JavaVersion,
 		ExtraPorts:    ports,
 	}
 }
@@ -265,6 +271,9 @@ func checkRebuildNeeded(srv *Server, rawConfig string) (bool, []string) {
 	}
 	if srv.Build != applied.Build {
 		reasons = append(reasons, fmt.Sprintf("Build changed from %s to %s", applied.Build, srv.Build))
+	}
+	if applied.JavaVersion > 0 && srv.JavaVersion > 0 && srv.JavaVersion != applied.JavaVersion {
+		reasons = append(reasons, fmt.Sprintf("Java version changed from %d to %d", applied.JavaVersion, srv.JavaVersion))
 	}
 	if !extraPortsEqual(srv.ExtraPorts, applied.ExtraPorts) {
 		reasons = append(reasons, "Additional ports configuration changed")
@@ -367,7 +376,7 @@ func calcUptime(srv *Server) {
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,'') FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,''), COALESCE(java_version, 21) FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +389,7 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 		var srv Server
 		var extra string
 		var rawConfig string
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig, &srv.JavaVersion); err != nil {
 			return nil, err
 		}
 		srv.ExtraPorts = decodeExtraPorts(extra)
@@ -397,8 +406,8 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var extra string
 	var rawConfig string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,'') FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,''), COALESCE(java_version, 21) FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig, &srv.JavaVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}
@@ -441,11 +450,19 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 		}
 	}
 
+	javaVer := in.JavaVersion
+	if javaVer <= 0 {
+		javaVer = jars.RecommendJavaVersion(resolved.Version)
+		if javaVer <= 0 {
+			javaVer = 21
+		}
+	}
+
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
-		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, encodeExtraPorts(in.ExtraPorts), StateStopped, now, now)
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, java_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`,
+		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, encodeExtraPorts(in.ExtraPorts), StateStopped, now, now, javaVer)
 	if err != nil {
 		return Server{}, fmt.Errorf("insert server: %w", err)
 	}
@@ -526,11 +543,14 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 	if in.ExtraPorts != nil {
 		srv.ExtraPorts = *in.ExtraPorts
 	}
+	if in.JavaVersion != nil && *in.JavaVersion > 0 {
+		srv.JavaVersion = *in.JavaVersion
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, container_id=?, state=?, updated_at=? WHERE id=?`,
-		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, id)
+		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, container_id=?, state=?, updated_at=?, java_version=? WHERE id=?`,
+		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, srv.JavaVersion, id)
 	if err != nil {
 		return Server{}, fmt.Errorf("update server: %w", err)
 	}
@@ -771,6 +791,22 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 		}
 		srv.ContainerID = ""
 	}
+
+	// Ensure server.jar exists in data directory (download if missing)
+	dataDir := s.dataPath(srv.ID)
+	serverJar := filepath.Join(dataDir, "server.jar")
+	runSh := filepath.Join(dataDir, "run.sh")
+	if _, err := os.Stat(serverJar); os.IsNotExist(err) {
+		if _, errSh := os.Stat(runSh); os.IsNotExist(errSh) {
+			if s.jars != nil && srv.ServerType != "custom" {
+				jt, err := jars.ParseJarType(srv.ServerType)
+				if err == nil {
+					_ = s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir)
+				}
+			}
+		}
+	}
+
 	cid, err := s.docker.Create(ctx, docker.CreateOpts{
 		ID:            srv.ID,
 		HostPort:      srv.HostPort,
@@ -782,6 +818,7 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 		RAMMB:         srv.RAMMB,
 		CPULimit:      srv.CPULimit,
 		MemoryLimitMB: srv.MemoryLimitMB,
+		JavaVersion:   srv.JavaVersion,
 	})
 	if err != nil {
 		return Server{}, err
@@ -1013,11 +1050,19 @@ func (s *Store) Copy(ctx context.Context, id string, in CopyInput) (Server, erro
 	newID := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	javaVer := in.JavaVersion
+	if javaVer <= 0 {
+		javaVer = src.JavaVersion
+		if javaVer <= 0 {
+			javaVer = 21
+		}
+	}
+
 	// Persist server record in stopped state.
 	// ExtraPorts are not automatically copied to avoid port conflicts with the source container.
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, backup_enabled, backup_interval_minutes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '', ?, ?, ?, ?, ?)`,
-		newID, in.Name, src.ServerType, src.Version, src.Build, ramMB, cpuLimit, memLimit, port, StateStopped, src.BackupEnabled, src.BackupIntervalMinutes, now, now)
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, backup_enabled, backup_interval_minutes, created_at, updated_at, java_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '', ?, ?, ?, ?, ?, ?)`,
+		newID, in.Name, src.ServerType, src.Version, src.Build, ramMB, cpuLimit, memLimit, port, StateStopped, src.BackupEnabled, src.BackupIntervalMinutes, now, now, javaVer)
 	if err != nil {
 		return Server{}, fmt.Errorf("insert server: %w", err)
 	}

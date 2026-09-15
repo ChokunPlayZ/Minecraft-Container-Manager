@@ -30,15 +30,33 @@ export interface ModrinthSearchParams {
 export function getServerLoaders(serverType: ServerType): string[] {
   switch (serverType) {
     case 'paper':
+    case 'purpur':
+    case 'pufferfish':
+    case 'leaf':
       return ['paper', 'purpur', 'spigot', 'bukkit', 'folia'];
     case 'spigot':
       return ['spigot', 'bukkit', 'paper'];
+    case 'folia':
+      return ['folia', 'paper', 'purpur', 'spigot', 'bukkit'];
     case 'fabric':
       return ['fabric', 'quilt'];
+    case 'quilt':
+      return ['quilt', 'fabric'];
     case 'forge':
+    case 'crucible':
       return ['forge'];
     case 'neoforge':
       return ['neoforge', 'forge'];
+    case 'sponge':
+      return ['sponge'];
+    case 'mohist':
+    case 'ketting':
+      return ['forge', 'neoforge', 'paper', 'spigot', 'bukkit'];
+    case 'waterfall':
+    case 'bungeecord':
+      return ['bungeecord', 'waterfall'];
+    case 'geysermc':
+      return ['geyser'];
     default:
       return [];
   }
@@ -53,12 +71,42 @@ export function getLoaderLabel(serverType: ServerType): string {
       return 'Paper / Spigot';
     case 'spigot':
       return 'Spigot / Bukkit';
+    case 'purpur':
+      return 'Purpur';
+    case 'pufferfish':
+      return 'Pufferfish';
+    case 'leaf':
+      return 'Leaf';
+    case 'folia':
+      return 'Folia';
     case 'fabric':
       return 'Fabric';
+    case 'quilt':
+      return 'Quilt';
     case 'forge':
       return 'Forge';
     case 'neoforge':
       return 'NeoForge';
+    case 'sponge':
+      return 'Sponge';
+    case 'mohist':
+      return 'Mohist';
+    case 'ketting':
+      return 'Ketting';
+    case 'crucible':
+      return 'Crucible';
+    case 'waterfall':
+      return 'Waterfall';
+    case 'bungeecord':
+      return 'BungeeCord';
+    case 'limbo':
+      return 'Limbo';
+    case 'nanolimbo':
+      return 'NanoLimbo';
+    case 'geysermc':
+      return 'GeyserMC';
+    case 'custom':
+      return 'Custom JAR';
     case 'vanilla':
       return 'Vanilla';
     default:

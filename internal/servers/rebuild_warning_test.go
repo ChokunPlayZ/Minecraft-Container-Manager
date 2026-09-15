@@ -171,3 +171,46 @@ func TestRebuildWarningExtraPortsUnchanged(t *testing.T) {
 		t.Errorf("expected NeedsRebuild == false for unchanged empty extra ports")
 	}
 }
+
+func TestRebuildWarningJavaVersion(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+
+	ctx := context.Background()
+	srv, err := store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false after Start")
+	}
+
+	// Update JavaVersion from 21 to 17
+	newJava := 17
+	srv, err = store.Update(ctx, id, UpdateInput{JavaVersion: &newJava})
+	if err != nil {
+		t.Fatalf("Update JavaVersion: %v", err)
+	}
+	if !srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == true after changing JavaVersion")
+	}
+	found := false
+	for _, r := range srv.RebuildReasons {
+		if r == "Java version changed from 21 to 17" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected Java version change reason in %v", srv.RebuildReasons)
+	}
+}
+

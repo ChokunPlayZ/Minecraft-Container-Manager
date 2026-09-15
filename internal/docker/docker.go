@@ -44,7 +44,7 @@ type Manager struct {
 // runtime image used to launch server containers.
 func New(host, image string) (*Manager, error) {
 	if image == "" {
-		image = "itzg/minecraft-server"
+		image = "eclipse-temurin:21-jre-alpine"
 	}
 	cli, err := client.NewClientWithOpts(client.WithHost(host))
 	if err != nil {
@@ -132,6 +132,7 @@ type CreateOpts struct {
 	RAMMB         int
 	CPULimit      float64
 	MemoryLimitMB int
+	JavaVersion   int
 }
 
 // ExtraPort describes an additional port to publish beyond the primary game
@@ -151,17 +152,45 @@ func Name(id string) string {
 
 // Create provisions a stopped container for a server.
 func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
+	img := m.image
+	if opts.JavaVersion > 0 {
+		img = fmt.Sprintf("eclipse-temurin:%d-jre-alpine", opts.JavaVersion)
+	}
+
 	// The runtime image is a hard prerequisite: pulling it here keeps server
 	// creation self-sufficient instead of failing with "No such image".
-	if err := m.EnsureImage(ctx); err != nil {
-		return "", fmt.Errorf("ensure image %s: %w", m.image, err)
+	if err := m.EnsureNamedImage(ctx, img); err != nil {
+		return "", fmt.Errorf("ensure image %s: %w", img, err)
 	}
 
 	name := Name(opts.ID)
+	cPort, _ := primaryContainerPort(opts.ServerType)
+
+	entryScript := `FIFO="/tmp/console.in"
+rm -f "$FIFO"
+mkfifo -m 666 "$FIFO"
+if [ -f "/data/run.sh" ]; then
+  cat <> "$FIFO" | exec sh /data/run.sh nogui
+elif [ -f "/data/server.jar" ]; then
+  cat <> "$FIFO" | exec java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui
+else
+  echo "No server.jar or run.sh found in /data"
+  exit 1
+fi
+`
+
 	cfg := &container.Config{
-		Image:        m.image,
-		Env:          itzgEnv(opts),
-		ExposedPorts: exposedPorts(opts.ExtraPorts),
+		Image:        img,
+		WorkingDir:   containerData,
+		Entrypoint:   []string{"sh", "-c", entryScript},
+		Env: []string{
+			fmt.Sprintf("RAM_MB=%d", opts.RAMMB),
+			fmt.Sprintf("SERVER_PORT=%d", cPort),
+			"MCM_DATA_DIR=" + containerData,
+		},
+		ExposedPorts: exposedPortsFor(opts.ServerType, opts.ExtraPorts),
+		OpenStdin:    true,
+		Tty:          false,
 	}
 	hostCfg := &container.HostConfig{
 		Binds: []string{fmt.Sprintf("%s:%s", opts.DataDir, containerData)},
@@ -179,7 +208,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		// If the image vanished between the presence check and the create (or a
 		// concurrent pull is still converging), pull again and retry once.
 		if strings.Contains(err.Error(), errNoSuchImage) {
-			if perr := m.pullImage(ctx); perr != nil {
+			if perr := m.pullNamedImage(ctx, img); perr != nil {
 				return "", fmt.Errorf("pull image after create failure: %w", perr)
 			}
 			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
@@ -193,24 +222,29 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	return resp.ID, nil
 }
 
-// EnsureImage makes sure the runtime image is present locally, pulling it from
-// the registry when it is not. It is idempotent: when the image is already
-// present, it returns without contacting the registry.
+// EnsureImage makes sure the default runtime image is present locally, pulling it
+// from the registry when it is not.
 func (m *Manager) EnsureImage(ctx context.Context) error {
-	has, err := m.imagePresent(ctx)
+	return m.EnsureNamedImage(ctx, m.image)
+}
+
+// EnsureNamedImage makes sure the specified runtime image is present locally,
+// pulling it from the registry when it is not.
+func (m *Manager) EnsureNamedImage(ctx context.Context, imageName string) error {
+	has, err := m.namedImagePresent(ctx, imageName)
 	if err != nil {
 		return err
 	}
 	if has {
 		return nil
 	}
-	return m.pullImage(ctx)
+	return m.pullNamedImage(ctx, imageName)
 }
 
-// imagePresent reports whether the runtime image is available locally.
-func (m *Manager) imagePresent(ctx context.Context) (bool, error) {
+// namedImagePresent reports whether the specified image is available locally.
+func (m *Manager) namedImagePresent(ctx context.Context, imageName string) (bool, error) {
 	f := filters.NewArgs()
-	f.Add("reference", m.image)
+	f.Add("reference", imageName)
 	imgs, err := m.client.ImageList(ctx, image.ListOptions{Filters: f})
 	if err != nil {
 		return false, fmt.Errorf("list images: %w", err)
@@ -218,14 +252,12 @@ func (m *Manager) imagePresent(ctx context.Context) (bool, error) {
 	return len(imgs) > 0, nil
 }
 
-// pullImage pulls the runtime image, reading (and discarding) the pull progress
+// pullNamedImage pulls the specified image, reading (and discarding) the pull progress
 // stream so the request does not block on an unconsumed response body.
-func (m *Manager) pullImage(ctx context.Context) error {
-	rc, err := m.client.ImagePull(ctx, m.image, image.PullOptions{})
+func (m *Manager) pullNamedImage(ctx context.Context, imageName string) error {
+	rc, err := m.client.ImagePull(ctx, imageName, image.PullOptions{})
 	if err != nil {
-		// If the image already exists locally, the pull error is benign (e.g. a
-		// not-yet-tagged or concurrently-pulled image). Re-check presence.
-		if m.imagePresentCheck(ctx) {
+		if m.namedImagePresentCheck(ctx, imageName) {
 			return nil
 		}
 		return fmt.Errorf("pull image: %w", err)
@@ -239,10 +271,10 @@ func (m *Manager) pullImage(ctx context.Context) error {
 	return nil
 }
 
-// imagePresentCheck is a best-effort re-check used to swallow benign pull
+// namedImagePresentCheck is a best-effort re-check used to swallow benign pull
 // errors (e.g. "pull access denied") when the image already exists locally.
-func (m *Manager) imagePresentCheck(ctx context.Context) bool {
-	has, err := m.imagePresent(ctx)
+func (m *Manager) namedImagePresentCheck(ctx context.Context, imageName string) bool {
+	has, err := m.namedImagePresent(ctx, imageName)
 	return err == nil && has
 }
 
@@ -391,11 +423,17 @@ func (m *Manager) Logs(ctx context.Context, containerID string, follow bool) (io
 }
 
 // SendConsole writes a command to a running server's console without requiring
-// RCON. It execs the itzg image's stdin-helper (mc-send-to-console, falling
-// back to the older rcon-cli name) inside the container, which pipes the line
-// into the running Java server's stdin. Output is drained and discarded so a
-// chatty response cannot fill the exec stream and block.
+// RCON. It first tries writing directly to the named console pipe (/tmp/console.in)
+// created in lightweight containers. If that is unavailable or fails, it falls back
+// to exec-ing the itzg image's stdin-helper (mc-send-to-console / rcon-cli).
 func (m *Manager) SendConsole(ctx context.Context, containerID, command string) error {
+	// 1. Try named pipe inside the lightweight container
+	err := m.execPipeConsole(ctx, containerID, command)
+	if err == nil {
+		return nil
+	}
+
+	// 2. Fall back to itzg image helpers if pipe is not present
 	for _, helper := range []string{"mc-send-to-console", "rcon-cli"} {
 		err := m.execConsole(ctx, containerID, helper, command)
 		if err == nil {
@@ -407,7 +445,34 @@ func (m *Manager) SendConsole(ctx context.Context, containerID, command string) 
 			return err
 		}
 	}
-	return fmt.Errorf("no console helper found in runtime image")
+	return fmt.Errorf("no console pipe or helper found in container")
+}
+
+func (m *Manager) execPipeConsole(ctx context.Context, containerID, command string) error {
+	execID, err := m.client.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd:          []string{"sh", "-c", `test -p /tmp/console.in && printf '%s\n' "$1" > /tmp/console.in`, "--", command},
+		AttachStdin:  false,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create pipe console exec: %w", err)
+	}
+	hij, err := m.client.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{})
+	if err != nil {
+		return fmt.Errorf("attach pipe console exec: %w", err)
+	}
+	var stderr bytes.Buffer
+	_, _ = stdcopy.StdCopy(io.Discard, &stderr, hij.Reader)
+	hij.Close()
+	insp, err := m.client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return fmt.Errorf("inspect pipe console exec: %w", err)
+	}
+	if insp.ExitCode != 0 {
+		return fmt.Errorf("pipe console failed (code %d): %s", insp.ExitCode, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // errConsoleBinaryMissing marks a console exec that failed because the helper
@@ -488,11 +553,29 @@ func (m *Manager) execUserForContainer(ctx context.Context, containerID string) 
 	return uid + ":" + gid
 }
 
+// primaryContainerPort returns the primary container port and protocol for a server type.
+func primaryContainerPort(serverType string) (int, string) {
+	switch strings.ToLower(serverType) {
+	case "geysermc":
+		return 19132, "udp"
+	case "waterfall", "bungeecord":
+		return 25577, "tcp"
+	default:
+		return mcPort, mcProto
+	}
+}
+
 // exposedPorts returns the set of container ports to mark exposed. It always
 // includes the primary game port plus each extra port with its protocol.
 func exposedPorts(extras []ExtraPort) nat.PortSet {
+	return exposedPortsFor("", extras)
+}
+
+// exposedPortsFor returns the set of container ports to mark exposed for a given server type.
+func exposedPortsFor(serverType string, extras []ExtraPort) nat.PortSet {
+	cPort, cProto := primaryContainerPort(serverType)
 	ports := nat.PortSet{
-		nat.Port(fmt.Sprintf("%d/%s", mcPort, mcProto)): struct{}{},
+		nat.Port(fmt.Sprintf("%d/%s", cPort, cProto)): struct{}{},
 	}
 	for _, e := range extras {
 		ports[nat.Port(fmt.Sprintf("%d/%s", e.ContainerPort, normalizeProto(e.Protocol)))] = struct{}{}
@@ -501,11 +584,12 @@ func exposedPorts(extras []ExtraPort) nat.PortSet {
 }
 
 // portBindings builds the host-to-container port bindings. The primary game
-// port binds srv HostPort -> container 25565/tcp. Each extra port binds its
+// port binds srv HostPort -> container primary port. Each extra port binds its
 // host port to its container port/protocol. All bind on 0.0.0.0.
 func portBindings(opts CreateOpts) nat.PortMap {
+	cPort, cProto := primaryContainerPort(opts.ServerType)
 	bindings := nat.PortMap{
-		nat.Port(fmt.Sprintf("%d/%s", mcPort, mcProto)): []nat.PortBinding{
+		nat.Port(fmt.Sprintf("%d/%s", cPort, cProto)): []nat.PortBinding{
 			{HostIP: "0.0.0.0", HostPort: strconv.Itoa(opts.HostPort)},
 		},
 	}

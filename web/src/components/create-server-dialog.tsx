@@ -14,6 +14,7 @@ import {
 import { api, ApiError, type CreateServerInput } from '../api/client';
 import type {
   CurseForgeMod,
+  JavaRelease,
   ModpackManifest,
   ModrinthSearchHit,
   ServerType,
@@ -21,6 +22,18 @@ import type {
   VersionMeta,
 } from '../api/types';
 import { formatCount, searchModrinth } from '../api/modrinth';
+
+function recommendJava(ver: string): number {
+  const parts = ver.split('.');
+  if (parts.length >= 2) {
+    const minor = parseInt(parts[1], 10);
+    const patch = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+    if (minor >= 21 || (minor === 20 && patch >= 5)) return 21;
+    if (minor >= 17) return 17;
+    if (minor > 0 && minor <= 16) return 8;
+  }
+  return 21;
+}
 import {
   CF_CLASS_MODPACKS,
   CF_SORT_OPTIONS,
@@ -67,6 +80,15 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   const [version, setVersion] = useState('');
   const [build, setBuild] = useState('');
   const [ramMb, setRamMb] = useState(2048);
+  const [javaReleases, setJavaReleases] = useState<JavaRelease[]>([
+    { version: 25, is_lts: true, name: 'Java 25 (LTS)' },
+    { version: 24, is_lts: false, name: 'Java 24' },
+    { version: 21, is_lts: true, name: 'Java 21 (LTS - Recommended)' },
+    { version: 17, is_lts: true, name: 'Java 17 (LTS)' },
+    { version: 11, is_lts: true, name: 'Java 11 (LTS)' },
+    { version: 8, is_lts: true, name: 'Java 8 (LTS)' },
+  ]);
+  const [javaVersion, setJavaVersion] = useState<number>(21);
   const [versions, setVersions] = useState<VersionMeta[]>([]);
   const [builds, setBuilds] = useState<VersionInfo[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
@@ -109,6 +131,13 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
     if (!open) return;
     let cancelled = false;
     setLoadingPorts(true);
+    api.javaVersions()
+      .then((releases) => {
+        if (!cancelled && releases && releases.length > 0) {
+          setJavaReleases(releases);
+        }
+      })
+      .catch(() => {});
     Promise.all([api.availablePorts(), api.listServers()])
       .then(([portsRes, serversRes]) => {
         if (cancelled) return;
@@ -131,6 +160,13 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
 
   useEffect(() => {
     if (!open || createMode !== 'standard') return;
+    if (serverType === 'custom') {
+      setVersions([{ name: 'custom' }]);
+      setVersion('custom');
+      setBuilds([{ version: 'custom', build: 'custom', display: 'custom' }]);
+      setBuild('custom');
+      return;
+    }
     let cancelled = false;
     setLoadingVersions(true);
     setError(null);
@@ -139,8 +175,10 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       .then((v) => {
         if (cancelled) return;
         setVersions(v);
-        if (!version || !v.some((x) => x.name === version)) {
-          setVersion(v[0]?.name ?? '');
+        const nextVer = (!version || !v.some((x) => x.name === version)) ? (v[0]?.name ?? '') : version;
+        setVersion(nextVer);
+        if (nextVer) {
+          setJavaVersion(recommendJava(nextVer));
         }
       })
       .catch((err) => !cancelled && setError(err instanceof ApiError ? err.detail : 'Failed to load versions'))
@@ -448,9 +486,10 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
     const input: CreateServerInput = {
       name: name.trim(),
       server_type: serverType,
-      version,
-      build,
+      version: serverType === 'custom' ? (version || 'custom') : version,
+      build: serverType === 'custom' ? (build || 'custom') : build,
       ram_mb: ramMb,
+      java_version: javaVersion,
       host_port: parsedPort > 0 ? parsedPort : undefined,
     };
     try {
@@ -959,22 +998,56 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
 
               {createMode === 'standard' ? (
                 <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="server-type">Server Software</Label>
+                    <Select
+                      id="server-type"
+                      value={serverType}
+                      onChange={(e) => {
+                        const nextType = e.target.value as ServerType;
+                        setServerType(nextType);
+                        if (nextType === 'waterfall' || nextType === 'bungeecord') {
+                          if (!port || port === '25565') setPort('25577');
+                        } else if (nextType === 'geysermc') {
+                          if (!port || port === '25565') setPort('19132');
+                        }
+                      }}
+                    >
+                      <optgroup label="Popular Server Platforms">
+                        <option value="paper">Paper (Recommended)</option>
+                        <option value="purpur">Purpur (High Performance &amp; Features)</option>
+                        <option value="fabric">Fabric (Modded)</option>
+                        <option value="neoforge">NeoForge (Modern Modded)</option>
+                        <option value="forge">Forge (Modded)</option>
+                        <option value="spigot">Spigot</option>
+                        <option value="vanilla">Vanilla (Official Mojang)</option>
+                      </optgroup>
+                      <optgroup label="High Performance &amp; Async">
+                        <option value="folia">Folia (Multithreaded Paper)</option>
+                        <option value="pufferfish">Pufferfish (High Performance Paper)</option>
+                        <option value="leaf">Leaf (Optimized Paper Fork)</option>
+                      </optgroup>
+                      <optgroup label="Modded &amp; Hybrid Platforms">
+                        <option value="quilt">Quilt (Fabric-Compatible Modloader)</option>
+                        <option value="mohist">Mohist (Forge + Paper Hybrid)</option>
+                        <option value="ketting">Ketting (NeoForge/Forge Hybrid)</option>
+                        <option value="sponge">Sponge (SpongeForge/Vanilla)</option>
+                        <option value="crucible">Crucible (1.7.10 Hybrid)</option>
+                      </optgroup>
+                      <optgroup label="Proxies &amp; Lightweight">
+                        <option value="waterfall">Waterfall (PaperMC Proxy)</option>
+                        <option value="bungeecord">BungeeCord (Proxy)</option>
+                        <option value="limbo">Limbo (Ultra-lightweight Fake Server)</option>
+                        <option value="nanolimbo">NanoLimbo (Tiny Limbo Server)</option>
+                      </optgroup>
+                      <optgroup label="Bridges &amp; Custom">
+                        <option value="geysermc">GeyserMC (Standalone Bedrock Bridge)</option>
+                        <option value="custom">Custom JAR</option>
+                      </optgroup>
+                    </Select>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="server-type">Type</Label>
-                      <Select
-                        id="server-type"
-                        value={serverType}
-                        onChange={(e) => setServerType(e.target.value as ServerType)}
-                      >
-                        <option key="paper" value="paper">Paper</option>
-                        <option key="fabric" value="fabric">Fabric</option>
-                        <option key="vanilla" value="vanilla">Vanilla</option>
-                        <option key="forge" value="forge">Forge</option>
-                        <option key="neoforge" value="neoforge">NeoForge</option>
-                        <option key="spigot" value="spigot">Spigot</option>
-                      </Select>
-                    </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="server-ram">RAM (MB)</Label>
                       <Input
@@ -986,52 +1059,82 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                         onChange={(e) => setRamMb(Number(e.target.value))}
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="server-java">Java Runtime</Label>
+                        <span className="text-[10px] text-muted-foreground">Auto-recommended</span>
+                      </div>
+                      <Select
+                        id="server-java"
+                        value={String(javaVersion)}
+                        onChange={(e) => setJavaVersion(parseInt(e.target.value, 10))}
+                      >
+                        {javaReleases.map((jr) => (
+                          <option key={jr.version} value={jr.version}>
+                            {jr.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="server-version">Version</Label>
-                      {loadingVersions ? (
-                        <div className="flex h-9 items-center text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        </div>
-                      ) : (
-                        <Select
-                          id="server-version"
-                          value={version}
-                          onChange={(e) => setVersion(e.target.value)}
-                          disabled={versions.length === 0}
-                        >
-                          {versions.map((v, idx) => (
-                            <option key={`${v.name || idx}-${idx}`} value={v.name}>
-                              {v.latest ?? v.name}
-                            </option>
-                          ))}
-                        </Select>
-                      )}
+                  {serverType === 'custom' ? (
+                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs space-y-1">
+                      <span className="font-semibold text-foreground">Custom Server JAR</span>
+                      <p className="text-muted-foreground text-[11px]">
+                        MCM will run <code>server.jar</code> (or <code>run.sh</code>) directly in the lightweight Java Alpine container. Place your JAR in the server directory after creation.
+                      </p>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="server-build">Build</Label>
-                      {loadingBuilds ? (
-                        <div className="flex h-9 items-center text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        </div>
-                      ) : (
-                        <Select
-                          id="server-build"
-                          value={build}
-                          onChange={(e) => setBuild(e.target.value)}
-                          disabled={builds.length === 0}
-                        >
-                          {builds.map((b, idx) => (
-                            <option key={`${b.build || idx}-${idx}`} value={b.build}>
-                              {b.build}
-                            </option>
-                          ))}
-                        </Select>
-                      )}
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="server-version">Version</Label>
+                        {loadingVersions ? (
+                          <div className="flex h-9 items-center text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          </div>
+                        ) : (
+                          <Select
+                            id="server-version"
+                            value={version}
+                            onChange={(e) => {
+                              const nextVer = e.target.value;
+                              setVersion(nextVer);
+                              setJavaVersion(recommendJava(nextVer));
+                            }}
+                            disabled={versions.length === 0}
+                          >
+                            {versions.map((v, idx) => (
+                              <option key={`${v.name || idx}-${idx}`} value={v.name}>
+                                {v.latest ?? v.name}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="server-build">Build</Label>
+                        {loadingBuilds ? (
+                          <div className="flex h-9 items-center text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          </div>
+                        ) : (
+                          <Select
+                            id="server-build"
+                            value={build}
+                            onChange={(e) => setBuild(e.target.value)}
+                            disabled={builds.length === 0}
+                          >
+                            {builds.map((b, idx) => (
+                              <option key={`${b.build || idx}-${idx}`} value={b.build}>
+                                {b.build}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </>
               ) : (
                 /* Modpack runtime summary */

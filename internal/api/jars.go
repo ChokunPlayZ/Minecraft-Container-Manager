@@ -19,6 +19,16 @@ type buildItem struct {
 	Display string `json:"display"`
 }
 
+func (s *Server) handleSystemJavaVersions(w http.ResponseWriter, r *http.Request) {
+	releases, err := s.jars.AvailableJavaVersions(r.Context())
+	if err != nil {
+		s.logUpstream(err, r)
+		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't fetch Java versions")
+		return
+	}
+	writeJSON(w, http.StatusOK, releases)
+}
+
 func (s *Server) handleJarVersions(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
 	var versions []string
@@ -46,6 +56,34 @@ func (s *Server) handleJarVersions(w http.ResponseWriter, r *http.Request) {
 		versions, err = s.jars.NeoForgeGameVersions(r.Context())
 	case "spigot":
 		versions, err = s.jars.SpigotGameVersions(r.Context())
+	case "purpur":
+		versions, err = s.jars.PurpurVersions(r.Context())
+	case "folia":
+		versions, err = s.jars.FoliaVersions(r.Context())
+	case "waterfall":
+		versions, err = s.jars.WaterfallVersions(r.Context())
+	case "quilt":
+		versions, err = s.jars.QuiltGameVersions(r.Context())
+	case "mohist":
+		versions, err = s.jars.MohistVersions(r.Context())
+	case "sponge":
+		versions, err = s.jars.SpongeVersions(r.Context())
+	case "geysermc":
+		versions, err = s.jars.GeyserVersions(r.Context())
+	case "bungeecord":
+		versions = []string{"latest"}
+	case "pufferfish":
+		versions = []string{"1.20.4", "1.20.2", "1.20.1", "1.19.4"}
+	case "leaf":
+		versions = []string{"1.21.1", "1.21", "1.20.4"}
+	case "ketting":
+		versions = []string{"1.20.4", "1.20.2", "1.20.1"}
+	case "limbo", "nanolimbo":
+		versions = []string{"latest", "1.21", "1.20"}
+	case "crucible":
+		versions = []string{"1.7.10"}
+	case "custom":
+		versions = []string{"custom"}
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_request", "That server type isn't supported")
 		return
@@ -86,6 +124,26 @@ func (s *Server) handleJarBuilds(w http.ResponseWriter, r *http.Request) {
 		builds, err = s.jars.NeoForgeBuilds(r.Context(), version)
 	case "spigot":
 		builds, err = s.jars.SpigotBuilds(r.Context(), version)
+	case "purpur":
+		builds, err = s.jars.PurpurBuilds(r.Context(), version)
+	case "folia":
+		builds, err = s.jars.FoliaBuilds(r.Context(), version)
+	case "waterfall":
+		builds, err = s.jars.WaterfallBuilds(r.Context(), version)
+	case "quilt":
+		builds, err = s.jars.QuiltLoaders(r.Context(), version)
+	case "mohist":
+		builds, err = s.jars.MohistBuilds(r.Context(), version)
+	case "sponge":
+		builds = []string{"latest"}
+	case "geysermc":
+		builds, err = s.jars.GeyserBuilds(r.Context(), version)
+	case "bungeecord":
+		builds, err = s.jars.BungeeCordBuilds(r.Context())
+	case "pufferfish", "leaf", "ketting", "limbo", "nanolimbo", "crucible":
+		builds = []string{"latest"}
+	case "custom":
+		builds = []string{"custom"}
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_request", "That server type isn't supported")
 		return

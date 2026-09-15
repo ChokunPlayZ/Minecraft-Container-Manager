@@ -141,14 +141,28 @@ type curseForgeFilesResponse struct {
 
 func serverLoadersForType(serverType string) []string {
 	switch strings.ToLower(serverType) {
-	case "paper", "spigot":
-		return []string{"paper", "spigot", "bukkit"}
+	case "paper", "spigot", "purpur", "pufferfish", "leaf":
+		return []string{"paper", "purpur", "spigot", "bukkit"}
+	case "folia":
+		return []string{"folia", "paper", "purpur", "spigot", "bukkit"}
 	case "fabric":
 		return []string{"fabric", "quilt"}
-	case "forge":
+	case "quilt":
+		return []string{"quilt", "fabric"}
+	case "forge", "crucible":
 		return []string{"forge"}
 	case "neoforge":
 		return []string{"neoforge"}
+	case "sponge":
+		return []string{"sponge"}
+	case "ketting", "mohist":
+		return []string{"forge", "neoforge", "paper", "spigot", "bukkit"}
+	case "waterfall", "bungeecord":
+		return []string{"bungeecord", "waterfall"}
+	case "limbo", "nanolimbo":
+		return []string{"limbo"}
+	case "geysermc":
+		return []string{"geyser"}
 	default:
 		return nil
 	}
