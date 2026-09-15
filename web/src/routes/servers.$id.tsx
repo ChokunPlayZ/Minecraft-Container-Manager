@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   Archive,
   ArrowLeft,
   Check,
@@ -283,6 +284,15 @@ export function ServerDetailRoute() {
                     {server.name}
                   </h1>
                   <StatusBadge state={state} />
+                  {server.needs_rebuild && (
+                    <span
+                      data-testid="header-rebuild-badge"
+                      className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Rebuild required
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground sm:text-sm">
@@ -452,6 +462,42 @@ export function ServerDetailRoute() {
             </Card>
           )}
 
+          {server.needs_rebuild && (
+            <div
+              data-testid="rebuild-warning-banner"
+              className="mb-5 flex flex-col gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200 sm:flex-row sm:items-center sm:justify-between shadow-2xs"
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div className="space-y-1 text-sm">
+                  <p className="font-semibold text-amber-900 dark:text-amber-200">
+                    Container Rebuild Required
+                  </p>
+                  <p className="text-xs text-amber-800/90 dark:text-amber-300/90">
+                    Memory or container settings have changed since this container was provisioned. Rebuild the container to apply your changes.
+                  </p>
+                  {server.rebuild_reasons && server.rebuild_reasons.length > 0 && (
+                    <ul className="mt-1.5 list-disc pl-4 text-xs space-y-0.5 text-amber-800/80 dark:text-amber-300/80">
+                      {server.rebuild_reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => void handleRecreate()}
+                className="shrink-0 gap-1.5 border-amber-500/40 bg-amber-500/20 text-amber-900 hover:bg-amber-500/30 hover:text-amber-950 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-100 dark:hover:bg-amber-500/30 font-medium"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Rebuild container</span>
+              </Button>
+            </div>
+          )}
+
           {/* Tab Navigation */}
           <div
             className="mb-6 flex items-center gap-1 overflow-x-auto rounded-xl border bg-muted/40 p-1.5 shadow-2xs"
@@ -513,9 +559,10 @@ export function ServerDetailRoute() {
 
               <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(340px,1fr)]">
                 <ServerSettings
-                  key={`${server.name}-${server.ram_mb}-${server.host_port}`}
+                  key={`${server.name}-${server.ram_mb}-${server.host_port}-${server.needs_rebuild}`}
                   server={server}
                   onSaved={(s) => setServer(s)}
+                  onRebuild={() => void handleRecreate()}
                   onDnsChanged={(addr) => setDnsAddress(addr)}
                 />
                 <InstallPanel

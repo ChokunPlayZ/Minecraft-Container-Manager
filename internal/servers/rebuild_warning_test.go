@@ -1,0 +1,173 @@
+package servers
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/jars"
+)
+
+func TestRebuildWarningLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+
+	ctx := context.Background()
+
+	// 1. Fresh server before container creation: needs_rebuild must be false
+	srv, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false before container creation, got true")
+	}
+
+	// 2. Start server to create container: needs_rebuild must be false
+	srv, err = store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srv.ContainerID == "" {
+		t.Fatalf("expected ContainerID to be non-empty after start")
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false after starting container, got true")
+	}
+
+	// 3. Update RAM from 2048 to 4096: container is not detached, so needs_rebuild must become true
+	newRAM := 4096
+	srv, err = store.Update(ctx, id, UpdateInput{RAMMB: &newRAM})
+	if err != nil {
+		t.Fatalf("Update RAM: %v", err)
+	}
+	if !srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == true after changing RAM without rebuild")
+	}
+	if len(srv.RebuildReasons) == 0 {
+		t.Errorf("expected non-empty RebuildReasons after changing RAM")
+	}
+
+	// Verify List also returns NeedsRebuild == true
+	all, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) == 0 || !all[0].NeedsRebuild {
+		t.Errorf("expected List to report NeedsRebuild == true for server")
+	}
+
+	// 4. Update CPU and Memory limit: reasons should include them
+	newCPU := 2.5
+	newMemLimit := 6144
+	srv, err = store.Update(ctx, id, UpdateInput{
+		CPULimit:      &newCPU,
+		MemoryLimitMB: &newMemLimit,
+	})
+	if err != nil {
+		t.Fatalf("Update limits: %v", err)
+	}
+	if !srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == true")
+	}
+	if len(srv.RebuildReasons) < 3 {
+		t.Errorf("expected at least 3 rebuild reasons (RAM, CPU, memory limit), got %v", srv.RebuildReasons)
+	}
+
+	// 5. Reverting values back to applied container settings clears NeedsRebuild
+	origRAM := 2048
+	origCPU := 0.0
+	origMemLimit := 0
+	srv, err = store.Update(ctx, id, UpdateInput{
+		RAMMB:         &origRAM,
+		CPULimit:      &origCPU,
+		MemoryLimitMB: &origMemLimit,
+	})
+	if err != nil {
+		t.Fatalf("Revert limits: %v", err)
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false after reverting to container settings, got true: %v", srv.RebuildReasons)
+	}
+
+	// 6. Update ExtraPorts: should trigger NeedsRebuild
+	ports := []ExtraPort{
+		{
+			ID:            "webui",
+			Description:   "Web UI",
+			HostPort:      8080,
+			ContainerPort: 8080,
+			Protocol:      "tcp",
+		},
+	}
+	srv, err = store.Update(ctx, id, UpdateInput{ExtraPorts: &ports})
+	if err != nil {
+		t.Fatalf("Update ExtraPorts: %v", err)
+	}
+	if !srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == true after adding ExtraPort")
+	}
+
+	// 7. Calling Recreate detaches container and clears NeedsRebuild
+	srv, err = store.Recreate(ctx, id)
+	if err != nil {
+		t.Fatalf("Recreate: %v", err)
+	}
+	if srv.ContainerID != "" {
+		t.Errorf("expected ContainerID == '' after Recreate, got %q", srv.ContainerID)
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false after Recreate")
+	}
+
+	// 8. Next Start provisions fresh container with the extra ports, needs_rebuild stays false
+	srv, err = store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start after recreate: %v", err)
+	}
+	if srv.ContainerID == "" {
+		t.Fatalf("expected new container after Start")
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false after Start with newly provisioned container")
+	}
+}
+
+func TestRebuildWarningExtraPortsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+
+	ctx := context.Background()
+	_, err = store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Update with identical empty extra ports should not trigger rebuild
+	emptyPorts := []ExtraPort{}
+	srv, err := store.Update(ctx, id, UpdateInput{ExtraPorts: &emptyPorts})
+	if err != nil {
+		t.Fatalf("Update empty ports: %v", err)
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false for unchanged empty extra ports")
+	}
+}

@@ -86,12 +86,14 @@ type Server struct {
 	State         string      `json:"state"`
 	// Backup settings. BackupEnabled defaults to true; BackupIntervalMinutes
 	// is the minutes between automatic backups (default 720).
-	BackupEnabled         bool   `json:"backup_enabled"`
-	BackupIntervalMinutes int    `json:"backup_interval_minutes"`
-	StartedAt             string `json:"started_at,omitempty"`
-	UptimeSeconds         int64  `json:"uptime_seconds,omitempty"`
-	CreatedAt             string `json:"created_at"`
-	UpdatedAt             string `json:"updated_at"`
+	BackupEnabled         bool     `json:"backup_enabled"`
+	BackupIntervalMinutes int      `json:"backup_interval_minutes"`
+	StartedAt             string   `json:"started_at,omitempty"`
+	UptimeSeconds         int64    `json:"uptime_seconds,omitempty"`
+	NeedsRebuild          bool     `json:"needs_rebuild"`
+	RebuildReasons        []string `json:"rebuild_reasons,omitempty"`
+	CreatedAt             string   `json:"created_at"`
+	UpdatedAt             string   `json:"updated_at"`
 }
 
 // ExtraPort describes an additional port published for a server beyond the
@@ -172,6 +174,102 @@ func decodeExtraPorts(data string) []ExtraPort {
 		return make([]ExtraPort, 0)
 	}
 	return out
+}
+
+// ContainerConfig captures the container-dependent configuration applied to
+// the container at creation time.
+type ContainerConfig struct {
+	ServerType    string      `json:"server_type"`
+	Version       string      `json:"version"`
+	Build         string      `json:"build"`
+	RAMMB         int         `json:"ram_mb"`
+	CPULimit      float64     `json:"cpu_limit"`
+	MemoryLimitMB int         `json:"memory_limit_mb"`
+	HostPort      int         `json:"host_port"`
+	ExtraPorts    []ExtraPort `json:"extra_ports"`
+}
+
+func encodeContainerConfig(c ContainerConfig) string {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func currentContainerConfig(srv *Server) ContainerConfig {
+	ports := make([]ExtraPort, len(srv.ExtraPorts))
+	copy(ports, srv.ExtraPorts)
+	return ContainerConfig{
+		ServerType:    srv.ServerType,
+		Version:       srv.Version,
+		Build:         srv.Build,
+		RAMMB:         srv.RAMMB,
+		CPULimit:      srv.CPULimit,
+		MemoryLimitMB: srv.MemoryLimitMB,
+		HostPort:      srv.HostPort,
+		ExtraPorts:    ports,
+	}
+}
+
+func extraPortsEqual(a, b []ExtraPort) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	mapA := make(map[string]ExtraPort, len(a))
+	for _, p := range a {
+		mapA[p.ID] = p
+	}
+	for _, p := range b {
+		other, ok := mapA[p.ID]
+		if !ok {
+			return false
+		}
+		if other.HostPort != p.HostPort || other.ContainerPort != p.ContainerPort ||
+			strings.ToLower(other.Protocol) != strings.ToLower(p.Protocol) || other.Description != p.Description {
+			return false
+		}
+	}
+	return true
+}
+
+func checkRebuildNeeded(srv *Server, rawConfig string) (bool, []string) {
+	if srv.ContainerID == "" {
+		return false, nil
+	}
+	if rawConfig == "" {
+		return false, nil
+	}
+	var applied ContainerConfig
+	if err := json.Unmarshal([]byte(rawConfig), &applied); err != nil {
+		return false, nil
+	}
+	var reasons []string
+	if srv.RAMMB != applied.RAMMB {
+		reasons = append(reasons, fmt.Sprintf("RAM changed from %d MB to %d MB", applied.RAMMB, srv.RAMMB))
+	}
+	if srv.CPULimit != applied.CPULimit {
+		reasons = append(reasons, fmt.Sprintf("CPU limit changed from %.1f to %.1f cores", applied.CPULimit, srv.CPULimit))
+	}
+	if srv.MemoryLimitMB != applied.MemoryLimitMB {
+		reasons = append(reasons, fmt.Sprintf("Memory limit changed from %d MB to %d MB", applied.MemoryLimitMB, srv.MemoryLimitMB))
+	}
+	if srv.HostPort != applied.HostPort {
+		reasons = append(reasons, fmt.Sprintf("Host port changed from %d to %d", applied.HostPort, srv.HostPort))
+	}
+	if srv.ServerType != applied.ServerType {
+		reasons = append(reasons, fmt.Sprintf("Server type changed from %s to %s", applied.ServerType, srv.ServerType))
+	}
+	if srv.Version != applied.Version {
+		reasons = append(reasons, fmt.Sprintf("Version changed from %s to %s", applied.Version, srv.Version))
+	}
+	if srv.Build != applied.Build {
+		reasons = append(reasons, fmt.Sprintf("Build changed from %s to %s", applied.Build, srv.Build))
+	}
+	if !extraPortsEqual(srv.ExtraPorts, applied.ExtraPorts) {
+		reasons = append(reasons, "Additional ports configuration changed")
+	}
+	return len(reasons) > 0, reasons
 }
 
 // InstallResult describes a server's resolved install configuration.
@@ -269,7 +367,7 @@ func calcUptime(srv *Server) {
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,'') FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,'') FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -281,11 +379,13 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 	for rows.Next() {
 		var srv Server
 		var extra string
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt); err != nil {
+		var rawConfig string
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig); err != nil {
 			return nil, err
 		}
 		srv.ExtraPorts = decodeExtraPorts(extra)
 		calcUptime(&srv)
+		srv.NeedsRebuild, srv.RebuildReasons = checkRebuildNeeded(&srv, rawConfig)
 		out = append(out, srv)
 	}
 	return out, rows.Err()
@@ -295,9 +395,10 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var srv Server
 	var extra string
+	var rawConfig string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,'') FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,'') FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}
@@ -306,6 +407,7 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	}
 	srv.ExtraPorts = decodeExtraPorts(extra)
 	calcUptime(&srv)
+	srv.NeedsRebuild, srv.RebuildReasons = checkRebuildNeeded(&srv, rawConfig)
 	return srv, nil
 }
 
@@ -400,6 +502,7 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 			_ = s.docker.Remove(ctx, srv.ContainerID)
 			srv.ContainerID = ""
 			srv.State = StateStopped
+			_, _ = s.db.ExecContext(ctx, `UPDATE servers SET container_config=NULL WHERE id=?`, id)
 		}
 	}
 	if in.CPULimit != nil {
@@ -568,7 +671,7 @@ func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
 		// recorded id so ensureContainer rebuilds it on next start.
 		_ = s.docker.Remove(ctx, srv.ContainerID)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id='', state=?, started_at=NULL, updated_at=? WHERE id=?`,
+	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id='', container_config=NULL, state=?, started_at=NULL, updated_at=? WHERE id=?`,
 		StateStopped, time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return Server{}, err
@@ -683,11 +786,14 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 	if err != nil {
 		return Server{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id=?, updated_at=? WHERE id=?`, cid, time.Now().UTC().Format(time.RFC3339), srv.ID)
+	cfgStr := encodeContainerConfig(currentContainerConfig(&srv))
+	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id=?, container_config=?, updated_at=? WHERE id=?`, cid, cfgStr, time.Now().UTC().Format(time.RFC3339), srv.ID)
 	if err != nil {
 		return Server{}, err
 	}
 	srv.ContainerID = cid
+	srv.NeedsRebuild = false
+	srv.RebuildReasons = nil
 	return srv, nil
 }
 
@@ -747,7 +853,7 @@ func (s *Store) setStateWithStartedAt(ctx context.Context, id, state string, sta
 // container no longer exists (e.g. it was deleted outside MCM).
 func (s *Store) clearContainerID(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET container_id='', updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), id)
+		`UPDATE servers SET container_id='', container_config=NULL, updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 

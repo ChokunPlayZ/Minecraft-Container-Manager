@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
-import { Plus, Trash2, Globe } from 'lucide-react';
+import { Plus, Trash2, Globe, AlertTriangle, RotateCcw } from 'lucide-react';
 import { ServerDNSCard } from './server-dns-card';
 
 type SettingsTab = 'general' | 'advanced' | 'dns';
@@ -23,10 +23,12 @@ function genId(): string {
 export function ServerSettings({
   server,
   onSaved,
+  onRebuild,
   onDnsChanged,
 }: {
   server: Server;
   onSaved: (s: Server) => void;
+  onRebuild?: () => void;
   onDnsChanged?: (joinAddress: string) => void;
 }) {
   const [name, setName] = useState(server.name);
@@ -39,6 +41,7 @@ export function ServerSettings({
   const [extraPorts, setExtraPorts] = useState<ExtraPort[]>(server.extra_ports ?? []);
   const [tab, setTab] = useState<SettingsTab>('general');
   const [error, setError] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   function newPort(): ExtraPort {
@@ -63,6 +66,7 @@ export function ServerSettings({
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setSavedNotice(null);
     try {
       const updated = await api.updateServer(server.id, {
         name: name.trim(),
@@ -74,6 +78,11 @@ export function ServerSettings({
         backup_interval_minutes: backupInterval,
         extra_ports: extraPorts,
       });
+      if (updated.needs_rebuild) {
+        setSavedNotice('Settings saved. Container rebuild required for memory and container settings to take effect.');
+      } else {
+        setSavedNotice('Settings saved successfully.');
+      }
       onSaved(updated);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to save settings');
@@ -135,6 +144,41 @@ export function ServerSettings({
             <ServerDNSCard server={server} onDnsChanged={onDnsChanged} bare={true} />
           ) : (
             <form onSubmit={onSubmit} className="space-y-4">
+              {server.needs_rebuild && (
+                <div
+                  data-testid="settings-rebuild-alert"
+                  className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200 shadow-2xs"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-semibold">Container Rebuild Required</p>
+                      <p>
+                        Memory or container settings have changed. The container must be rebuilt to apply these settings.
+                      </p>
+                      {server.rebuild_reasons && server.rebuild_reasons.length > 0 && (
+                        <ul className="list-disc pl-4 space-y-0.5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+                          {server.rebuild_reasons.map((r, i) => (
+                            <li key={i}>{r}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                  {onRebuild && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={onRebuild}
+                      className="shrink-0 gap-1.5 border-amber-500/40 bg-amber-500/20 text-amber-900 hover:bg-amber-500/30 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-100"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      <span>Rebuild container</span>
+                    </Button>
+                  )}
+                </div>
+              )}
 
           {tab === 'general' ? (
             <div className="space-y-4">
@@ -152,6 +196,9 @@ export function ServerSettings({
                   value={ramMb}
                   onChange={(e) => setRamMb(Number(e.target.value))}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Changes take effect after rebuilding the container.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="edit-port">Game port (host)</Label>
@@ -164,7 +211,7 @@ export function ServerSettings({
                   onChange={(e) => setHostPort(Number(e.target.value))}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Changes take effect on the next container rebuild or start.
+                  Container settings (RAM, CPU, and ports) take effect after rebuilding the container.
                 </p>
               </div>
               <fieldset className="space-y-3">
@@ -291,6 +338,11 @@ export function ServerSettings({
             </div>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
+          {savedNotice && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+              {savedNotice}
+            </p>
+          )}
           <Button type="submit" disabled={busy}>
             {busy ? 'Saving...' : 'Save'}
           </Button>

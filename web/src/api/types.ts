@@ -26,6 +26,8 @@ export interface Server {
   backup_interval_minutes: number;
   started_at?: string | null;
   uptime_seconds?: number;
+  needs_rebuild?: boolean;
+  rebuild_reasons?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -58,6 +60,8 @@ export interface ServerStatus {
   container_id: string | null;
   started_at?: string | null;
   uptime_seconds?: number;
+  needs_rebuild?: boolean;
+  rebuild_reasons?: string[];
 }
 
 export interface ConsoleLine {

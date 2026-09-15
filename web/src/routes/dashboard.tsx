@@ -77,7 +77,16 @@ export function DashboardRoute() {
                   <CardHeader>
                     <div className="flex items-start justify-between gap-2">
                       <CardTitle className="truncate">{server.name}</CardTitle>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {server.needs_rebuild && (
+                          <span
+                            data-testid="dashboard-rebuild-badge"
+                            title="Container rebuild required to apply settings"
+                            className="inline-flex items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+                          >
+                            Rebuild required
+                          </span>
+                        )}
                         <StatusBadge state={server.state} />
                         <Button
                           variant="ghost"
