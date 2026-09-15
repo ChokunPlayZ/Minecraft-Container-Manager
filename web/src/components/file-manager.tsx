@@ -11,6 +11,7 @@ import {
   FolderPlus,
   Globe,
   Layers,
+  Loader2,
   Pencil,
   RefreshCw,
   Save,
@@ -18,6 +19,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
+import { ProgressBar } from './ui/progress';
 import { api, ApiError } from '../api/client';
 import type { FileEntry, Server } from '../api/types';
 import { Button } from './ui/button';
@@ -77,6 +79,8 @@ export function FileManager({ server }: { server: Server }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadStats, setUploadStats] = useState<{ fileName: string; loaded: number; total: number } | null>(null);
+  const [activeTask, setActiveTask] = useState<{ title: string; subtext?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [url, setUrl] = useState('');
@@ -191,15 +195,21 @@ export function FileManager({ server }: { server: Server }) {
     setBusy(true);
     setError(null);
     setUploadProgress(0);
+    const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
+    const summaryName = files.length === 1 ? files[0].name : `${files.length} files (${formatSize(totalBytes)})`;
+    setUploadStats({ fileName: summaryName, loaded: 0, total: totalBytes });
     try {
       await api.uploadFiles(server.id, files, cwd, (loaded, total) => {
         setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
+        setUploadStats({ fileName: summaryName, loaded, total });
       });
       setUploadProgress(null);
+      setUploadStats(null);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Upload failed');
       setUploadProgress(null);
+      setUploadStats(null);
     } finally {
       setBusy(false);
     }
@@ -251,8 +261,13 @@ export function FileManager({ server }: { server: Server }) {
     );
     if (!zipName || !zipName.trim()) return;
     const sources = names.map((n) => joinPath(cwd, n));
-    await run(() => api.archiveFiles(server.id, sources, cwd, zipName.trim()));
-    setSelectedNames(new Set());
+    setActiveTask({ title: `Compressing ${zipName.trim()}...`, subtext: `Archiving ${names.length} items` });
+    try {
+      await run(() => api.archiveFiles(server.id, sources, cwd, zipName.trim()));
+      setSelectedNames(new Set());
+    } finally {
+      setActiveTask(null);
+    }
   }
 
   async function handleArchive(entry: FileEntry) {
@@ -263,7 +278,12 @@ export function FileManager({ server }: { server: Server }) {
       { title: 'Archive as Zip', confirmLabel: 'Archive' },
     );
     if (!zipName || !zipName.trim()) return;
-    await run(() => api.archiveFile(server.id, joinPath(cwd, entry.name), zipName.trim(), cwd));
+    setActiveTask({ title: `Compressing ${zipName.trim()}...`, subtext: `Archiving ${entry.name}` });
+    try {
+      await run(() => api.archiveFile(server.id, joinPath(cwd, entry.name), zipName.trim(), cwd));
+    } finally {
+      setActiveTask(null);
+    }
   }
 
   async function handleUnzip(entry: FileEntry) {
@@ -275,7 +295,12 @@ export function FileManager({ server }: { server: Server }) {
     );
     if (choice === null) return;
     const dest = choice.trim() ? joinPath(cwd, choice.trim()) : cwd;
-    await run(() => api.unzipFile(server.id, joinPath(cwd, entry.name), dest));
+    setActiveTask({ title: `Extracting ${entry.name}...`, subtext: `Unzipping contents into ${dest || 'current directory'}` });
+    try {
+      await run(() => api.unzipFile(server.id, joinPath(cwd, entry.name), dest));
+    } finally {
+      setActiveTask(null);
+    }
   }
 
   async function handleRename(entry: FileEntry) {
@@ -301,10 +326,15 @@ export function FileManager({ server }: { server: Server }) {
   async function handleDownloadFromUrl() {
     const trimmed = url.trim();
     if (!trimmed) return;
-    await run(() => api.downloadFromUrl(server.id, trimmed, cwd, urlName.trim() || undefined));
-    setUrl('');
-    setUrlName('');
-    setShowUrlInput(false);
+    setActiveTask({ title: 'Downloading file from URL...', subtext: trimmed });
+    try {
+      await run(() => api.downloadFromUrl(server.id, trimmed, cwd, urlName.trim() || undefined));
+      setUrl('');
+      setUrlName('');
+      setShowUrlInput(false);
+    } finally {
+      setActiveTask(null);
+    }
   }
 
   function handleEntryClick(entry: FileEntry) {
@@ -384,16 +414,43 @@ export function FileManager({ server }: { server: Server }) {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
+      {/* Active Long-Running Task Progress Bar (Unzip, Archive, URL Download) */}
+      {activeTask && (
+        <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+          <ProgressBar
+            label={
+              <span className="flex items-center gap-2 font-medium">
+                <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                <span>{activeTask.title}</span>
+              </span>
+            }
+            subtext={activeTask.subtext}
+            showPercent={false}
+            variant="default"
+            size="md"
+          />
+        </div>
+      )}
+
+      {/* Upload Progress Bar */}
       {uploadProgress !== null && (
-        <div className="flex items-center gap-3 rounded-md border p-3 text-sm">
-          <span className="shrink-0 text-muted-foreground">Uploading...</span>
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
-            <div
-              className="h-full bg-primary transition-all"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-          <span className="shrink-0 tabular-nums text-muted-foreground">{uploadProgress}%</span>
+        <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+          <ProgressBar
+            value={uploadProgress}
+            label={
+              <span className="flex items-center gap-2 truncate font-medium">
+                <Upload className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                <span className="truncate">Uploading {uploadStats?.fileName || 'files'}...</span>
+              </span>
+            }
+            subtext={
+              uploadStats && uploadStats.total > 0
+                ? `${formatSize(uploadStats.loaded)} / ${formatSize(uploadStats.total)}`
+                : undefined
+            }
+            variant="default"
+            size="md"
+          />
         </div>
       )}
 

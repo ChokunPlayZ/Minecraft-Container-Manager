@@ -24,6 +24,7 @@ import type { Mod, Server } from '../api/types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { ProgressBar } from './ui/progress';
 
 export interface ModJarPickerDialogProps {
   isOpen: boolean;
@@ -514,18 +515,17 @@ export function ModJarPickerDialog({
               </div>
 
               {uploadProgress !== null && (
-                <div className="flex items-center gap-3 rounded-lg border p-3 text-xs">
-                  <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
-                  <span className="shrink-0 text-muted-foreground">Uploading replacement jar...</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
-                    <div
-                      className="h-full bg-primary transition-all"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                  <span className="shrink-0 tabular-nums font-mono text-muted-foreground">
-                    {uploadProgress}%
-                  </span>
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 animate-fadeIn">
+                  <ProgressBar
+                    value={uploadProgress}
+                    label={
+                      <span className="flex items-center gap-2 font-medium">
+                        <UploadCloud className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                        <span>Uploading replacement jar...</span>
+                      </span>
+                    }
+                    size="sm"
+                  />
                 </div>
               )}
             </div>

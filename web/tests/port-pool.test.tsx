@@ -56,7 +56,7 @@ describe('PortPoolSettingsCard component', () => {
     });
     vi.spyOn(api, 'availablePorts').mockResolvedValue({
       available: [25565, 25566, 25567],
-      pool: '25565-25570',
+      pool: [25565, 25566, 25567, 25568, 25569, 25570],
     });
 
     render(<PortPoolSettingsCard />);
@@ -79,7 +79,7 @@ describe('PortPoolSettingsCard component', () => {
     });
     vi.spyOn(api, 'availablePorts').mockResolvedValue({
       available: [25565, 25566],
-      pool: '25565-25570',
+      pool: [25565, 25566, 25567, 25568, 25569, 25570],
     });
     const putSpy = vi.spyOn(api, 'putSettings').mockResolvedValue({
       settings: { port_pool: '25565-25575' },

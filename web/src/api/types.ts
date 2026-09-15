@@ -154,6 +154,24 @@ export interface BackupRecord {
   created_at: string;
 }
 
+export interface BackupProgress {
+  id: string;
+  server_id: string;
+  operation: 'backup' | 'restore' | 'upload';
+  stage: 'scanning' | 'compressing' | 'saving' | 'downloading' | 'extracting' | 'completed' | 'failed';
+  percent: number;
+  message: string;
+  bytes_done?: number;
+  bytes_total?: number;
+  error?: string;
+  updated_at?: string;
+}
+
+export interface BackupProgressResponse {
+  active: boolean;
+  progress?: BackupProgress;
+}
+
 export interface AvailablePortsResponse {
   available: number[];
   pool?: number[];

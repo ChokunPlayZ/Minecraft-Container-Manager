@@ -5,6 +5,7 @@ import type { InstallInfo, ServerType, VersionInfo, VersionMeta } from '../api/t
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Label } from './ui/label';
+import { ProgressBar } from './ui/progress';
 import { Select } from './ui/select';
 import { useModal } from './ui/modal';
 
@@ -159,6 +160,21 @@ export function InstallPanel({
                 </div>
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
+              {busy && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+                  <ProgressBar
+                    label={
+                      <span className="flex items-center gap-2 font-medium">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                        <span>{info?.installed ? 'Upgrading server jar...' : 'Downloading jar & setting up server...'}</span>
+                      </span>
+                    }
+                    subtext="Fetching binaries and configuring container"
+                    showPercent={false}
+                    size="md"
+                  />
+                </div>
+              )}
               <Button
                 type="submit"
                 variant="destructive"

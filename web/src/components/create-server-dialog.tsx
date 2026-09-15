@@ -33,6 +33,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { ProgressBar } from './ui/progress';
 import { Select } from './ui/select';
 
 export interface SelectedModpackState {
@@ -83,6 +84,10 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   const [modpackFile, setModpackFile] = useState<File | null>(null);
   const [modpackManifest, setModpackManifest] = useState<ModpackManifest | null>(null);
   const [inspectingModpack, setInspectingModpack] = useState(false);
+  const [inspectProgress, setInspectProgress] = useState<number | null>(null);
+  const [inspectStats, setInspectStats] = useState<{ loaded: number; total: number } | null>(null);
+  const [createProgress, setCreateProgress] = useState<number | null>(null);
+  const [createProgressStats, setCreateProgressStats] = useState<{ loaded: number; total: number } | null>(null);
 
   // Modpack search state
   const [searchSource, setSearchSource] = useState<'modrinth' | 'curseforge'>('modrinth');
@@ -237,9 +242,13 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   async function onModpackSelected(file: File) {
     setModpackFile(file);
     setInspectingModpack(true);
+    setInspectProgress(0);
     setError(null);
     try {
-      const manifest = await api.inspectModpackUpload(file);
+      const manifest = await api.inspectModpackUpload(file, (loaded, total) => {
+        if (total > 0) setInspectProgress(Math.round((loaded / total) * 100));
+        setInspectStats({ loaded, total });
+      });
       setModpackManifest(manifest);
       if (manifest.name) {
         setName(manifest.name);
@@ -262,6 +271,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       setModpackManifest(null);
     } finally {
       setInspectingModpack(false);
+      setInspectProgress(null);
+      setInspectStats(null);
     }
   }
 
@@ -455,7 +466,11 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
           created_with_modpack: true,
         });
       } else if (createMode === 'modpack' && modpackFile) {
-        await api.installModpackFile(srv.id, modpackFile, true, true);
+        setCreateProgress(0);
+        await api.installModpackFile(srv.id, modpackFile, true, true, (loaded, total) => {
+          if (total > 0) setCreateProgress(Math.round((loaded / total) * 100));
+          setCreateProgressStats({ loaded, total });
+        });
       }
       setOpen(false);
       setName('');
@@ -467,6 +482,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       setError(err instanceof ApiError ? err.detail : 'Failed to create server');
     } finally {
       setBusy(false);
+      setCreateProgress(null);
+      setCreateProgressStats(null);
     }
   }
 
@@ -848,9 +865,22 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                   </label>
 
                   {inspectingModpack && (
-                    <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground p-2">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                      Analyzing modpack manifest...
+                    <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+                      <ProgressBar
+                        value={inspectProgress}
+                        label={
+                          <span className="flex items-center gap-2 font-medium">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+                            <span>Uploading modpack archive for inspection...</span>
+                          </span>
+                        }
+                        subtext={
+                          inspectStats && inspectStats.total > 0
+                            ? `${(inspectStats.loaded / (1024 * 1024)).toFixed(1)} MB / ${(inspectStats.total / (1024 * 1024)).toFixed(1)} MB`
+                            : undefined
+                        }
+                        size="sm"
+                      />
                     </div>
                   )}
 
@@ -1030,6 +1060,33 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
               )}
 
               {error && <p className="text-sm text-destructive">{error}</p>}
+
+              {/* Server creation / modpack upload progress bar */}
+              {busy && (
+                <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+                  <ProgressBar
+                    value={createProgress}
+                    label={
+                      <span className="flex items-center gap-2 font-medium">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                        <span>
+                          {createMode === 'modpack' && createProgress !== null
+                            ? 'Uploading & installing modpack archive...'
+                            : createMode === 'search-modpack'
+                              ? 'Creating container & downloading modpack...'
+                              : 'Creating server container...'}
+                        </span>
+                      </span>
+                    }
+                    subtext={
+                      createProgressStats && createProgressStats.total > 0
+                        ? `${(createProgressStats.loaded / (1024 * 1024)).toFixed(1)} MB / ${(createProgressStats.total / (1024 * 1024)).toFixed(1)} MB`
+                        : undefined
+                    }
+                    size="md"
+                  />
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-2 border-t border-border/80">
                 <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={busy}>

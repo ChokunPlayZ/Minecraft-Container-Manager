@@ -7,6 +7,8 @@ import type {
   ServerStatus,
   ServerType,
   BackupRecord,
+  BackupProgress,
+  BackupProgressResponse,
   VersionInfo,
   VersionMeta,
   Op,
@@ -888,6 +890,48 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name: name ?? '', storage: storage ?? '' }),
     }),
+
+  getBackupProgress: (serverId: string) =>
+    request<BackupProgressResponse>(`/api/servers/${serverId}/backups/progress`),
+
+  subscribeBackupEvents: (
+    serverId: string,
+    onProgress: (p: BackupProgress) => void,
+    onError?: (err: Event) => void,
+  ) => {
+    const source = new EventSource(`/api/servers/${serverId}/backups/events`, {
+      withCredentials: true,
+    });
+    source.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data) as BackupProgress;
+        onProgress(data);
+      } catch {
+        /* ignore parse errors on comments/heartbeats */
+      }
+    };
+    if (onError) {
+      source.onerror = onError;
+    }
+    return () => source.close();
+  },
+
+  uploadBackup: (
+    serverId: string,
+    file: File,
+    name?: string,
+    storage?: 'local' | 's3',
+    onProgress?: (loaded: number, total: number) => void,
+  ) => {
+    const fields: [string, string | Blob][] = [['file', file]];
+    if (name) fields.push(['name', name]);
+    if (storage) fields.push(['storage', storage]);
+    return uploadWithProgress<BackupRecord>(
+      `/api/servers/${serverId}/backups/upload`,
+      fields,
+      onProgress,
+    );
+  },
 
   downloadBackupFile: (backupId: string, filename?: string) => {
     const a = document.createElement('a');

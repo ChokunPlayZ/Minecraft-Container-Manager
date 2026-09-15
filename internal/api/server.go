@@ -188,6 +188,9 @@ func (s *Server) routes() {
 	// Backups.
 	s.mux.HandleFunc("POST /api/servers/{id}/backup", s.requireAuth(s.wrapJSON(s.handleBackupServer)))
 	s.mux.HandleFunc("GET /api/servers/{id}/backups", s.requireAuth(s.wrapJSON(s.handleListBackups)))
+	s.mux.HandleFunc("GET /api/servers/{id}/backups/progress", s.requireAuth(s.wrapJSON(s.handleBackupProgress)))
+	s.mux.HandleFunc("GET /api/servers/{id}/backups/events", s.requireAuth(s.handleBackupEvents))
+	s.mux.HandleFunc("POST /api/servers/{id}/backups/upload", s.requireAuth(s.wrapJSON(s.handleUploadBackup)))
 	s.mux.HandleFunc("POST /api/servers/{id}/restore/{backupId}", s.requireAuth(s.wrapJSON(s.handleRestoreBackup)))
 	s.mux.HandleFunc("DELETE /api/backups/{backupId}", s.requireAuth(s.wrapJSON(s.handleDeleteBackup)))
 	s.mux.HandleFunc("GET /api/backups/{backupId}/download", s.requireAuth(s.handleDownloadBackup))

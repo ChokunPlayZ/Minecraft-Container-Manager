@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,11 +45,68 @@ type Backup struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// BackupProgress represents the progress of an active backup operation.
+type BackupProgress struct {
+	ID         string `json:"id"`
+	ServerID   string `json:"server_id"`
+	Operation  string `json:"operation"` // "backup", "restore", "upload"
+	Stage      string `json:"stage"`     // "scanning", "compressing", "saving", "downloading", "extracting", "completed", "failed"
+	Percent    int    `json:"percent"`
+	Message    string `json:"message"`
+	BytesDone  int64  `json:"bytes_done"`
+	BytesTotal int64  `json:"bytes_total"`
+	Error      string `json:"error,omitempty"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+type countingReader struct {
+	r      io.Reader
+	onRead func(n int)
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 && c.onRead != nil {
+		c.onRead(n)
+	}
+	return n, err
+}
+
+type countingWriter struct {
+	w       io.Writer
+	onWrite func(n int)
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	if n > 0 && c.onWrite != nil {
+		c.onWrite(n)
+	}
+	return n, err
+}
+
+func formatBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	i := 0
+	val := float64(bytes)
+	for val >= 1024 && i < len(units)-1 {
+		val /= 1024
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", val, units[i])
+}
+
 // Store coordinates backup records in SQLite and object movement to S3.
 type Store struct {
-	db      *sql.DB
-	client  *s3Client
-	dataDir string
+	db          *sql.DB
+	client      *s3Client
+	dataDir     string
+	mu          sync.RWMutex
+	progress    map[string]*BackupProgress
+	subscribers map[string][]chan BackupProgress
 }
 
 // S3Config configures the remote object store.
@@ -63,7 +121,12 @@ type S3Config struct {
 // New constructs a backup Store. When endpoint is empty the returned store
 // records metadata but returns ErrNotConfigured on actual upload/download.
 func New(handle *sql.DB, cfg S3Config, dataDir string) *Store {
-	s := &Store{db: handle, dataDir: dataDir}
+	s := &Store{
+		db:          handle,
+		dataDir:     dataDir,
+		progress:    make(map[string]*BackupProgress),
+		subscribers: make(map[string][]chan BackupProgress),
+	}
 	if cfg.Endpoint != "" && cfg.Bucket != "" {
 		s.client = newS3Client(cfg)
 	}
@@ -119,6 +182,66 @@ func (s *Store) Get(ctx context.Context, id string) (Backup, error) {
 	return b, nil
 }
 
+// SetProgress records active progress for a server and notifies subscribers.
+func (s *Store) SetProgress(serverID string, p BackupProgress) {
+	s.mu.Lock()
+	p.ServerID = serverID
+	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	s.progress[serverID] = &p
+	subs := append([]chan BackupProgress(nil), s.subscribers[serverID]...)
+	s.mu.Unlock()
+
+	for _, ch := range subs {
+		select {
+		case ch <- p:
+		default:
+		}
+	}
+}
+
+// ClearProgress clears any progress state for a server.
+func (s *Store) ClearProgress(serverID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.progress, serverID)
+}
+
+// GetProgress returns the active progress for a server, or nil.
+func (s *Store) GetProgress(serverID string) *BackupProgress {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p := s.progress[serverID]
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	return &cp
+}
+
+// SubscribeProgress returns a channel receiving progress updates for a server.
+func (s *Store) SubscribeProgress(serverID string) (chan BackupProgress, func()) {
+	s.mu.Lock()
+	ch := make(chan BackupProgress, 10)
+	if p, ok := s.progress[serverID]; ok && p != nil {
+		ch <- *p
+	}
+	s.subscribers[serverID] = append(s.subscribers[serverID], ch)
+	s.mu.Unlock()
+
+	cancel := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		subs := s.subscribers[serverID]
+		for i, c := range subs {
+			if c == ch {
+				s.subscribers[serverID] = append(subs[:i], subs[i+1:]...)
+				break
+			}
+		}
+	}
+	return ch, cancel
+}
+
 // Backup archives a server's world directory and saves it to local disk or S3,
 // then records the result in the database.
 func (s *Store) Backup(ctx context.Context, serverID, name string, storage ...string) (*Backup, error) {
@@ -153,18 +276,42 @@ func (s *Store) Backup(ctx context.Context, serverID, name string, storage ...st
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	s.SetProgress(serverID, BackupProgress{
+		ID:        id,
+		Operation: "backup",
+		Stage:     "scanning",
+		Percent:   5,
+		Message:   "Preparing backup...",
+	})
+
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO backups (id, server_id, name, size_bytes, location, status, created_at) VALUES (?, ?, ?, 0, ?, ?, ?)`,
 		id, serverID, name, location, StatusPending, now); err != nil {
+		s.SetProgress(serverID, BackupProgress{
+			ID:        id,
+			Operation: "backup",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "Backup failed: " + err.Error(),
+			Error:     err.Error(),
+		})
 		return nil, fmt.Errorf("insert backup record: %w", err)
 	}
 
 	backup := &Backup{ID: id, ServerID: serverID, Name: name, Location: location, Status: StatusPending, CreatedAt: now}
 
 	// Archive the current world into a temporary file.
-	archivePath, err := s.archiveWorld(ctx, serverID)
+	archivePath, err := s.archiveWorld(ctx, serverID, id)
 	if err != nil {
 		s.SetStatus(ctx, id, StatusFailed)
+		s.SetProgress(serverID, BackupProgress{
+			ID:        id,
+			Operation: "backup",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "Archive failed: " + err.Error(),
+			Error:     err.Error(),
+		})
 		return backup, err
 	}
 	defer os.Remove(archivePath)
@@ -172,61 +319,333 @@ func (s *Store) Backup(ctx context.Context, serverID, name string, storage ...st
 	stat, err := os.Stat(archivePath)
 	if err != nil {
 		s.SetStatus(ctx, id, StatusFailed)
+		s.SetProgress(serverID, BackupProgress{
+			ID:        id,
+			Operation: "backup",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "Backup failed: " + err.Error(),
+			Error:     err.Error(),
+		})
 		return backup, err
 	}
+
+	archiveSize := stat.Size()
+	s.SetProgress(serverID, BackupProgress{
+		ID:         id,
+		Operation:  "backup",
+		Stage:      "saving",
+		Percent:    75,
+		Message:    "Saving backup archive...",
+		BytesDone:  0,
+		BytesTotal: archiveSize,
+	})
 
 	if target == "local" {
 		localPath := s.localBackupPath(serverID, id)
 		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 			s.SetStatus(ctx, id, StatusFailed)
+			s.SetProgress(serverID, BackupProgress{
+				ID:        id,
+				Operation: "backup",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Failed to create backup dir: " + err.Error(),
+				Error:     err.Error(),
+			})
 			return backup, fmt.Errorf("create local backup dir: %w", err)
 		}
 		in, err := os.Open(archivePath)
 		if err != nil {
 			s.SetStatus(ctx, id, StatusFailed)
+			s.SetProgress(serverID, BackupProgress{
+				ID:        id,
+				Operation: "backup",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Failed to open archive: " + err.Error(),
+				Error:     err.Error(),
+			})
 			return backup, err
 		}
 		out, err := os.Create(localPath)
 		if err != nil {
 			in.Close()
 			s.SetStatus(ctx, id, StatusFailed)
+			s.SetProgress(serverID, BackupProgress{
+				ID:        id,
+				Operation: "backup",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Failed to write local backup: " + err.Error(),
+				Error:     err.Error(),
+			})
 			return backup, err
 		}
-		_, err = io.Copy(out, in)
+		var copied int64
+		lastUpdate := time.Now()
+		cw := &countingWriter{
+			w: out,
+			onWrite: func(n int) {
+				copied += int64(n)
+				if time.Since(lastUpdate) > 100*time.Millisecond {
+					lastUpdate = time.Now()
+					pct := 75
+					if archiveSize > 0 {
+						pct = 75 + int((float64(copied)/float64(archiveSize))*23.0)
+						if pct > 98 {
+							pct = 98
+						}
+					}
+					s.SetProgress(serverID, BackupProgress{
+						ID:         id,
+						Operation:  "backup",
+						Stage:      "saving",
+						Percent:    pct,
+						Message:    fmt.Sprintf("Saving backup to disk (%s / %s)...", formatBytes(copied), formatBytes(archiveSize)),
+						BytesDone:  copied,
+						BytesTotal: archiveSize,
+					})
+				}
+			},
+		}
+		_, err = io.Copy(cw, in)
 		in.Close()
 		cerr := out.Close()
 		if err != nil {
 			s.SetStatus(ctx, id, StatusFailed)
+			s.SetProgress(serverID, BackupProgress{
+				ID:        id,
+				Operation: "backup",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Failed copying backup: " + err.Error(),
+				Error:     err.Error(),
+			})
 			return backup, err
 		}
 		if cerr != nil {
 			s.SetStatus(ctx, id, StatusFailed)
+			s.SetProgress(serverID, BackupProgress{
+				ID:        id,
+				Operation: "backup",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Failed saving backup: " + cerr.Error(),
+				Error:     cerr.Error(),
+			})
 			return backup, cerr
 		}
 	} else {
 		f, err := os.Open(archivePath)
 		if err != nil {
 			s.SetStatus(ctx, id, StatusFailed)
+			s.SetProgress(serverID, BackupProgress{
+				ID:        id,
+				Operation: "backup",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Failed reading archive: " + err.Error(),
+				Error:     err.Error(),
+			})
 			return backup, err
 		}
 		defer f.Close()
 
-		if err := s.client.putObject(ctx, location, f); err != nil {
+		var readBytes int64
+		lastUpdate := time.Now()
+		cr := &countingReader{
+			r: f,
+			onRead: func(n int) {
+				readBytes += int64(n)
+				if time.Since(lastUpdate) > 100*time.Millisecond {
+					lastUpdate = time.Now()
+					pct := 75
+					if archiveSize > 0 {
+						pct = 75 + int((float64(readBytes)/float64(archiveSize))*23.0)
+						if pct > 98 {
+							pct = 98
+						}
+					}
+					s.SetProgress(serverID, BackupProgress{
+						ID:         id,
+						Operation:  "backup",
+						Stage:      "saving",
+						Percent:    pct,
+						Message:    fmt.Sprintf("Uploading backup to cloud (%s / %s)...", formatBytes(readBytes), formatBytes(archiveSize)),
+						BytesDone:  readBytes,
+						BytesTotal: archiveSize,
+					})
+				}
+			},
+		}
+
+		if err := s.client.putObject(ctx, location, cr); err != nil {
 			s.SetStatus(ctx, id, StatusFailed)
+			s.SetProgress(serverID, BackupProgress{
+				ID:        id,
+				Operation: "backup",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Cloud upload failed: " + err.Error(),
+				Error:     err.Error(),
+			})
 			return backup, err
 		}
 	}
 
 	if _, err := s.db.ExecContext(ctx,
 		`UPDATE backups SET size_bytes=?, status=? WHERE id=?`, stat.Size(), StatusCompleted, id); err != nil {
+		s.SetProgress(serverID, BackupProgress{
+			ID:        id,
+			Operation: "backup",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "Database update failed: " + err.Error(),
+			Error:     err.Error(),
+		})
 		return backup, err
 	}
 	backup.SizeBytes = stat.Size()
 	backup.Status = StatusCompleted
 
+	s.SetProgress(serverID, BackupProgress{
+		ID:         id,
+		Operation:  "backup",
+		Stage:      "completed",
+		Percent:    100,
+		Message:    "Backup created successfully",
+		BytesDone:  stat.Size(),
+		BytesTotal: stat.Size(),
+	})
+
 	if err := s.enforceRetention(ctx, serverID); err != nil {
 		return backup, err
 	}
+	return backup, nil
+}
+
+// UploadBackup saves an uploaded archive (.tar.gz or .zip) as a backup record.
+func (s *Store) UploadBackup(ctx context.Context, serverID, name string, r io.Reader, size int64, storage ...string) (*Backup, error) {
+	target := ""
+	if len(storage) > 0 && storage[0] != "" {
+		target = strings.ToLower(strings.TrimSpace(storage[0]))
+	} else if s.db != nil {
+		var val string
+		if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'backup_storage_type'`).Scan(&val); err == nil && val != "" {
+			target = strings.ToLower(strings.TrimSpace(val))
+		}
+	}
+	if target == "" {
+		if s.client != nil {
+			target = "s3"
+		} else {
+			target = "local"
+		}
+	}
+
+	if target == "s3" && s.client == nil {
+		return nil, ErrNotConfigured
+	}
+
+	if name == "" {
+		name = "uploaded-" + time.Now().UTC().Format("2006-01-02T15-04-05")
+	}
+	id := uuid.NewString()
+	location := s.objectKey(id, serverID)
+	if target == "local" {
+		location = "local:" + location
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	s.SetProgress(serverID, BackupProgress{
+		ID:         id,
+		Operation:  "upload",
+		Stage:      "saving",
+		Percent:    10,
+		Message:    "Saving uploaded backup...",
+		BytesDone:  0,
+		BytesTotal: size,
+	})
+
+	var writtenSize int64
+	if target == "local" {
+		localPath := s.localBackupPath(serverID, id)
+		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return nil, fmt.Errorf("create local backup dir: %w", err)
+		}
+		out, err := os.Create(localPath)
+		if err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
+		defer out.Close()
+
+		n, err := io.Copy(out, r)
+		if err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
+		writtenSize = n
+	} else {
+		tmpFile, err := os.CreateTemp("", "mcm_backup_upload_*.tar.gz")
+		if err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
+		defer func() {
+			tmpFile.Close()
+			os.Remove(tmpFile.Name())
+		}()
+		n, err := io.Copy(tmpFile, r)
+		if err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
+		writtenSize = n
+		if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
+		if err := s.client.putObject(ctx, location, tmpFile); err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return nil, err
+		}
+	}
+
+	if size > 0 && writtenSize == 0 {
+		writtenSize = size
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO backups (id, server_id, name, size_bytes, location, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, serverID, name, writtenSize, location, StatusCompleted, now); err != nil {
+		s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+		return nil, fmt.Errorf("insert backup record: %w", err)
+	}
+
+	backup := &Backup{
+		ID:        id,
+		ServerID:  serverID,
+		Name:      name,
+		SizeBytes: writtenSize,
+		Location:  location,
+		Status:    StatusCompleted,
+		CreatedAt: now,
+	}
+
+	s.SetProgress(serverID, BackupProgress{
+		ID:         id,
+		Operation:  "upload",
+		Stage:      "completed",
+		Percent:    100,
+		Message:    "Backup uploaded successfully",
+		BytesDone:  writtenSize,
+		BytesTotal: writtenSize,
+	})
+
+	_ = s.enforceRetention(ctx, serverID)
 	return backup, nil
 }
 
@@ -237,19 +656,63 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 	if err != nil {
 		return err
 	}
+
+	s.SetProgress(b.ServerID, BackupProgress{
+		ID:        b.ID,
+		Operation: "restore",
+		Stage:     "downloading",
+		Percent:   5,
+		Message:   "Preparing backup for restoration...",
+	})
+
 	if strings.HasPrefix(b.Location, "local:") {
 		archivePath := s.localBackupPath(b.ServerID, b.ID)
 		if _, err := os.Stat(archivePath); err != nil {
+			s.SetProgress(b.ServerID, BackupProgress{
+				ID:        b.ID,
+				Operation: "restore",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   "Local backup file not accessible",
+				Error:     err.Error(),
+			})
 			return fmt.Errorf("local backup file not accessible: %w", err)
 		}
-		return s.extractWorld(ctx, b.ServerID, archivePath)
+		return s.extractWorld(ctx, b.ServerID, archivePath, b.ID)
 	}
 
 	if s.client == nil {
+		s.SetProgress(b.ServerID, BackupProgress{
+			ID:        b.ID,
+			Operation: "restore",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "S3 backup storage is not configured",
+			Error:     ErrNotConfigured.Error(),
+		})
 		return ErrNotConfigured
 	}
+
+	s.SetProgress(b.ServerID, BackupProgress{
+		ID:         b.ID,
+		Operation:  "restore",
+		Stage:      "downloading",
+		Percent:    10,
+		Message:    "Downloading cloud backup...",
+		BytesDone:  0,
+		BytesTotal: b.SizeBytes,
+	})
+
 	rc, err := s.client.getObject(ctx, b.Location)
 	if err != nil {
+		s.SetProgress(b.ServerID, BackupProgress{
+			ID:        b.ID,
+			Operation: "restore",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "Failed to download cloud backup: " + err.Error(),
+			Error:     err.Error(),
+		})
 		return err
 	}
 	defer rc.Close()
@@ -257,17 +720,62 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 	archivePath := filepath.Join(os.TempDir(), "mcm-restore-"+backupID+".tar.gz")
 	out, err := os.Create(archivePath)
 	if err != nil {
+		s.SetProgress(b.ServerID, BackupProgress{
+			ID:        b.ID,
+			Operation: "restore",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "Failed creating temp file: " + err.Error(),
+			Error:     err.Error(),
+		})
 		return err
 	}
-	if _, err := io.Copy(out, rc); err != nil {
+
+	var copied int64
+	lastUpdate := time.Now()
+	cw := &countingWriter{
+		w: out,
+		onWrite: func(n int) {
+			copied += int64(n)
+			if time.Since(lastUpdate) > 100*time.Millisecond {
+				lastUpdate = time.Now()
+				pct := 10
+				if b.SizeBytes > 0 {
+					pct = 10 + int((float64(copied)/float64(b.SizeBytes))*40.0)
+					if pct > 50 {
+						pct = 50
+					}
+				}
+				s.SetProgress(b.ServerID, BackupProgress{
+					ID:         b.ID,
+					Operation:  "restore",
+					Stage:      "downloading",
+					Percent:    pct,
+					Message:    fmt.Sprintf("Downloading cloud backup (%s / %s)...", formatBytes(copied), formatBytes(b.SizeBytes)),
+					BytesDone:  copied,
+					BytesTotal: b.SizeBytes,
+				})
+			}
+		},
+	}
+
+	if _, err := io.Copy(cw, rc); err != nil {
 		out.Close()
 		os.Remove(archivePath)
+		s.SetProgress(b.ServerID, BackupProgress{
+			ID:        b.ID,
+			Operation: "restore",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   "Cloud download failed: " + err.Error(),
+			Error:     err.Error(),
+		})
 		return err
 	}
 	out.Close()
 	defer os.Remove(archivePath)
 
-	return s.extractWorld(ctx, b.ServerID, archivePath)
+	return s.extractWorld(ctx, b.ServerID, archivePath, b.ID)
 }
 
 // Delete removes a backup from storage and its database record.
@@ -365,11 +873,35 @@ func (s *Store) enforceRetention(ctx context.Context, serverID string) error {
 
 // archiveWorld tar.gz's the contents of a server data directory (excluding a
 // lock file) into a temporary file and returns its path.
-func (s *Store) archiveWorld(ctx context.Context, serverID string) (string, error) {
+func (s *Store) archiveWorld(ctx context.Context, serverID string, backupIDOpt ...string) (string, error) {
+	backupID := ""
+	if len(backupIDOpt) > 0 {
+		backupID = backupIDOpt[0]
+	}
 	srcDir := s.serverDataDir(serverID)
 	if fi, err := os.Stat(srcDir); err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("server data directory %s is not accessible", srcDir)
 	}
+
+	s.SetProgress(serverID, BackupProgress{
+		ID:        backupID,
+		Operation: "backup",
+		Stage:     "scanning",
+		Percent:   5,
+		Message:   "Scanning server directory...",
+	})
+
+	var totalBytes int64
+	var totalFiles int
+	_ = filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				totalBytes += info.Size()
+				totalFiles++
+			}
+		}
+		return nil
+	})
 
 	archivePath := filepath.Join(os.TempDir(), "mcm-backup-"+uuid.NewString()+".tar.gz")
 	f, err := os.Create(archivePath)
@@ -378,6 +910,9 @@ func (s *Store) archiveWorld(ctx context.Context, serverID string) (string, erro
 	}
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
+
+	var processedBytes int64
+	lastUpdate := time.Now()
 
 	err = filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -412,7 +947,32 @@ func (s *Store) archiveWorld(ctx context.Context, serverID string) (string, erro
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(tw, in); err != nil {
+			cr := &countingReader{
+				r: in,
+				onRead: func(n int) {
+					processedBytes += int64(n)
+					if time.Since(lastUpdate) > 100*time.Millisecond {
+						lastUpdate = time.Now()
+						pct := 5
+						if totalBytes > 0 {
+							pct = 5 + int((float64(processedBytes)/float64(totalBytes))*70.0)
+							if pct > 75 {
+								pct = 75
+							}
+						}
+						s.SetProgress(serverID, BackupProgress{
+							ID:         backupID,
+							Operation:  "backup",
+							Stage:      "compressing",
+							Percent:    pct,
+							Message:    fmt.Sprintf("Compressing world files (%s / %s)...", formatBytes(processedBytes), formatBytes(totalBytes)),
+							BytesDone:  processedBytes,
+							BytesTotal: totalBytes,
+						})
+					}
+				},
+			}
+			if _, err := io.Copy(tw, cr); err != nil {
 				in.Close()
 				return err
 			}
@@ -446,18 +1006,62 @@ func (s *Store) archiveWorld(ctx context.Context, serverID string) (string, erro
 }
 
 // extractWorld restores a tar.gz archive into a server data directory.
-func (s *Store) extractWorld(ctx context.Context, serverID, archivePath string) error {
+func (s *Store) extractWorld(ctx context.Context, serverID, archivePath string, backupIDOpt ...string) error {
+	backupID := ""
+	if len(backupIDOpt) > 0 {
+		backupID = backupIDOpt[0]
+	}
+	startPct := 10
+	endPct := 98
 	dstDir := s.serverDataDir(serverID)
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 		return err
 	}
 	f, err := os.Open(archivePath)
 	if err != nil {
+		s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 		return err
 	}
 	defer f.Close()
-	gz, err := gzip.NewReader(f)
+
+	stat, _ := f.Stat()
+	archiveSize := int64(0)
+	if stat != nil {
+		archiveSize = stat.Size()
+	}
+
+	var readBytes int64
+	lastUpdate := time.Now()
+	cr := &countingReader{
+		r: f,
+		onRead: func(n int) {
+			readBytes += int64(n)
+			if time.Since(lastUpdate) > 100*time.Millisecond {
+				lastUpdate = time.Now()
+				pct := startPct
+				if archiveSize > 0 {
+					pct = startPct + int((float64(readBytes)/float64(archiveSize))*float64(endPct-startPct))
+					if pct > endPct {
+						pct = endPct
+					}
+				}
+				s.SetProgress(serverID, BackupProgress{
+					ID:         backupID,
+					Operation:  "restore",
+					Stage:      "extracting",
+					Percent:    pct,
+					Message:    fmt.Sprintf("Extracting world files (%s / %s)...", formatBytes(readBytes), formatBytes(archiveSize)),
+					BytesDone:  readBytes,
+					BytesTotal: archiveSize,
+				})
+			}
+		},
+	}
+
+	gz, err := gzip.NewReader(cr)
 	if err != nil {
+		s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 		return err
 	}
 	defer gz.Close()
@@ -466,6 +1070,7 @@ func (s *Store) extractWorld(ctx context.Context, serverID, archivePath string) 
 	for {
 		select {
 		case <-ctx.Done():
+			s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: ctx.Err().Error(), Error: ctx.Err().Error()})
 			return ctx.Err()
 		default:
 		}
@@ -474,33 +1079,50 @@ func (s *Store) extractWorld(ctx context.Context, serverID, archivePath string) 
 			break
 		}
 		if err != nil {
+			s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 			return err
 		}
 		name := filepath.FromSlash(hdr.Name)
 		// Guard against path traversal.
 		if strings.Contains(name, "..") || filepath.IsAbs(name) {
-			return fmt.Errorf("archive contains unsafe path %q", hdr.Name)
+			err := fmt.Errorf("archive contains unsafe path %q", hdr.Name)
+			s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+			return err
 		}
 		target := filepath.Join(dstDir, name)
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
+				s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 				return err
 			}
 		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 				return err
 			}
 			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(hdr.Mode))
 			if err != nil {
+				s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 				return err
 			}
 			if _, err := io.Copy(out, tr); err != nil {
 				out.Close()
+				s.SetProgress(serverID, BackupProgress{ID: backupID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
 				return err
 			}
 			out.Close()
 		}
 	}
+
+	s.SetProgress(serverID, BackupProgress{
+		ID:         backupID,
+		Operation:  "restore",
+		Stage:      "completed",
+		Percent:    100,
+		Message:    "World restored successfully",
+		BytesDone:  archiveSize,
+		BytesTotal: archiveSize,
+	})
 	return nil
 }

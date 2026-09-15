@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/mcm-panel/mcm/internal/backups"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -25,7 +30,101 @@ func (s *Server) handleBackupServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	b, err := s.backups.Backup(r.Context(), id, body.Name, body.Storage)
+	b, err := s.backups.Backup(context.WithoutCancel(r.Context()), id, body.Name, body.Storage)
+	if err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, b)
+}
+
+func (s *Server) handleBackupProgress(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.servers.Get(r.Context(), id); err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	prog := s.backups.GetProgress(id)
+	if prog == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"active":   true,
+		"progress": prog,
+	})
+}
+
+func (s *Server) handleBackupEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.servers.Get(r.Context(), id); err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal", "streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ch, cancel := s.backups.SubscribeProgress(id)
+	defer cancel()
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
+		case prog, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(prog)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) handleUploadBackup(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.servers.Get(r.Context(), id); err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	if err := r.ParseMultipartForm(512 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse upload")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing file parameter")
+		return
+	}
+	defer file.Close()
+
+	name := r.FormValue("name")
+	if name == "" && header != nil {
+		name = strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))
+		name = strings.TrimSuffix(name, ".tar")
+	}
+	storage := r.FormValue("storage")
+
+	b, err := s.backups.UploadBackup(context.WithoutCancel(r.Context()), id, name, file, header.Size, storage)
 	if err != nil {
 		s.writeBackupErr(w, err)
 		return
@@ -53,7 +152,7 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 		s.writeServerErr(w, err)
 		return
 	}
-	if err := s.backups.Restore(r.Context(), r.PathValue("backupId")); err != nil {
+	if err := s.backups.Restore(context.WithoutCancel(r.Context()), r.PathValue("backupId")); err != nil {
 		s.writeBackupErr(w, err)
 		return
 	}

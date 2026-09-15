@@ -12,6 +12,7 @@ import { api, ApiError } from '../api/client';
 import type { InstallModpackOptions, ModpackManifest, Server } from '../api/types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { ProgressBar } from './ui/progress';
 
 interface ModpackInstallDialogProps {
   server: Server;
@@ -243,24 +244,18 @@ export function ModpackInstallDialog({
 
           {/* Progress / Status */}
           {installing && (
-            <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-medium text-foreground flex items-center gap-2">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                  {statusText}
-                </span>
-                {progress !== null && (
-                  <span className="font-bold text-primary">{progress}%</span>
-                )}
-              </div>
-              {progress !== null && (
-                <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
-                  <div
-                    className="h-full bg-primary transition-all duration-300"
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-              )}
+            <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+              <ProgressBar
+                value={progress}
+                label={
+                  <span className="font-medium text-foreground flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+                    <span>{statusText}</span>
+                  </span>
+                }
+                variant="default"
+                size="md"
+              />
             </div>
           )}
 

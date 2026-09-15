@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mcm-panel/mcm/internal/db"
@@ -228,4 +229,60 @@ func TestLocalBackupLifecycle(t *testing.T) {
 		t.Errorf("expected ErrNotFound from Get, got: %v", err)
 	}
 }
+
+func TestBackupProgressAndUpload(t *testing.T) {
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+	serverID := "srv-prog-test"
+
+	srcDir := s.serverDataDir(serverID)
+	if err := os.MkdirAll(filepath.Join(srcDir, "world"), 0o755); err != nil {
+		t.Fatalf("mkdir world: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "world", "level.dat"), []byte("test-progress-world"), 0o644); err != nil {
+		t.Fatalf("write level.dat: %v", err)
+	}
+
+	// Subscribe to progress
+	ch, cancel := s.SubscribeProgress(serverID)
+	defer cancel()
+
+	b, err := s.Backup(ctx, serverID, "prog-backup", "local")
+	if err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	if b == nil || b.ID == "" {
+		t.Fatalf("expected valid backup, got: %#v", b)
+	}
+
+	// Check that we received progress
+	select {
+	case p := <-ch:
+		if p.ServerID != serverID {
+			t.Errorf("unexpected server ID in progress: %s", p.ServerID)
+		}
+	default:
+	}
+
+	p := s.GetProgress(serverID)
+	if p == nil || p.Stage != "completed" || p.Percent != 100 {
+		t.Fatalf("expected completed progress, got: %#v", p)
+	}
+
+	// Test UploadBackup
+	uploadContent := "test-uploaded-tar-content"
+	upBackup, err := s.UploadBackup(ctx, serverID, "manual-upload", strings.NewReader(uploadContent), int64(len(uploadContent)), "local")
+	if err != nil {
+		t.Fatalf("UploadBackup: %v", err)
+	}
+	if upBackup.SizeBytes != int64(len(uploadContent)) {
+		t.Errorf("expected size %d, got %d", len(uploadContent), upBackup.SizeBytes)
+	}
+
+	upProg := s.GetProgress(serverID)
+	if upProg == nil || upProg.Operation != "upload" || upProg.Stage != "completed" {
+		t.Fatalf("expected completed upload progress, got: %#v", upProg)
+	}
+}
+
 

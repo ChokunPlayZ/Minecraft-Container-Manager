@@ -23,6 +23,7 @@ import type {
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { ProgressBar } from './ui/progress';
 import { useModal } from './ui/modal';
 import { ModpackInstallDialog } from './modpack-install-dialog';
 
@@ -52,6 +53,8 @@ export function ModpacksPanel({
   const [dialogFile, setDialogFile] = useState<File | undefined>(undefined);
 
   const [uninstalling, setUninstalling] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadStats, setUploadStats] = useState<{ fileName: string; loaded: number; total: number } | null>(null);
   const { confirm, dialog } = useModal();
 
   // Modpack update state
@@ -167,8 +170,13 @@ export function ModpacksPanel({
 
   async function handleFileSelect(file: File) {
     if (!installedModpack) return;
+    setUploadProgress(0);
+    setUploadStats({ fileName: file.name, loaded: 0, total: file.size });
     try {
-      const manifest = await api.inspectModpackFile(server.id, file);
+      const manifest = await api.inspectModpackFile(server.id, file, (loaded, total) => {
+        if (total > 0) setUploadProgress(Math.round((loaded / total) * 100));
+        setUploadStats({ fileName: file.name, loaded, total });
+      });
       setDialogManifest(manifest);
       setDialogOptions({
         source: 'upload',
@@ -176,6 +184,9 @@ export function ModpacksPanel({
       setDialogFile(file);
     } catch (err) {
       setPackVersionsError(err instanceof Error ? err.message : 'Failed to inspect modpack archive');
+    } finally {
+      setUploadProgress(null);
+      setUploadStats(null);
     }
   }
 
@@ -469,24 +480,46 @@ export function ModpacksPanel({
               </div>
             ) : (
               <div className="rounded-xl border border-border/80 bg-card p-6 text-center space-y-3">
-                <Package className="h-8 w-8 text-muted-foreground mx-auto" />
-                <h4 className="text-sm font-semibold text-foreground">Upload Updated Modpack Archive</h4>
-                <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                  To update <strong>{installedModpack.name}</strong>, upload an updated <code>.mrpack</code> or <code>.zip</code> archive.
-                </p>
-                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 bg-primary/10 text-primary font-semibold text-xs cursor-pointer hover:bg-primary/20 transition-all">
-                  <UploadCloud className="h-3.5 w-3.5" />
-                  Choose Update File
-                  <input
-                    type="file"
-                    accept=".mrpack,.zip"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void handleFileSelect(f);
-                    }}
-                  />
-                </label>
+                {uploadProgress !== null ? (
+                  <div className="text-left py-2">
+                    <ProgressBar
+                      value={uploadProgress}
+                      label={
+                        <span className="flex items-center gap-2 font-medium truncate">
+                          <UploadCloud className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                          <span className="truncate">Uploading {uploadStats?.fileName || 'modpack'}...</span>
+                        </span>
+                      }
+                      subtext={
+                        uploadStats && uploadStats.total > 0
+                          ? `${(uploadStats.loaded / (1024 * 1024)).toFixed(1)} MB / ${(uploadStats.total / (1024 * 1024)).toFixed(1)} MB`
+                          : undefined
+                      }
+                      size="md"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <Package className="h-8 w-8 text-muted-foreground mx-auto" />
+                    <h4 className="text-sm font-semibold text-foreground">Upload Updated Modpack Archive</h4>
+                    <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                      To update <strong>{installedModpack.name}</strong>, upload an updated <code>.mrpack</code> or <code>.zip</code> archive.
+                    </p>
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 bg-primary/10 text-primary font-semibold text-xs cursor-pointer hover:bg-primary/20 transition-all">
+                      <UploadCloud className="h-3.5 w-3.5" />
+                      Choose Update File
+                      <input
+                        type="file"
+                        accept=".mrpack,.zip"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void handleFileSelect(f);
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
               </div>
             )}
           </div>

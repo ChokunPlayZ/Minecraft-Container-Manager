@@ -21,6 +21,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
+import { ProgressBar } from './ui/progress';
 import { useModal } from './ui/modal';
 import { CatalogBrowser } from './catalog-browser';
 import { ModpacksPanel } from './modpacks-panel';
@@ -36,6 +37,7 @@ export function ModsPanel({ server }: { server: Server }) {
   const [installedModpack, setInstalledModpack] = useState<InstalledModpack | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadStats, setUploadStats] = useState<{ fileName: string; loaded: number; total: number } | null>(null);
   const [installedSearch, setInstalledSearch] = useState('');
   const [updates, setUpdates] = useState<Record<string, ModUpdateInfo>>({});
   const [checkingUpdates, setCheckingUpdates] = useState(false);
@@ -163,20 +165,24 @@ export function ModsPanel({ server }: { server: Server }) {
     }
 
     setUploadProgress(0);
+    setUploadStats({ fileName: file.name, loaded: 0, total: file.size });
     try {
       await api.uploadMod(
         server.id,
         file,
         (loaded, total) => {
           setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0);
+          setUploadStats({ fileName: file.name, loaded, total });
         },
         deleteOldName,
       );
       setUploadProgress(null);
+      setUploadStats(null);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Upload failed');
       setUploadProgress(null);
+      setUploadStats(null);
     }
   }
 
@@ -429,17 +435,22 @@ export function ModsPanel({ server }: { server: Server }) {
               {error && <p className="text-sm text-destructive">{error}</p>}
 
               {uploadProgress !== null && (
-                <div className="flex items-center gap-3 rounded-md border p-3 text-sm">
-                  <span className="shrink-0 text-muted-foreground">Uploading...</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-secondary">
-                    <div
-                      className="h-full bg-primary transition-all"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {uploadProgress}%
-                  </span>
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+                  <ProgressBar
+                    value={uploadProgress}
+                    label={
+                      <span className="flex items-center gap-2 truncate font-medium">
+                        <UploadCloud className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                        <span className="truncate">Uploading {uploadStats?.fileName || 'file'}...</span>
+                      </span>
+                    }
+                    subtext={
+                      uploadStats && uploadStats.total > 0
+                        ? `${(uploadStats.loaded / (1024 * 1024)).toFixed(1)} MB / ${(uploadStats.total / (1024 * 1024)).toFixed(1)} MB`
+                        : undefined
+                    }
+                    size="md"
+                  />
                 </div>
               )}
 
