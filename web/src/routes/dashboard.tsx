@@ -1,7 +1,9 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { Clock } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../api/client';
 import type { Server } from '../api/types';
+import { formatUptimeFromStartedAt } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
 import { CreateServerDialog } from '../components/create-server-dialog';
 import { RequireAuth } from '../components/require-auth';
@@ -13,7 +15,7 @@ export const Route = createFileRoute('/dashboard')({
   component: DashboardRoute,
 });
 
-function DashboardRoute() {
+export function DashboardRoute() {
   const [servers, setServers] = useState<Server[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +90,19 @@ function DashboardRoute() {
                         <dt className="text-muted-foreground">Port</dt>
                         <dd>{server.host_port}</dd>
                       </div>
+                      {server.state === 'running' && (server.started_at || server.uptime_seconds != null) && (
+                        <div
+                          data-testid="dashboard-server-uptime"
+                          className="col-span-2 flex items-center justify-between border-t pt-2 mt-1 text-xs"
+                        >
+                          <span className="text-muted-foreground flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-emerald-500" /> Uptime
+                          </span>
+                          <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                            {formatUptimeFromStartedAt(server.started_at, server.uptime_seconds)}
+                          </span>
+                        </div>
+                      )}
                     </dl>
                   </CardContent>
                 </Card>

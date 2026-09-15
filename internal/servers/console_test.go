@@ -39,6 +39,9 @@ func (f *fakeRuntime) Kill(context.Context, string) error { return nil }
 func (f *fakeRuntime) Status(context.Context, string) (string, error) {
 	return "stopped", nil
 }
+func (f *fakeRuntime) Inspect(context.Context, string) (docker.ContainerState, error) {
+	return docker.ContainerState{Status: "stopped"}, nil
+}
 func (f *fakeRuntime) Exists(_ context.Context, id string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

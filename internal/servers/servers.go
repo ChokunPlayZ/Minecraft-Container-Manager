@@ -34,6 +34,7 @@ type dockerRuntime interface {
 	Stop(ctx context.Context, containerID string, timeout time.Duration) error
 	Kill(ctx context.Context, containerID string) error
 	Status(ctx context.Context, containerID string) (string, error)
+	Inspect(ctx context.Context, containerID string) (docker.ContainerState, error)
 	Exists(ctx context.Context, containerID string) (bool, error)
 	Logs(ctx context.Context, containerID string, follow bool) (io.ReadCloser, error)
 	SendConsole(ctx context.Context, containerID, command string) error
@@ -84,8 +85,10 @@ type Server struct {
 	State         string      `json:"state"`
 	// Backup settings. BackupEnabled defaults to true; BackupIntervalMinutes
 	// is the minutes between automatic backups (default 720).
-	BackupEnabled         bool `json:"backup_enabled"`
+	BackupEnabled         bool   `json:"backup_enabled"`
 	BackupIntervalMinutes int    `json:"backup_interval_minutes"`
+	StartedAt             string `json:"started_at,omitempty"`
+	UptimeSeconds         int64  `json:"uptime_seconds,omitempty"`
 	CreatedAt             string `json:"created_at"`
 	UpdatedAt             string `json:"updated_at"`
 }
@@ -224,10 +227,32 @@ func (s *Store) Pool() *ports.Pool {
 	return s.ports
 }
 
+// calcUptime computes the uptime duration in seconds for a running server.
+func calcUptime(srv *Server) {
+	if srv.State != StateRunning || srv.StartedAt == "" {
+		srv.UptimeSeconds = 0
+		if srv.State != StateRunning {
+			srv.StartedAt = ""
+		}
+		return
+	}
+	t, err := time.Parse(time.RFC3339Nano, srv.StartedAt)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, srv.StartedAt)
+	}
+	if err == nil {
+		sec := int64(time.Since(t).Seconds())
+		if sec < 0 {
+			sec = 0
+		}
+		srv.UptimeSeconds = sec
+	}
+}
+
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,'') FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -239,10 +264,11 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 	for rows.Next() {
 		var srv Server
 		var extra string
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt); err != nil {
 			return nil, err
 		}
 		srv.ExtraPorts = decodeExtraPorts(extra)
+		calcUptime(&srv)
 		out = append(out, srv)
 	}
 	return out, rows.Err()
@@ -253,8 +279,8 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var srv Server
 	var extra string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,'') FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}
@@ -262,6 +288,7 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 		return Server{}, err
 	}
 	srv.ExtraPorts = decodeExtraPorts(extra)
+	calcUptime(&srv)
 	return srv, nil
 }
 
@@ -442,7 +469,8 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 		_ = s.setState(ctx, id, StateError)
 		return Server{}, err
 	}
-	if err := s.setState(ctx, id, StateRunning); err != nil {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := s.setStateWithStartedAt(ctx, id, StateRunning, &now); err != nil {
 		return Server{}, err
 	}
 	if s.dns != nil {
@@ -523,7 +551,7 @@ func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
 		// recorded id so ensureContainer rebuilds it on next start.
 		_ = s.docker.Remove(ctx, srv.ContainerID)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id='', state=?, updated_at=? WHERE id=?`,
+	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id='', state=?, started_at=NULL, updated_at=? WHERE id=?`,
 		StateStopped, time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return Server{}, err
@@ -544,14 +572,26 @@ func (s *Store) Status(ctx context.Context, id string) (Server, error) {
 	if srv.ContainerID == "" {
 		return srv, nil
 	}
-	status, err := s.docker.Status(ctx, srv.ContainerID)
+	insp, err := s.docker.Inspect(ctx, srv.ContainerID)
 	if err != nil {
 		return srv, nil
 	}
-	mapped := mapDockerState(status)
+	mapped := mapDockerState(insp.Status)
 	if mapped != srv.State {
-		_ = s.setState(ctx, id, mapped)
-		srv.State = mapped
+		if mapped == StateRunning {
+			started := insp.StartedAt
+			if started == "" {
+				started = time.Now().UTC().Format(time.RFC3339)
+			}
+			_ = s.setStateWithStartedAt(ctx, id, mapped, &started)
+		} else {
+			_ = s.setState(ctx, id, mapped)
+		}
+		return s.Get(ctx, id)
+	}
+	if mapped == StateRunning && srv.StartedAt == "" && insp.StartedAt != "" {
+		_ = s.setStateWithStartedAt(ctx, id, mapped, &insp.StartedAt)
+		return s.Get(ctx, id)
 	}
 	return srv, nil
 }
@@ -664,8 +704,24 @@ func (s *Store) dockerDataPath(id string) string {
 }
 
 func (s *Store) setState(ctx context.Context, id, state string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if state != StateRunning {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE servers SET state=?, started_at=NULL, updated_at=? WHERE id=?`, state, now, id)
+		return err
+	}
+	return s.setStateWithStartedAt(ctx, id, state, &now)
+}
+
+func (s *Store) setStateWithStartedAt(ctx context.Context, id, state string, startedAt *string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if startedAt == nil {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE servers SET state=?, started_at=NULL, updated_at=? WHERE id=?`, state, now, id)
+		return err
+	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET state=?, updated_at=? WHERE id=?`, state, time.Now().UTC().Format(time.RFC3339), id)
+		`UPDATE servers SET state=?, started_at=?, updated_at=? WHERE id=?`, state, *startedAt, now, id)
 	return err
 }
 

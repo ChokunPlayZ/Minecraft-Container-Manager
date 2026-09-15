@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  Clock,
   Copy,
   Cpu,
   Download,
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server, ServerState } from '../api/types';
+import { useLiveUptime } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
 import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
@@ -59,6 +61,8 @@ export function ServerDetailRoute() {
   const [tab, setTab] = useState<ServerTab>('console');
   const [server, setServer] = useState<Server | null>(null);
   const [statusState, setStatusState] = useState<ServerState | null>(null);
+  const [statusStartedAt, setStatusStartedAt] = useState<string | null | undefined>(undefined);
+  const [statusUptimeSeconds, setStatusUptimeSeconds] = useState<number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
@@ -86,6 +90,8 @@ export function ServerDetailRoute() {
       const s = await api.getServer(id);
       setServer(s);
       setStatusState(s.state);
+      setStatusStartedAt(s.started_at);
+      setStatusUptimeSeconds(s.uptime_seconds);
       void loadDns(id);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to load server');
@@ -97,6 +103,12 @@ export function ServerDetailRoute() {
     try {
       const status = await api.serverStatus(id);
       setStatusState(status.state);
+      if (status.started_at !== undefined) {
+        setStatusStartedAt(status.started_at);
+      }
+      if (status.uptime_seconds !== undefined) {
+        setStatusUptimeSeconds(status.uptime_seconds);
+      }
     } catch {
       /* keep last known */
     }
@@ -122,6 +134,8 @@ export function ServerDetailRoute() {
         const updated = await fn();
         setServer(updated);
         setStatusState(updated.state);
+        setStatusStartedAt(updated.started_at);
+        setStatusUptimeSeconds(updated.uptime_seconds);
       } catch (err) {
         setError(err instanceof ApiError ? err.detail : 'Action failed');
       } finally {
@@ -160,6 +174,8 @@ export function ServerDetailRoute() {
       const updated = await api.recreateServer(server.id);
       setServer(updated);
       setStatusState('stopped');
+      setStatusStartedAt(null);
+      setStatusUptimeSeconds(0);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to rebuild container');
     } finally {
@@ -180,6 +196,8 @@ export function ServerDetailRoute() {
       const updated = await api.killServer(server.id);
       setServer(updated);
       setStatusState(updated.state);
+      setStatusStartedAt(null);
+      setStatusUptimeSeconds(0);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to kill server');
     } finally {
@@ -208,6 +226,13 @@ export function ServerDetailRoute() {
     setTimeout(() => setCopiedAddress(false), 2000);
   }
 
+  const state = statusState ?? server?.state ?? 'stopped';
+  const isRunning = state === 'running';
+  const effectiveStartedAt = statusStartedAt !== undefined ? statusStartedAt : server?.started_at;
+  const effectiveUptimeSec = statusUptimeSeconds !== undefined ? statusUptimeSeconds : server?.uptime_seconds;
+  const liveUptime = useLiveUptime(effectiveStartedAt, effectiveUptimeSec, isRunning);
+  const effectiveTab = tab === 'overview' ? 'console' : tab;
+
   if (!server) {
     return (
       <RequireAuth>
@@ -219,10 +244,6 @@ export function ServerDetailRoute() {
       </RequireAuth>
     );
   }
-
-  const state = statusState ?? server.state;
-  const isRunning = state === 'running';
-  const effectiveTab = tab === 'overview' ? 'console' : tab;
 
   const TABS: { id: ServerTab; label: string; icon: typeof Terminal }[] = [
     { id: 'console', label: 'Console', icon: Terminal },
@@ -320,6 +341,22 @@ export function ServerDetailRoute() {
                     <span className="inline-flex items-center gap-1">
                       <Cpu className="h-3.5 w-3.5" />
                       {server.cpu_limit} CPU
+                    </span>
+                  )}
+
+                  {/* Live Uptime */}
+                  {isRunning && liveUptime && (
+                    <span
+                      data-testid="server-uptime"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-400 font-medium shadow-2xs"
+                      title={
+                        effectiveStartedAt
+                          ? `Started: ${new Date(effectiveStartedAt).toLocaleString()}`
+                          : 'Server is running'
+                      }
+                    >
+                      <Clock className="h-3.5 w-3.5 text-emerald-500 animate-pulse" />
+                      <span className="font-mono font-medium">Uptime: {liveUptime}</span>
                     </span>
                   )}
                 </div>

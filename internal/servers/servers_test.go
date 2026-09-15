@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mcm-panel/mcm/internal/db"
@@ -135,3 +136,85 @@ func TestServerExport(t *testing.T) {
 		t.Error("plugins/test.jar not found in export zip")
 	}
 }
+
+func TestServerUptimeTracking(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { dbHandle.Close() })
+
+	fake := &fakeRuntime{}
+	s := &Store{db: dbHandle.DB, docker: fake, dataDir: dir}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "container-uptime-1", StateStopped)
+
+	// 1. Initially stopped: started_at should be empty and uptime 0
+	srv, err := s.Get(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if srv.StartedAt != "" {
+		t.Errorf("expected empty StartedAt on stopped server, got %q", srv.StartedAt)
+	}
+	if srv.UptimeSeconds != 0 {
+		t.Errorf("expected 0 UptimeSeconds on stopped server, got %d", srv.UptimeSeconds)
+	}
+
+	// 2. Start server: started_at should be set and uptime >= 0
+	srv, err = s.Start(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srv.State != StateRunning {
+		t.Fatalf("expected state running, got %s", srv.State)
+	}
+	if srv.StartedAt == "" {
+		t.Error("expected non-empty StartedAt after start")
+	}
+	if srv.UptimeSeconds < 0 {
+		t.Errorf("expected non-negative UptimeSeconds, got %d", srv.UptimeSeconds)
+	}
+
+	// 3. Status when container reports running with specific started timestamp
+	testStartTime := time.Now().Add(-120 * time.Second).UTC().Format(time.RFC3339)
+	fake.mu.Lock()
+	// Reconcile status
+	fake.mu.Unlock()
+	_ = s.setStateWithStartedAt(context.Background(), id, StateRunning, &testStartTime)
+
+	srv, err = s.Get(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Get after set started_at: %v", err)
+	}
+	if srv.UptimeSeconds < 119 {
+		t.Errorf("expected uptime >= 119s, got %d", srv.UptimeSeconds)
+	}
+
+	// 4. List also computes uptime
+	list, err := s.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(list))
+	}
+	if list[0].UptimeSeconds < 119 {
+		t.Errorf("expected list item uptime >= 119s, got %d", list[0].UptimeSeconds)
+	}
+
+	// 5. Stop server: started_at cleared and uptime 0
+	srv, err = s.Stop(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if srv.StartedAt != "" {
+		t.Errorf("expected empty StartedAt after stop, got %q", srv.StartedAt)
+	}
+	if srv.UptimeSeconds != 0 {
+		t.Errorf("expected 0 UptimeSeconds after stop, got %d", srv.UptimeSeconds)
+	}
+}
+

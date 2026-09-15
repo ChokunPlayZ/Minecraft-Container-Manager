@@ -24,6 +24,8 @@ export interface Server {
   state: ServerState;
   backup_enabled: boolean;
   backup_interval_minutes: number;
+  started_at?: string | null;
+  uptime_seconds?: number;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +56,8 @@ export interface ServerStatus {
   ram_mb: number;
   host_port: number;
   container_id: string | null;
+  started_at?: string | null;
+  uptime_seconds?: number;
 }
 
 export interface ConsoleLine {

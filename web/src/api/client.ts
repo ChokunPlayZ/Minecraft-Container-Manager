@@ -250,6 +250,8 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
           state: 'running',
           backup_enabled: true,
           backup_interval_minutes: 60,
+          started_at: '2026-01-01T00:00:00Z',
+          uptime_seconds: 3600,
           created_at: '2026-01-01T00:00:00Z',
           updated_at: '2026-01-01T00:00:00Z',
         },
@@ -257,7 +259,7 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     } as T;
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/status')) {
-    return { id: 'demo', state: 'running', ram_mb: 8192, host_port: 25565, container_id: 'mcm-srv-demo' } as T;
+    return { id: 'demo', state: 'running', ram_mb: 8192, host_port: 25565, container_id: 'mcm-srv-demo', started_at: '2026-01-01T00:00:00Z', uptime_seconds: 3600 } as T;
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/players')) {
     const players = Array.from({ length: 100 }, (_, i) => ({
@@ -519,6 +521,8 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
       state: 'running',
       backup_enabled: true,
       backup_interval_minutes: 60,
+      started_at: '2026-01-01T00:00:00Z',
+      uptime_seconds: 3600,
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
     } as T;

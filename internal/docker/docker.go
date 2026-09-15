@@ -326,6 +326,12 @@ func (m *Manager) Remove(ctx context.Context, containerID string) error {
 	return nil
 }
 
+// ContainerState captures runtime status and start time for a container.
+type ContainerState struct {
+	Status    string
+	StartedAt string
+}
+
 // Status returns the docker-reported state of a container.
 func (m *Manager) Status(ctx context.Context, containerID string) (string, error) {
 	insp, err := m.client.ContainerInspect(ctx, containerID)
@@ -334,6 +340,27 @@ func (m *Manager) Status(ctx context.Context, containerID string) (string, error
 	}
 	return insp.State.Status, nil
 }
+
+// Inspect returns the container status and start timestamp if running.
+func (m *Manager) Inspect(ctx context.Context, containerID string) (ContainerState, error) {
+	insp, err := m.client.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return ContainerState{}, fmt.Errorf("inspect container: %w", err)
+	}
+	started := ""
+	status := ""
+	if insp.State != nil {
+		status = insp.State.Status
+		if insp.State.Running {
+			started = insp.State.StartedAt
+		}
+	}
+	return ContainerState{
+		Status:    status,
+		StartedAt: started,
+	}, nil
+}
+
 
 // Exists reports whether a container with the given id is present on the
 // daemon. A missing container (e.g. one deleted manually outside MCM) is not an
