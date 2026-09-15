@@ -385,7 +385,11 @@ describe('CreateServerDialog Modpack Integration', () => {
     await user.click(createBtn);
 
     await waitFor(() => {
-      expect(mockCreateServer).toHaveBeenCalled();
+      expect(mockCreateServer).toHaveBeenCalledWith(expect.objectContaining({
+        server_type: 'fabric',
+        version: '1.20.1',
+        build: '',
+      }));
       expect(mockInstallRemote).toHaveBeenCalledWith('srv-created-1', expect.objectContaining({
         created_with_modpack: true,
         source: 'modrinth',

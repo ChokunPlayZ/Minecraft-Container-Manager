@@ -470,7 +470,10 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 }
 
 func selectBuild(builds []Build, want string) (int, error) {
-	if want == "" {
+	if len(builds) == 0 {
+		return 0, fmt.Errorf("no builds available")
+	}
+	if want == "" || want == "latest" || want == "recommended" {
 		// Paper lists builds ascending; the last is the newest.
 		return builds[len(builds)-1].Number, nil
 	}
@@ -487,15 +490,119 @@ func selectBuild(builds []Build, want string) (int, error) {
 }
 
 func selectString(xs []string, want string) (string, error) {
-	if want == "" {
-		return xs[len(xs)-1], nil
+	if len(xs) == 0 {
+		return "", fmt.Errorf("no versions available")
 	}
+	if want == "" || want == "latest" || want == "recommended" {
+		return pickNewestVersion(xs), nil
+	}
+
+	// 1. Direct match
 	for _, x := range xs {
 		if x == want {
 			return x, nil
 		}
 	}
+
+	// 2. Case-insensitive direct match
+	for _, x := range xs {
+		if strings.EqualFold(x, want) {
+			return x, nil
+		}
+	}
+
+	// 3. Strip loader prefixes: "forge-", "fabric-", "neoforge-", "quilt-"
+	cleanedWant := strings.ToLower(want)
+	for _, prefix := range []string{"forge-", "fabric-", "neoforge-", "quilt-"} {
+		cleanedWant = strings.TrimPrefix(cleanedWant, prefix)
+	}
+
+	for _, x := range xs {
+		if strings.EqualFold(x, cleanedWant) {
+			return x, nil
+		}
+	}
+
+	// 4. Suffix match: e.g. x is "1.20.1-47.3.0" and want is "47.3.0"
+	for _, x := range xs {
+		if strings.HasSuffix(x, "-"+cleanedWant) || strings.HasSuffix(x, "-"+want) {
+			return x, nil
+		}
+		if strings.HasSuffix(cleanedWant, "-"+x) || strings.HasSuffix(want, "-"+x) {
+			return x, nil
+		}
+	}
+
+	// 5. Version-prefixed or stripped match
+	for _, x := range xs {
+		xClean := strings.ToLower(x)
+		for _, prefix := range []string{"forge-", "fabric-", "neoforge-", "quilt-"} {
+			xClean = strings.TrimPrefix(xClean, prefix)
+		}
+		if strings.EqualFold(xClean, cleanedWant) {
+			return x, nil
+		}
+		if strings.HasSuffix(xClean, "-"+cleanedWant) || strings.HasSuffix(cleanedWant, "-"+xClean) {
+			return x, nil
+		}
+	}
+
 	return "", fmt.Errorf("value %q not found", want)
+}
+
+func compareVersionTokens(a, b string) int {
+	partsA := splitVersionTokens(a)
+	partsB := splitVersionTokens(b)
+	minLen := len(partsA)
+	if len(partsB) < minLen {
+		minLen = len(partsB)
+	}
+	for i := 0; i < minLen; i++ {
+		pa, pb := partsA[i], partsB[i]
+		numA, errA := strconv.ParseInt(pa, 10, 64)
+		numB, errB := strconv.ParseInt(pb, 10, 64)
+		if errA == nil && errB == nil {
+			if numA != numB {
+				if numA > numB {
+					return 1
+				}
+				return -1
+			}
+		} else {
+			if pa != pb {
+				if pa > pb {
+					return 1
+				}
+				return -1
+			}
+		}
+	}
+	if len(partsA) > len(partsB) {
+		return 1
+	}
+	if len(partsA) < len(partsB) {
+		return -1
+	}
+	return 0
+}
+
+func splitVersionTokens(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return r == '.' || r == '-' || r == '_' || r == '+'
+	})
+}
+
+func pickNewestVersion(xs []string) string {
+	if len(xs) == 0 {
+		return ""
+	}
+	best := xs[0]
+	for _, x := range xs[1:] {
+		if compareVersionTokens(x, best) > 0 {
+			best = x
+		}
+	}
+	return best
 }
 
 func containsStringVersion(entries []ManifestEntry, v string) bool {
@@ -698,6 +805,14 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		dlURL = fmt.Sprintf("https://download.geysermc.org/v2/projects/geyser/versions/%s/builds/%s/downloads/standalone", version, build)
 
 	case TypeForge:
+		if build == "" || build == "latest" {
+			builds, err := r.ForgeBuilds(ctx, version)
+			if err == nil && len(builds) > 0 {
+				build = pickNewestVersion(builds)
+			} else {
+				build = version
+			}
+		}
 		// Forge installer
 		forgeVer := build
 		if !strings.Contains(forgeVer, "-") && version != "" {
@@ -711,6 +826,12 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		return nil
 
 	case TypeNeoForge:
+		if build == "" || build == "latest" {
+			builds, err := r.NeoForgeBuilds(ctx, version)
+			if err == nil && len(builds) > 0 {
+				build = pickNewestVersion(builds)
+			}
+		}
 		// NeoForge installer
 		nfVer := build
 		if version == "1.20.1" {

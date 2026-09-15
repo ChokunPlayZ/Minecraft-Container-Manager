@@ -356,7 +356,6 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       else if (l === 'fabric' || l === 'quilt') detectedLoader = 'fabric';
 
       const mcVer = first.game_versions[0] || '1.20.1';
-      const buildVer = first.id;
 
       setSelectedPack({
         source: 'modrinth',
@@ -370,14 +369,14 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         downloadUrl: first.downloadUrl,
         minecraft_version: mcVer,
         loader: detectedLoader,
-        loader_version: buildVer,
+        loader_version: '',
         availableVersions: mappedVersions,
       });
 
       setName(hit.title);
       setServerType(detectedLoader);
       setVersion(mcVer);
-      setBuild(buildVer);
+      setBuild('');
       setRamMb(4096);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load modpack details');
@@ -429,14 +428,14 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         downloadUrl: first.downloadUrl || '',
         minecraft_version: mcVer,
         loader: detectedLoader,
-        loader_version: String(first.id),
+        loader_version: '',
         availableVersions: mappedVersions,
       });
 
       setName(mod.name);
       setServerType(detectedLoader);
       setVersion(mcVer);
-      setBuild(String(first.id));
+      setBuild('');
       setRamMb(4096);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to prepare CurseForge modpack');
@@ -464,11 +463,11 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       downloadUrl: ver.downloadUrl,
       minecraft_version: mcVer,
       loader: detectedLoader,
-      loader_version: ver.id,
+      loader_version: '',
     });
     setServerType(detectedLoader);
     setVersion(mcVer);
-    setBuild(ver.id);
+    setBuild('');
   }
 
   async function onSubmit(e: FormEvent) {
@@ -487,7 +486,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       name: name.trim(),
       server_type: serverType,
       version: serverType === 'custom' ? (version || 'custom') : version,
-      build: serverType === 'custom' ? (build || 'custom') : build,
+      build: createMode === 'search-modpack' ? '' : (serverType === 'custom' ? (build || 'custom') : build),
       ram_mb: ramMb,
       java_version: javaVersion,
       host_port: parsedPort > 0 ? parsedPort : undefined,
@@ -1145,7 +1144,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                       <span className="capitalize text-foreground">{serverType}</span>
                       <span className="text-muted-foreground">·</span>
                       <span className="text-foreground">{version || 'Auto-detected'}</span>
-                      {build && <span className="text-muted-foreground text-[10px]">({build})</span>}
+                      {build && createMode !== 'search-modpack' && <span className="text-muted-foreground text-[10px]">({build})</span>}
                     </div>
                   </div>
                   <div className="space-y-1.5">

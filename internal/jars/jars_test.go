@@ -234,6 +234,33 @@ func TestForgeResolve(t *testing.T) {
 	if res.Type != TypeForge || res.Build != "1.21.1-52.0.14" {
 		t.Fatalf("unexpected forge resolve: %+v", res)
 	}
+
+	// Suffix matching: "47.2.0" matches "1.20.1-47.2.0"
+	res, err = r.Resolve(context.Background(), TypeForge, "1.20.1", "47.2.0")
+	if err != nil {
+		t.Fatalf("Resolve forge with short version: %v", err)
+	}
+	if res.Build != "1.20.1-47.2.0" {
+		t.Fatalf("expected 1.20.1-47.2.0, got %s", res.Build)
+	}
+
+	// Loader prefix matching: "forge-47.2.0" matches "1.20.1-47.2.0"
+	res, err = r.Resolve(context.Background(), TypeForge, "1.20.1", "forge-47.2.0")
+	if err != nil {
+		t.Fatalf("Resolve forge with loader prefix: %v", err)
+	}
+	if res.Build != "1.20.1-47.2.0" {
+		t.Fatalf("expected 1.20.1-47.2.0, got %s", res.Build)
+	}
+
+	// "latest" resolves newest build
+	res, err = r.Resolve(context.Background(), TypeForge, "1.20.1", "latest")
+	if err != nil {
+		t.Fatalf("Resolve forge latest: %v", err)
+	}
+	if res.Build != "1.20.1-47.2.0" {
+		t.Fatalf("expected 1.20.1-47.2.0, got %s", res.Build)
+	}
 }
 
 func TestNeoForgeResolve(t *testing.T) {
@@ -275,6 +302,24 @@ func TestNeoForgeResolve(t *testing.T) {
 	}
 	if res.Type != TypeNeoForge || res.Build != "1.20.1-47.2.0" {
 		t.Fatalf("unexpected neoforge resolve: %+v", res)
+	}
+
+	// NeoForge prefix match: "neoforge-47.2.0"
+	res, err = r.Resolve(context.Background(), TypeNeoForge, "1.20.1", "neoforge-47.2.0")
+	if err != nil {
+		t.Fatalf("Resolve neoforge prefix: %v", err)
+	}
+	if res.Build != "1.20.1-47.2.0" {
+		t.Fatalf("expected 1.20.1-47.2.0, got %s", res.Build)
+	}
+
+	// NeoForge latest
+	res, err = r.Resolve(context.Background(), TypeNeoForge, "1.20.1", "latest")
+	if err != nil {
+		t.Fatalf("Resolve neoforge latest: %v", err)
+	}
+	if res.Build != "1.20.1-47.2.0" {
+		t.Fatalf("expected 1.20.1-47.2.0, got %s", res.Build)
 	}
 }
 
