@@ -100,3 +100,92 @@ func insertServer(t *testing.T, store *db.Store, id string, port int) {
 		t.Fatalf("insert server %s: %v", id, err)
 	}
 }
+
+func TestParsePortPool(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected []int
+		wantErr  bool
+	}{
+		{"25565", []int{25565}, false},
+		{"25565-25568", []int{25565, 25566, 25567, 25568}, false},
+		{"25565, 25567, 25570-25572", []int{25565, 25567, 25570, 25571, 25572}, false},
+		{"25565, 25565, 25566", []int{25565, 25566}, false}, // Deduplication
+		{"", nil, true},
+		{"   ", nil, true},
+		{"abc", nil, true},
+		{"25568-25565", nil, true}, // Invalid reversed range
+		{"70000", nil, true},       // Out of range
+	}
+
+	for _, c := range cases {
+		got, err := ParsePortPool(c.input)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("ParsePortPool(%q) expected error, got nil", c.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParsePortPool(%q) unexpected error: %v", c.input, err)
+			continue
+		}
+		if len(got) != len(c.expected) {
+			t.Errorf("ParsePortPool(%q) expected %v, got %v", c.input, c.expected, got)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.expected[i] {
+				t.Errorf("ParsePortPool(%q) index %d: expected %d, got %d", c.input, i, c.expected[i], got[i])
+			}
+		}
+	}
+}
+
+func TestConfiguredPortPoolFromSettings(t *testing.T) {
+	store := openTestStore(t)
+	p := NewPool(store.DB, 25565, 25570)
+
+	// Before setting is added, default range is used.
+	avail, err := p.Available(context.Background())
+	if err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+	if len(avail) != 6 {
+		t.Fatalf("expected 6 available ports, got %d", len(avail))
+	}
+
+	// Insert custom port pool into settings: only 25580 and 25585.
+	_, err = store.DB.ExecContext(context.Background(),
+		`INSERT INTO settings (key, value) VALUES ('port_pool', '25580, 25585')`)
+	if err != nil {
+		t.Fatalf("insert setting: %v", err)
+	}
+
+	configured, err := p.ConfiguredPorts(context.Background())
+	if err != nil {
+		t.Fatalf("ConfiguredPorts: %v", err)
+	}
+	if len(configured) != 2 || configured[0] != 25580 || configured[1] != 25585 {
+		t.Fatalf("unexpected configured ports: %v", configured)
+	}
+
+	// Allocate from custom pool.
+	allocated, err := p.Allocate(context.Background())
+	if err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+	if allocated != 25580 {
+		t.Fatalf("expected 25580, got %d", allocated)
+	}
+
+	// Reserve 25580
+	insertServer(t, store, "s1", 25580)
+	allocated, err = p.Allocate(context.Background())
+	if err != nil {
+		t.Fatalf("Allocate 2nd: %v", err)
+	}
+	if allocated != 25585 {
+		t.Fatalf("expected 25585, got %d", allocated)
+	}
+}

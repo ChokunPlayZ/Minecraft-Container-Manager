@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   ArrowRight,
-  Box,
-  Check,
-  CheckCircle2,
   Compass,
   Download,
   Flame,
   Loader2,
   Package,
-  RefreshCw,
   Search,
   Sparkles,
   UploadCloud,
@@ -77,6 +73,12 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Port pool state
+  const [port, setPort] = useState<string>('');
+  const [availablePorts, setAvailablePorts] = useState<number[]>([]);
+  const [usedPorts, setUsedPorts] = useState<number[]>([]);
+  const [loadingPorts, setLoadingPorts] = useState(false);
+
   // Modpack file upload state
   const [modpackFile, setModpackFile] = useState<File | null>(null);
   const [modpackManifest, setModpackManifest] = useState<ModpackManifest | null>(null);
@@ -93,6 +95,34 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   const [searching, setSearching] = useState(false);
   const [selectingPack, setSelectingPack] = useState(false);
   const [selectedPack, setSelectedPack] = useState<SelectedModpackState | null>(null);
+
+  const parsedPort = parseInt(port, 10);
+  const isPortUsed = !isNaN(parsedPort) && usedPorts.includes(parsedPort);
+  const isPortInvalid = isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535;
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoadingPorts(true);
+    Promise.all([api.availablePorts(), api.listServers()])
+      .then(([portsRes, serversRes]) => {
+        if (cancelled) return;
+        const free = portsRes.available ?? [];
+        setAvailablePorts(free);
+        const used = (serversRes ?? []).map((s) => s.host_port);
+        setUsedPorts(used);
+        if (!port && free.length > 0) {
+          setPort(String(free[0]));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoadingPorts(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open || createMode !== 'standard') return;
@@ -284,7 +314,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         project_id: hit.project_id,
         project_slug: hit.slug,
         title: hit.title,
-        icon_url: hit.icon_url,
+        icon_url: hit.icon_url ?? undefined,
         author: hit.author,
         summary: hit.description,
         selectedVersion: first.id,
@@ -336,7 +366,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         version_number: f.displayName || f.fileName,
         game_versions: f.gameVersions || [],
         loaders: [l],
-        downloadUrl: f.downloadUrl,
+        downloadUrl: f.downloadUrl || '',
       }));
 
       setSelectedPack({
@@ -347,7 +377,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         author: mod.authors?.[0]?.name,
         summary: mod.summary,
         selectedVersion: String(first.id),
-        downloadUrl: first.downloadUrl,
+        downloadUrl: first.downloadUrl || '',
         minecraft_version: mcVer,
         loader: detectedLoader,
         loader_version: String(first.id),
@@ -394,6 +424,14 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (isPortUsed) {
+      setError(`Port ${port} is already in use by another server`);
+      return;
+    }
+    if (port && isPortInvalid) {
+      setError('Please enter a valid port between 1 and 65535');
+      return;
+    }
     setBusy(true);
     setError(null);
     const input: CreateServerInput = {
@@ -402,6 +440,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       version,
       build,
       ram_mb: ramMb,
+      host_port: parsedPort > 0 ? parsedPort : undefined,
     };
     try {
       const srv = await api.createServer(input);
@@ -502,14 +541,17 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                   setCreateMode('modpack');
                   setSelectedPack(null);
                 }}
-                className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 text-center ${
                   createMode === 'modpack'
                     ? 'bg-primary text-primary-foreground shadow-xs'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <UploadCloud className="h-3.5 w-3.5" />
-                From Modpack (.mrpack, .zip)
+                <UploadCloud className="h-3.5 w-3.5 shrink-0" />
+                <span className="flex flex-col items-center leading-tight">
+                  <span>From Modpack</span>
+                  <span className="text-[10px] font-normal opacity-80">(.mrpack, .zip)</span>
+                </span>
               </button>
             </div>
 
@@ -837,15 +879,52 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
               )}
 
               {/* COMMON FORM FIELDS */}
-              <div className="space-y-1.5">
-                <Label htmlFor="server-name">Server Name</Label>
-                <Input
-                  id="server-name"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="My survival world"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="server-name">Server Name</Label>
+                  <Input
+                    id="server-name"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="My survival world"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="server-port">Server Port</Label>
+                      {loadingPorts && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                    </div>
+                    {isPortUsed ? (
+                      <span className="text-[11px] font-semibold text-destructive">Already in use</span>
+                    ) : isPortInvalid ? (
+                      <span className="text-[11px] font-semibold text-destructive">Invalid port</span>
+                    ) : (
+                      <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">Available</span>
+                    )}
+                  </div>
+                  <Input
+                    id="server-port"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={port}
+                    onChange={(e) => setPort(e.target.value)}
+                    placeholder={availablePorts[0] ? String(availablePorts[0]) : "25565"}
+                    className={isPortUsed ? "border-destructive focus-visible:ring-destructive" : ""}
+                  />
+                  {isPortUsed && (
+                    <p className="text-[11px] text-destructive font-medium">
+                      Port {port} is already used by an existing server.
+                    </p>
+                  )}
+                  {!isPortUsed && !isPortInvalid && availablePorts.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Prefilled from available port pool.
+                    </p>
+                  )}
+                </div>
               </div>
 
               {createMode === 'standard' ? (
@@ -960,6 +1039,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                   type="submit"
                   disabled={
                     busy ||
+                    isPortUsed ||
+                    (port ? isPortInvalid : false) ||
                     (createMode === 'standard' && (loadingVersions || loadingBuilds)) ||
                     (createMode === 'search-modpack' && !selectedPack) ||
                     (createMode === 'modpack' && !modpackFile)

@@ -2,12 +2,15 @@
 package servers
 
 import (
+	"archive/zip"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -60,6 +63,9 @@ var ErrInvalidJar = errors.New("invalid or unsupported jar")
 // provider is unreachable or misbehaving.
 var ErrUpstream = errors.New("upstream provider error")
 
+// ErrPortInUse is returned when the requested host port is already allocated.
+var ErrPortInUse = errors.New("port already in use")
+
 // Server is the public representation of a server record.
 type Server struct {
 	ID         string `json:"id"`
@@ -101,6 +107,7 @@ type CreateInput struct {
 	Version       string       `json:"version"`
 	Build         string       `json:"build,omitempty"`
 	RAMMB         int          `json:"ram_mb"`
+	HostPort      int          `json:"host_port,omitempty"`
 	CPULimit      float64      `json:"cpu_limit"`
 	MemoryLimitMB int          `json:"memory_limit_mb"`
 	ExtraPorts    []ExtraPort  `json:"extra_ports"`
@@ -271,9 +278,21 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 		}
 		return Server{}, fmt.Errorf("%w: validate jar: %v", ErrInvalidJar, err)
 	}
-	port, err := s.ports.Allocate(ctx)
-	if err != nil {
-		return Server{}, fmt.Errorf("allocate port: %w", err)
+	var port int
+	if in.HostPort > 0 {
+		if in.HostPort < 1 || in.HostPort > 65535 {
+			return Server{}, fmt.Errorf("host_port must be between 1 and 65535")
+		}
+		if err := s.ensurePortFree(ctx, "", in.HostPort); err != nil {
+			return Server{}, err
+		}
+		port = in.HostPort
+	} else {
+		var err error
+		port, err = s.ports.Allocate(ctx)
+		if err != nil {
+			return Server{}, fmt.Errorf("allocate port: %w", err)
+		}
 	}
 
 	id := uuid.NewString()
@@ -379,7 +398,7 @@ func (s *Store) ensurePortFree(ctx context.Context, id string, port int) error {
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id FROM servers WHERE host_port = ? AND id != ?`, port, id).Scan(&other)
 	if err == nil {
-		return fmt.Errorf("host_port %d is already in use by another server", port)
+		return fmt.Errorf("%w: host_port %d is already in use by another server", ErrPortInUse, port)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check host_port: %w", err)
@@ -692,3 +711,77 @@ func mapDockerState(state string) string {
 		return StateError
 	}
 }
+
+// Export streams a zip archive of the server's data directory to w.
+func (s *Store) Export(ctx context.Context, id string, w io.Writer) error {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	_ = srv
+
+	srcDir := s.dataPath(id)
+	if fi, err := os.Stat(srcDir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("server data directory %s is not accessible", srcDir)
+	}
+
+	zw := zip.NewWriter(w)
+	err = filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		// Exclude socket files or ephemeral locks
+		if d.Type()&fs.ModeSocket != 0 {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		hdr, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		hdr.Name = filepath.ToSlash(rel)
+		if d.IsDir() {
+			hdr.Name += "/"
+		} else {
+			hdr.Method = zip.Deflate
+		}
+		writer, err := zw.CreateHeader(hdr)
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(writer, f)
+			_ = f.Close()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		_ = zw.Close()
+		return err
+	}
+	return zw.Close()
+}
+

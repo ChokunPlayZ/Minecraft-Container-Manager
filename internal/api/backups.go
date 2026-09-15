@@ -2,7 +2,10 @@ package api
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/mcm-panel/mcm/internal/backups"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -15,13 +18,14 @@ func (s *Server) handleBackupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Storage string `json:"storage"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	b, err := s.backups.Backup(r.Context(), id, body.Name)
+	b, err := s.backups.Backup(r.Context(), id, body.Name, body.Storage)
 	if err != nil {
 		s.writeBackupErr(w, err)
 		return
@@ -64,6 +68,25 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
+	backupID := r.PathValue("backupId")
+	rc, size, name, err := s.backups.OpenBackup(r.Context(), backupID)
+	if err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	defer rc.Close()
+
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	if size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	if _, err := io.Copy(w, rc); err != nil && s.logger != nil {
+		s.logger.Printf("download backup failed id=%s err=%v", backupID, err)
+	}
+}
+
 func (s *Server) writeBackupErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, backups.ErrNotFound):
@@ -76,3 +99,4 @@ func (s *Server) writeBackupErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
 }
+

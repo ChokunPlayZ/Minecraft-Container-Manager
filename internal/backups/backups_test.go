@@ -2,6 +2,7 @@ package backups
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,3 +164,68 @@ func TestArchiveAndExtractRoundTrip(t *testing.T) {
 		t.Fatalf("restored props mismatch: %q", string(props))
 	}
 }
+
+func TestLocalBackupLifecycle(t *testing.T) {
+	s, _ := openTestStore(t)
+	ctx := context.Background()
+	serverID := "srv-local-test"
+
+	// Create dummy server world data
+	srcDir := s.serverDataDir(serverID)
+	if err := os.MkdirAll(filepath.Join(srcDir, "world"), 0o755); err != nil {
+		t.Fatalf("mkdir world: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "world", "level.dat"), []byte("my-world-data"), 0o644); err != nil {
+		t.Fatalf("write level.dat: %v", err)
+	}
+
+	// Create local backup without S3 configured
+	b, err := s.Backup(ctx, serverID, "local-snap", "local")
+	if err != nil {
+		t.Fatalf("Backup local: %v", err)
+	}
+	if b.Status != StatusCompleted {
+		t.Errorf("expected status completed, got %s", b.Status)
+	}
+	localPath := s.localBackupPath(serverID, b.ID)
+	if fi, err := os.Stat(localPath); err != nil || fi.Size() == 0 {
+		t.Fatalf("local backup file %s not found or empty: %v", localPath, err)
+	}
+
+	// Test OpenBackup
+	rc, size, name, err := s.OpenBackup(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("OpenBackup: %v", err)
+	}
+	if size == 0 || name != "local-snap.tar.gz" {
+		t.Errorf("unexpected size=%d name=%s", size, name)
+	}
+	rc.Close()
+
+	// Modify world, then restore
+	if err := os.WriteFile(filepath.Join(srcDir, "world", "level.dat"), []byte("corrupted"), 0o644); err != nil {
+		t.Fatalf("corrupt world: %v", err)
+	}
+	if err := s.Restore(ctx, b.ID); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	restored, err := os.ReadFile(filepath.Join(srcDir, "world", "level.dat"))
+	if err != nil {
+		t.Fatalf("read restored world: %v", err)
+	}
+	if string(restored) != "my-world-data" {
+		t.Errorf("expected 'my-world-data', got %q", string(restored))
+	}
+
+	// Test Delete removes local file and db record
+	if err := s.Delete(ctx, b.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(localPath); !os.IsNotExist(err) {
+		t.Errorf("expected local file to be removed, got err: %v", err)
+	}
+	if _, err := s.Get(ctx, b.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound from Get, got: %v", err)
+	}
+}
+

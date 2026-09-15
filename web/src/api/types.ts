@@ -154,6 +154,11 @@ export interface BackupRecord {
   created_at: string;
 }
 
+export interface AvailablePortsResponse {
+  available: number[];
+  pool?: number[];
+}
+
 export interface Player {
   name: string;
 }
@@ -250,9 +255,11 @@ export interface ServerModUpdateInfo {
 export interface ServerModUpdatesResponse {
   updates: Record<string, ServerModUpdateInfo>;
   last_checked: string;
-  total_mods: number;
-  update_count: number;
+  total_mods?: number;
+  update_count?: number;
 }
+
+export type { ModUpdateInfo } from './mod-updates';
 
 export interface ServerProperties {
   content: string;

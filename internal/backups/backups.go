@@ -75,6 +75,11 @@ func (s *Store) serverDataDir(serverID string) string {
 	return filepath.Join(s.dataDir, "servers", serverID)
 }
 
+// localBackupPath returns the on-disk file path for a local backup.
+func (s *Store) localBackupPath(serverID, backupID string) string {
+	return filepath.Join(s.dataDir, "backups", serverID, backupID+".tar.gz")
+}
+
 func (s *Store) objectKey(backupID, serverID string) string {
 	return fmt.Sprintf("backups/%s/%s.tar.gz", serverID, backupID)
 }
@@ -114,17 +119,38 @@ func (s *Store) Get(ctx context.Context, id string) (Backup, error) {
 	return b, nil
 }
 
-// Backup archives a server's world directory and uploads it to the object
-// store, then records the result in the database.
-func (s *Store) Backup(ctx context.Context, serverID, name string) (*Backup, error) {
-	if s.client == nil {
+// Backup archives a server's world directory and saves it to local disk or S3,
+// then records the result in the database.
+func (s *Store) Backup(ctx context.Context, serverID, name string, storage ...string) (*Backup, error) {
+	target := ""
+	if len(storage) > 0 && storage[0] != "" {
+		target = strings.ToLower(strings.TrimSpace(storage[0]))
+	} else if s.db != nil {
+		var val string
+		if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'backup_storage_type'`).Scan(&val); err == nil && val != "" {
+			target = strings.ToLower(strings.TrimSpace(val))
+		}
+	}
+	if target == "" {
+		if s.client != nil {
+			target = "s3"
+		} else {
+			target = "local"
+		}
+	}
+
+	if target == "s3" && s.client == nil {
 		return nil, ErrNotConfigured
 	}
+
 	if name == "" {
 		name = time.Now().UTC().Format("2006-01-02T15-04-05")
 	}
 	id := uuid.NewString()
 	location := s.objectKey(id, serverID)
+	if target == "local" {
+		location = "local:" + location
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	if _, err := s.db.ExecContext(ctx,
@@ -148,16 +174,47 @@ func (s *Store) Backup(ctx context.Context, serverID, name string) (*Backup, err
 		s.SetStatus(ctx, id, StatusFailed)
 		return backup, err
 	}
-	f, err := os.Open(archivePath)
-	if err != nil {
-		s.SetStatus(ctx, id, StatusFailed)
-		return backup, err
-	}
-	defer f.Close()
 
-	if err := s.client.putObject(ctx, location, f); err != nil {
-		s.SetStatus(ctx, id, StatusFailed)
-		return backup, err
+	if target == "local" {
+		localPath := s.localBackupPath(serverID, id)
+		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+			s.SetStatus(ctx, id, StatusFailed)
+			return backup, fmt.Errorf("create local backup dir: %w", err)
+		}
+		in, err := os.Open(archivePath)
+		if err != nil {
+			s.SetStatus(ctx, id, StatusFailed)
+			return backup, err
+		}
+		out, err := os.Create(localPath)
+		if err != nil {
+			in.Close()
+			s.SetStatus(ctx, id, StatusFailed)
+			return backup, err
+		}
+		_, err = io.Copy(out, in)
+		in.Close()
+		cerr := out.Close()
+		if err != nil {
+			s.SetStatus(ctx, id, StatusFailed)
+			return backup, err
+		}
+		if cerr != nil {
+			s.SetStatus(ctx, id, StatusFailed)
+			return backup, cerr
+		}
+	} else {
+		f, err := os.Open(archivePath)
+		if err != nil {
+			s.SetStatus(ctx, id, StatusFailed)
+			return backup, err
+		}
+		defer f.Close()
+
+		if err := s.client.putObject(ctx, location, f); err != nil {
+			s.SetStatus(ctx, id, StatusFailed)
+			return backup, err
+		}
 	}
 
 	if _, err := s.db.ExecContext(ctx,
@@ -176,12 +233,20 @@ func (s *Store) Backup(ctx context.Context, serverID, name string) (*Backup, err
 // Restore downloads a backup archive and restores it into the server data
 // directory.
 func (s *Store) Restore(ctx context.Context, backupID string) error {
-	if s.client == nil {
-		return ErrNotConfigured
-	}
 	b, err := s.Get(ctx, backupID)
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(b.Location, "local:") {
+		archivePath := s.localBackupPath(b.ServerID, b.ID)
+		if _, err := os.Stat(archivePath); err != nil {
+			return fmt.Errorf("local backup file not accessible: %w", err)
+		}
+		return s.extractWorld(ctx, b.ServerID, archivePath)
+	}
+
+	if s.client == nil {
+		return ErrNotConfigured
 	}
 	rc, err := s.client.getObject(ctx, b.Location)
 	if err != nil {
@@ -205,19 +270,57 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 	return s.extractWorld(ctx, b.ServerID, archivePath)
 }
 
-// Delete removes a backup from the object store and its database record.
+// Delete removes a backup from storage and its database record.
 func (s *Store) Delete(ctx context.Context, backupID string) error {
 	b, err := s.Get(ctx, backupID)
 	if err != nil {
 		return err
 	}
-	if s.client != nil {
+	if strings.HasPrefix(b.Location, "local:") {
+		_ = os.Remove(s.localBackupPath(b.ServerID, b.ID))
+	} else if s.client != nil {
 		if err := s.client.deleteObject(ctx, b.Location); err != nil {
 			return err
 		}
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, backupID)
 	return err
+}
+
+// OpenBackup opens the backup archive (local or S3) for reading, returning the
+// stream, size in bytes, download filename, and any error.
+func (s *Store) OpenBackup(ctx context.Context, backupID string) (io.ReadCloser, int64, string, error) {
+	b, err := s.Get(ctx, backupID)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	filename := b.Name
+	if !strings.HasSuffix(filename, ".tar.gz") {
+		filename += ".tar.gz"
+	}
+
+	if strings.HasPrefix(b.Location, "local:") {
+		path := s.localBackupPath(b.ServerID, b.ID)
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		stat, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return nil, 0, "", err
+		}
+		return f, stat.Size(), filename, nil
+	}
+
+	if s.client == nil {
+		return nil, 0, "", ErrNotConfigured
+	}
+	rc, err := s.client.getObject(ctx, b.Location)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	return rc, b.SizeBytes, filename, nil
 }
 
 // SetStatus updates the status of a backup record.

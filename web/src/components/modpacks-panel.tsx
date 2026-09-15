@@ -121,7 +121,7 @@ export function ModpacksPanel({
               ) || [],
               release_type: f.releaseType === 1 ? 'release' : f.releaseType === 2 ? 'beta' : 'alpha',
               date_published: f.fileDate,
-              downloadUrl: f.downloadUrl,
+              downloadUrl: f.downloadUrl as string,
             }));
           setPackVersions(mapped);
         } else {

@@ -81,6 +81,7 @@ export function FileManager({ server }: { server: Server }) {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [url, setUrl] = useState('');
   const [urlName, setUrlName] = useState('');
+  const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
 
   // Editor state.
   const [editorPath, setEditorPath] = useState<string | null>(null);
@@ -101,6 +102,7 @@ export function FileManager({ server }: { server: Server }) {
   }, [server.id, cwd]);
 
   useEffect(() => {
+    setSelectedNames(new Set());
     void load();
   }, [load]);
 
@@ -218,12 +220,62 @@ export function FileManager({ server }: { server: Server }) {
     }
   }
 
+  function toggleSelect(name: string) {
+    setSelectedNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedNames.size === entries.length) {
+      setSelectedNames(new Set());
+    } else {
+      setSelectedNames(new Set(entries.map((e) => e.name)));
+    }
+  }
+
+  async function handleArchiveSelected() {
+    if (selectedNames.size === 0) return;
+    const names = Array.from(selectedNames);
+    const defaultName = names.length === 1 ? `${names[0]}.zip` : 'archive.zip';
+    const zipName = await prompt(
+      `Enter name for zip archive (${names.length} items selected):`,
+      defaultName,
+      { title: 'Create Zip Archive', confirmLabel: 'Create Zip' },
+    );
+    if (!zipName || !zipName.trim()) return;
+    const sources = names.map((n) => joinPath(cwd, n));
+    await run(() => api.archiveFiles(server.id, sources, cwd, zipName.trim()));
+    setSelectedNames(new Set());
+  }
+
   async function handleArchive(entry: FileEntry) {
-    await run(() => api.archiveFile(server.id, joinPath(cwd, entry.name)));
+    const defaultName = `${entry.name}.zip`;
+    const zipName = await prompt(
+      `Create zip archive for "${entry.name}":`,
+      defaultName,
+      { title: 'Archive as Zip', confirmLabel: 'Archive' },
+    );
+    if (!zipName || !zipName.trim()) return;
+    await run(() => api.archiveFile(server.id, joinPath(cwd, entry.name), zipName.trim(), cwd));
   }
 
   async function handleUnzip(entry: FileEntry) {
-    await run(() => api.unzipFile(server.id, joinPath(cwd, entry.name), cwd));
+    const baseName = entry.name.replace(/\.zip$/i, '');
+    const choice = await prompt(
+      `Extract "${entry.name}" into folder (leave empty to extract in current folder):`,
+      baseName,
+      { title: 'Unzip Archive', confirmLabel: 'Extract' },
+    );
+    if (choice === null) return;
+    const dest = choice.trim() ? joinPath(cwd, choice.trim()) : cwd;
+    await run(() => api.unzipFile(server.id, joinPath(cwd, entry.name), dest));
   }
 
   async function handleRename(entry: FileEntry) {
@@ -296,6 +348,15 @@ export function FileManager({ server }: { server: Server }) {
         <Button variant="outline" size="sm" onClick={() => setShowUrlInput((v) => !v)} disabled={busy}>
           <Globe className="h-4 w-4" /> From URL
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleArchiveSelected()}
+          disabled={busy || selectedNames.size === 0}
+          title="Zip selected items"
+        >
+          <Archive className="h-4 w-4 mr-1 text-primary" /> Zip ({selectedNames.size})
+        </Button>
         <Button variant="ghost" size="icon" onClick={() => void load()} title="Refresh" aria-label="Refresh">
           <RefreshCw className="h-4 w-4" />
         </Button>
@@ -367,6 +428,26 @@ export function FileManager({ server }: { server: Server }) {
             )}
           </div>
 
+          {/* Selection header */}
+          {entries.length > 0 && (
+            <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs text-muted-foreground bg-muted/20">
+              <label className="flex items-center gap-1.5 cursor-pointer hover:text-foreground select-none">
+                <input
+                  type="checkbox"
+                  checked={selectedNames.size > 0 && selectedNames.size === entries.length}
+                  onChange={toggleSelectAll}
+                  className="rounded border-border text-primary focus:ring-primary cursor-pointer"
+                />
+                <span>Select all ({entries.length})</span>
+              </label>
+              {selectedNames.size > 0 && (
+                <span className="font-medium text-foreground">
+                  {selectedNames.size} selected
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Entry list */}
           <div className="max-h-[60vh] divide-y overflow-y-auto">
             {entries.length === 0 && (
@@ -374,27 +455,39 @@ export function FileManager({ server }: { server: Server }) {
             )}
             {entries.map((e) => {
               const editable = isEditable(e);
+              const isSelected = selectedNames.has(e.name);
               return (
                 <div
                   key={e.name}
-                  className="flex items-center justify-between gap-2 p-2 text-sm hover:bg-accent/40"
+                  className={`flex items-center justify-between gap-2 p-2 text-sm transition-colors ${
+                    isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/40'
+                  }`}
                 >
-                  <button
-                    type="button"
-                    className="flex min-w-0 items-center gap-2.5 text-left"
-                    onClick={() => handleEntryClick(e)}
-                  >
-                    {e.is_directory ? (
-                      <Folder className="h-4 w-4 shrink-0 text-amber-600" />
-                    ) : editable ? (
-                      <FileText className="h-4 w-4 shrink-0 text-sky-600" />
-                    ) : e.name.toLowerCase().endsWith('.zip') ? (
-                      <FileArchive className="h-4 w-4 shrink-0 text-sky-600" />
-                    ) : (
-                      <File className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    )}
-                    <span className="truncate font-medium">{e.name}</span>
-                  </button>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(e.name)}
+                      onClick={(ev) => ev.stopPropagation()}
+                      className="rounded border-border text-primary focus:ring-primary cursor-pointer shrink-0"
+                    />
+                    <button
+                      type="button"
+                      className="flex min-w-0 items-center gap-2 text-left truncate"
+                      onClick={() => handleEntryClick(e)}
+                    >
+                      {e.is_directory ? (
+                        <Folder className="h-4 w-4 shrink-0 text-amber-600" />
+                      ) : editable ? (
+                        <FileText className="h-4 w-4 shrink-0 text-sky-600" />
+                      ) : e.name.toLowerCase().endsWith('.zip') ? (
+                        <FileArchive className="h-4 w-4 shrink-0 text-sky-600" />
+                      ) : (
+                        <File className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="truncate font-medium">{e.name}</span>
+                    </button>
+                  </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <span className="mr-1 text-xs text-muted-foreground">
                       {e.is_directory ? '' : formatSize(e.size_bytes)}
@@ -421,19 +514,15 @@ export function FileManager({ server }: { server: Server }) {
                         <Pencil className="h-4 w-4" />
                       </Button>
                     )}
-                    {e.is_directory || e.name.toLowerCase().endsWith('.zip') ? (
+                    {e.name.toLowerCase().endsWith('.zip') ? (
                       <Button
                         variant="ghost"
                         size="icon"
-                        title={e.is_directory ? 'Archive as zip' : 'Unzip'}
-                        aria-label={e.is_directory ? 'Archive' : 'Unzip'}
-                        onClick={() => void (e.is_directory ? handleArchive(e) : handleUnzip(e))}
+                        title="Unzip archive"
+                        aria-label="Unzip"
+                        onClick={() => void handleUnzip(e)}
                       >
-                        {e.is_directory ? (
-                          <Archive className="h-4 w-4" />
-                        ) : (
-                          <Layers className="h-4 w-4" />
-                        )}
+                        <Layers className="h-4 w-4 text-sky-600" />
                       </Button>
                     ) : (
                       <Button

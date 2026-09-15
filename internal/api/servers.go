@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
@@ -42,6 +44,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ports.ErrPortPoolFull) {
 			writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
+			return
+		}
+		if errors.Is(err, servers.ErrPortInUse) {
+			writeError(w, http.StatusConflict, "port_in_use", "The selected port is already in use by another server.")
 			return
 		}
 		if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
@@ -133,7 +139,39 @@ func (s *Server) handleAvailablePorts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not query available ports")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": free})
+	configured, err := s.servers.Pool().ConfiguredPorts(r.Context())
+	if err != nil {
+		configured = free
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"available": free, "pool": configured})
+}
+
+func (s *Server) handleExportServer(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	srv, err := s.servers.Get(r.Context(), id)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	cleanName := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, srv.Name)
+	if cleanName == "" {
+		cleanName = "server"
+	}
+	filename := fmt.Sprintf("%s-export.zip", cleanName)
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+
+	if err := s.servers.Export(r.Context(), id, w); err != nil {
+		if s.logger != nil {
+			s.logger.Printf("server export failed id=%s err=%v", id, err)
+		}
+	}
 }
 
 func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +239,10 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "server not found")
 		return
 	}
+	if errors.Is(err, servers.ErrPortInUse) {
+		writeError(w, http.StatusConflict, "port_in_use", "The selected port is already in use by another server.")
+		return
+	}
 	if errors.Is(err, ports.ErrPortPoolFull) {
 		writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
 		return
@@ -218,8 +260,11 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 
 // friendlyCreateErr maps a server-creation error to a user-facing status, code,
 // and message. Upstream fetch failures surface as 502; jar validation problems
-// as 400; everything else as 500.
+// as 400; port conflicts as 409; everything else as 500.
 func friendlyCreateErr(err error) (int, string, string) {
+	if errors.Is(err, servers.ErrPortInUse) {
+		return http.StatusConflict, "port_in_use", "The selected port is already in use by another server."
+	}
 	if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
 		return http.StatusBadGateway, "upstream_error", "Couldn't reach the upstream provider right now."
 	}

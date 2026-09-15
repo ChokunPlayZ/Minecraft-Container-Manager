@@ -137,6 +137,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/servers/{id}/console/command", s.requireAuth(s.wrapJSON(s.handleServerConsoleCommand)))
 	s.mux.HandleFunc("GET /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(false))))
 	s.mux.HandleFunc("POST /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(true))))
+	s.mux.HandleFunc("GET /api/servers/{id}/export", s.requireAuth(s.handleExportServer))
 
 	// Server management (players, ops, mods/plugins).
 	s.mux.HandleFunc("GET /api/servers/{id}/players", s.requireAuth(s.wrapJSON(s.handleListPlayers)))
@@ -189,6 +190,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/backups", s.requireAuth(s.wrapJSON(s.handleListBackups)))
 	s.mux.HandleFunc("POST /api/servers/{id}/restore/{backupId}", s.requireAuth(s.wrapJSON(s.handleRestoreBackup)))
 	s.mux.HandleFunc("DELETE /api/backups/{backupId}", s.requireAuth(s.wrapJSON(s.handleDeleteBackup)))
+	s.mux.HandleFunc("GET /api/backups/{backupId}/download", s.requireAuth(s.handleDownloadBackup))
 
 	// Jars.
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions", s.requireAuth(s.wrapJSON(s.handleJarVersions)))

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { Globe, KeyRound, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Globe, KeyRound, Network, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { PasskeyMeta } from '../api/types';
 import { AppShell } from '../components/app-shell';
@@ -12,14 +12,15 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { useModal } from '../components/ui/modal';
 import { CloudflareDNSSettingsCard } from '../components/cloudflare-dns-settings';
+import { PortPoolSettingsCard } from '../components/port-pool-settings';
 
 interface SettingsSearch {
-  tab?: 'account' | 'dns';
+  tab?: 'account' | 'dns' | 'ports';
 }
 
 export const Route = createFileRoute('/settings')({
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
-    tab: search.tab === 'dns' ? 'dns' : 'account',
+    tab: search.tab === 'dns' ? 'dns' : search.tab === 'ports' ? 'ports' : 'account',
   }),
   component: SettingsRoute,
 });
@@ -30,7 +31,7 @@ function SettingsRoute() {
   const navigate = Route.useNavigate();
   const activeTab = search.tab ?? 'account';
 
-  const setTab = (tab: 'account' | 'dns') => {
+  const setTab = (tab: 'account' | 'dns' | 'ports') => {
     void navigate({
       search: (prev) => ({ ...prev, tab }),
     });
@@ -42,7 +43,7 @@ function SettingsRoute() {
         <div className="mb-6">
           <h1 className="text-2xl font-semibold">Settings</h1>
           <p className="text-sm text-muted-foreground">
-            Manage your account security and panel configurations.
+            Manage your account security, panel network configurations, and integrations.
           </p>
         </div>
 
@@ -72,6 +73,18 @@ function SettingsRoute() {
             <Globe className="h-4 w-4" />
             Cloudflare DNS
           </button>
+          <button
+            type="button"
+            onClick={() => setTab('ports')}
+            className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              activeTab === 'ports'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Network className="h-4 w-4" />
+            Port Pool
+          </button>
         </div>
 
         {activeTab === 'account' ? (
@@ -80,9 +93,13 @@ function SettingsRoute() {
             <TOTPCard />
             <PasskeyCard />
           </div>
-        ) : (
+        ) : activeTab === 'dns' ? (
           <div className="max-w-3xl">
             <CloudflareDNSSettingsCard />
+          </div>
+        ) : (
+          <div className="max-w-3xl">
+            <PortPoolSettingsCard />
           </div>
         )}
       </AppShell>

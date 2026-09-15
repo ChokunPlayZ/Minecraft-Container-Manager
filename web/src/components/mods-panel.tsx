@@ -11,7 +11,6 @@ import {
   Power,
   RefreshCw,
   Search,
-  Sparkles,
   Trash2,
   UploadCloud,
   X,
@@ -36,7 +35,6 @@ export function ModsPanel({ server }: { server: Server }) {
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
   const [installedModpack, setInstalledModpack] = useState<InstalledModpack | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [installedSearch, setInstalledSearch] = useState('');
   const [updates, setUpdates] = useState<Record<string, ModUpdateInfo>>({});

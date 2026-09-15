@@ -6,8 +6,6 @@ import {
   CheckCircle2,
   Download,
   Loader2,
-  Sparkles,
-  Wrench,
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';

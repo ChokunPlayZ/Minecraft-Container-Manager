@@ -35,6 +35,7 @@ import type {
   PublishDNSInput,
   AvailableModJar,
   ServerModUpdatesResponse,
+  AvailablePortsResponse,
 } from './types';
 
 export class ApiError extends Error {
@@ -643,7 +644,7 @@ export const api = {
   jarBuilds: (type: ServerType, version: string) =>
     request<VersionInfo[]>(`/api/jars/${type}/versions/${encodeURIComponent(version)}/builds`),
 
-  availablePorts: () => request<number[]>('/api/ports/available'),
+  availablePorts: () => request<AvailablePortsResponse>('/api/ports/available'),
 
   getSettings: () => request<{ settings: Record<string, string> }>('/api/settings'),
 
@@ -882,11 +883,20 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
 
-  createBackup: (serverId: string, name?: string) =>
+  createBackup: (serverId: string, name?: string, storage?: 'local' | 's3') =>
     request<BackupRecord>(`/api/servers/${serverId}/backup`, {
       method: 'POST',
-      body: JSON.stringify({ name: name ?? '' }),
+      body: JSON.stringify({ name: name ?? '', storage: storage ?? '' }),
     }),
+
+  downloadBackupFile: (backupId: string, filename?: string) => {
+    const a = document.createElement('a');
+    a.href = `/api/backups/${backupId}/download`;
+    a.download = filename ?? `backup-${backupId}.tar.gz`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  },
 
   restoreBackup: (serverId: string, backupId: string) =>
     request<{ ok: boolean }>(`/api/servers/${serverId}/restore/${backupId}`, { method: 'POST' }),
@@ -934,11 +944,26 @@ export const api = {
     );
   },
 
-  archiveFile: (serverId: string, source: string, name?: string) =>
+  archiveFile: (serverId: string, source: string, name?: string, dir?: string) =>
     request<FileEntry>(`/api/servers/${serverId}/files/archive`, {
       method: 'POST',
-      body: JSON.stringify({ source, name: name ?? '' }),
+      body: JSON.stringify({ source, name: name ?? '', dir: dir ?? '' }),
     }),
+
+  archiveFiles: (serverId: string, sources: string[], dir: string, name?: string) =>
+    request<FileEntry>(`/api/servers/${serverId}/files/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ sources, dir, name: name ?? '' }),
+    }),
+
+  exportServer: (serverId: string, serverName?: string) => {
+    const a = document.createElement('a');
+    a.href = `/api/servers/${serverId}/export`;
+    a.download = serverName ? `${serverName}-export.zip` : `server-export.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  },
 
   unzipFile: (serverId: string, archive: string, dest?: string) =>
     request<UnzipResult>(`/api/servers/${serverId}/files/unzip`, {
@@ -1055,6 +1080,7 @@ export interface CreateServerInput {
   version: string;
   build: string;
   ram_mb: number;
+  host_port?: number;
   extra_ports?: ExtraPort[];
 }
 

@@ -110,17 +110,27 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, entries)
 }
 
-// handleArchiveFile zips a file or directory.
+// handleArchiveFile zips one or more files or directories.
 func (s *Server) handleArchiveFile(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Source string `json:"source"`
-		Name   string `json:"name"`
+		Sources []string `json:"sources"`
+		Source  string   `json:"source"`
+		Dir     string   `json:"dir"`
+		Name    string   `json:"name"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	entry, err := s.servers.Archive(r.PathValue("id"), in.Source, in.Name)
+	sources := in.Sources
+	if len(sources) == 0 && in.Source != "" {
+		sources = []string{in.Source}
+	}
+	if len(sources) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "source or sources is required")
+		return
+	}
+	entry, err := s.servers.ArchiveMultiple(r.PathValue("id"), sources, in.Dir, in.Name)
 	if err != nil {
 		s.writeFileErr(w, err)
 		return

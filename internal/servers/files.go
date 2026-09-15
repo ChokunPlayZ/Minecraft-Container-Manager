@@ -229,19 +229,20 @@ func (z *zipWriter) addTree(base, fsRoot string) error {
 // Archive creates a zip of a source file or directory into the server data dir,
 // returning the new zip entry. The default archive name is the source basename.
 func (s *Store) Archive(id, source, name string) (FileEntry, error) {
-	src, err := s.resolvePath(id, source)
-	if err != nil {
-		return FileEntry{}, err
-	}
-	_, statErr := os.Stat(src)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return FileEntry{}, ErrPathNotFound
-		}
-		return FileEntry{}, statErr
+	return s.ArchiveMultiple(id, []string{source}, "", name)
+}
+
+// ArchiveMultiple archives multiple source files and directories into a zip file in destDir.
+func (s *Store) ArchiveMultiple(id string, sources []string, destDir, name string) (FileEntry, error) {
+	if len(sources) == 0 {
+		return FileEntry{}, ErrInvalidPath
 	}
 	if name == "" {
-		name = filepath.Base(src)
+		if len(sources) == 1 {
+			name = filepath.Base(sources[0])
+		} else {
+			name = "archive"
+		}
 	}
 	if !strings.HasSuffix(strings.ToLower(name), ".zip") {
 		name += ".zip"
@@ -249,24 +250,52 @@ func (s *Store) Archive(id, source, name string) (FileEntry, error) {
 	if filepath.Base(name) != name || name == "." || name == ".." {
 		return FileEntry{}, ErrInvalidPath
 	}
-	target, err := s.resolvePath(id, name)
+
+	targetRel := name
+	if destDir != "" {
+		targetRel = path.Join(destDir, name)
+	}
+	target, err := s.resolvePath(id, targetRel)
 	if err != nil {
 		return FileEntry{}, err
 	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return FileEntry{}, err
+	}
+
 	dst, err := os.Create(target)
 	if err != nil {
 		return FileEntry{}, err
 	}
 	zw := zip.NewWriter(dst)
-	base := filepath.Base(src)
 	z := &zipWriter{zw: zw}
-	perr := z.addTree(base, src)
-	if perr != nil {
-		_ = zw.Close()
-		_ = dst.Close()
-		_ = os.Remove(target)
-		return FileEntry{}, perr
+
+	for _, source := range sources {
+		src, err := s.resolvePath(id, source)
+		if err != nil {
+			_ = zw.Close()
+			_ = dst.Close()
+			_ = os.Remove(target)
+			return FileEntry{}, err
+		}
+		if _, statErr := os.Stat(src); statErr != nil {
+			_ = zw.Close()
+			_ = dst.Close()
+			_ = os.Remove(target)
+			if os.IsNotExist(statErr) {
+				return FileEntry{}, ErrPathNotFound
+			}
+			return FileEntry{}, statErr
+		}
+		base := filepath.Base(src)
+		if perr := z.addTree(base, src); perr != nil {
+			_ = zw.Close()
+			_ = dst.Close()
+			_ = os.Remove(target)
+			return FileEntry{}, perr
+		}
 	}
+
 	if cerr := zw.Close(); cerr != nil {
 		_ = dst.Close()
 		_ = os.Remove(target)

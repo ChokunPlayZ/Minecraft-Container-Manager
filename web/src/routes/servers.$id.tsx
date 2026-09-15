@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Copy,
   Cpu,
+  Download,
   FolderOpen,
   Globe,
   HardDrive,
@@ -184,6 +185,11 @@ export function ServerDetailRoute() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleExport() {
+    if (!server) return;
+    api.exportServer(server.id, server.name);
   }
 
   function copyDnsAddress() {
@@ -365,7 +371,11 @@ export function ServerDetailRoute() {
                       <ChevronDown className="h-3.5 w-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuContent align="end" className="w-52">
+                    <DropdownMenuItem onSelect={handleExport}>
+                      <Download className="h-4 w-4 mr-2" />
+                      <span>Export server (.zip)</span>
+                    </DropdownMenuItem>
                     <DropdownMenuItem disabled={busy} onSelect={() => void handleRecreate()}>
                       <RotateCcw className="h-4 w-4 mr-2" />
                       <span>Rebuild container</span>
