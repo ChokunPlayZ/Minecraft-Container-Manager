@@ -30,6 +30,7 @@ import { useLiveUptime } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
 import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
+import { CopyServerDialog } from '../components/copy-server-dialog';
 import { FileManager } from '../components/file-manager';
 import { InstallPanel } from '../components/install-panel';
 import { ModsPanel } from '../components/mods-panel';
@@ -66,6 +67,7 @@ export function ServerDetailRoute() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false);
   const { confirm, dialog } = useModal();
 
   const [dnsAddress, setDnsAddress] = useState<string>('');
@@ -413,6 +415,10 @@ export function ServerDetailRoute() {
                       <Download className="h-4 w-4 mr-2" />
                       <span>Export server (.zip)</span>
                     </DropdownMenuItem>
+                    <DropdownMenuItem disabled={busy} onSelect={() => setCopyDialogOpen(true)}>
+                      <Copy className="h-4 w-4 mr-2" />
+                      <span>Copy server</span>
+                    </DropdownMenuItem>
                     <DropdownMenuItem disabled={busy} onSelect={() => void handleRecreate()}>
                       <RotateCcw className="h-4 w-4 mr-2" />
                       <span>Rebuild container</span>
@@ -523,6 +529,17 @@ export function ServerDetailRoute() {
                 <PropertiesEditor server={server} />
               </div>
             </div>
+          )}
+
+          {server && (
+            <CopyServerDialog
+              server={server}
+              open={copyDialogOpen}
+              onClose={() => setCopyDialogOpen(false)}
+              onCopied={(newServer) => {
+                void navigate({ to: '/servers/$id', params: { id: newServer.id } });
+              }}
+            />
           )}
         </AppShell>
       </RequireAuth>

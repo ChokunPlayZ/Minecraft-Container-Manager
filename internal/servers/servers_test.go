@@ -218,3 +218,222 @@ func TestServerUptimeTracking(t *testing.T) {
 	}
 }
 
+func TestCopyServer(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { dbHandle.Close() })
+
+	pool := ports.NewPool(dbHandle.DB, 25565, 25575)
+	jr := jars.NewResolver()
+	s := NewStore(dbHandle, nil, jr, 25565, 25575, dir, "")
+	s.ports = pool
+
+	srcID := uuid.NewString()
+	insertServer(t, dbHandle, srcID, 25565, "", StateStopped)
+
+	// Populate files in source server directory:
+	// - World: world/level.dat, world/region/r.0.0.mca
+	// - Player data: world/playerdata/player1.dat, ops.json, whitelist.json
+	// - Config: server.properties, config/paper-global.yml
+	// - Plugins: plugins/MyPlugin.jar, plugins/MyPlugin/config.yml
+	// - Mods: mods/MyMod.jar
+	// - Logs: logs/latest.log, crash-reports/crash.txt
+	// - Lock: session.lock
+	// - Custom: backups/backup1.zip
+	srcDir := s.dataPath(srcID)
+	filesToCreate := map[string]string{
+		"world/level.dat":                  "leveldata",
+		"world/region/r.0.0.mca":           "chunkdata",
+		"world/playerdata/player1.dat":     "inventorydata",
+		"world/session.lock":               "lockfile",
+		"ops.json":                         `[{"uuid":"123","name":"Steve"}]`,
+		"whitelist.json":                   `[]`,
+		"server.properties":                "motd=SourceServer\nlevel-name=world\n",
+		"config/paper-global.yml":          "settings: true",
+		"plugins/MyPlugin.jar":             "jarbytes",
+		"plugins/MyPlugin/config.yml":      "pluginconfig",
+		"mods/MyMod.jar":                   "modbytes",
+		"logs/latest.log":                  "logcontent",
+		"crash-reports/crash.txt":          "crashcontent",
+		"backups/backup1.zip":              "backupbytes",
+	}
+
+	for p, content := range filesToCreate {
+		fullPath := filepath.Join(srcDir, p)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(fullPath), err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", fullPath, err)
+		}
+	}
+
+	t.Run("Copy all components", func(t *testing.T) {
+		trueVal := true
+		copied, err := s.Copy(context.Background(), srcID, CopyInput{
+			Name:              "Copied All",
+			IncludeWorld:      &trueVal,
+			IncludeConfig:     &trueVal,
+			IncludePlugins:    &trueVal,
+			IncludeMods:       &trueVal,
+			IncludePlayerData: &trueVal,
+			IncludeLogs:       &trueVal,
+		})
+		if err != nil {
+			t.Fatalf("Copy failed: %v", err)
+		}
+
+		if copied.Name != "Copied All" {
+			t.Errorf("expected name %q, got %q", "Copied All", copied.Name)
+		}
+		if copied.HostPort == 25565 {
+			t.Errorf("expected new port != 25565, got %d", copied.HostPort)
+		}
+
+		copyDir := s.dataPath(copied.ID)
+
+		// Verify files exist in copy
+		checkExists := []string{
+			"world/level.dat",
+			"world/region/r.0.0.mca",
+			"world/playerdata/player1.dat",
+			"ops.json",
+			"whitelist.json",
+			"server.properties",
+			"config/paper-global.yml",
+			"plugins/MyPlugin.jar",
+			"mods/MyMod.jar",
+			"logs/latest.log",
+		}
+		for _, f := range checkExists {
+			if _, err := os.Stat(filepath.Join(copyDir, f)); err != nil {
+				t.Errorf("expected %s to exist in copied server: %v", f, err)
+			}
+		}
+
+		// session.lock must NEVER be copied
+		if _, err := os.Stat(filepath.Join(copyDir, "world/session.lock")); !os.IsNotExist(err) {
+			t.Errorf("session.lock should not be copied")
+		}
+	})
+
+	t.Run("Copy excluding world and player data", func(t *testing.T) {
+		falseVal := false
+		trueVal := true
+		copied, err := s.Copy(context.Background(), srcID, CopyInput{
+			Name:              "Exclude World and Players",
+			IncludeWorld:      &falseVal,
+			IncludePlayerData: &falseVal,
+			IncludeConfig:     &trueVal,
+			IncludePlugins:    &trueVal,
+			IncludeMods:       &trueVal,
+			IncludeLogs:       &falseVal,
+		})
+		if err != nil {
+			t.Fatalf("Copy failed: %v", err)
+		}
+
+		copyDir := s.dataPath(copied.ID)
+
+		// World and logs and player data should NOT exist
+		checkNotExists := []string{
+			"world",
+			"world/level.dat",
+			"world/playerdata",
+			"ops.json",
+			"whitelist.json",
+			"logs/latest.log",
+			"crash-reports",
+		}
+		for _, f := range checkNotExists {
+			if _, err := os.Stat(filepath.Join(copyDir, f)); !os.IsNotExist(err) {
+				t.Errorf("expected %s to NOT exist in copy", f)
+			}
+		}
+
+		// Configs and plugins and mods SHOULD exist
+		checkExists := []string{
+			"server.properties",
+			"config/paper-global.yml",
+			"plugins/MyPlugin.jar",
+			"mods/MyMod.jar",
+		}
+		for _, f := range checkExists {
+			if _, err := os.Stat(filepath.Join(copyDir, f)); err != nil {
+				t.Errorf("expected %s to exist in copy: %v", f, err)
+			}
+		}
+	})
+
+	t.Run("Copy excluding plugins and configs", func(t *testing.T) {
+		falseVal := false
+		trueVal := true
+		copied, err := s.Copy(context.Background(), srcID, CopyInput{
+			Name:           "Exclude Plugins and Configs",
+			IncludeWorld:   &trueVal,
+			IncludeConfig:  &falseVal,
+			IncludePlugins: &falseVal,
+			IncludeMods:    &falseVal,
+		})
+		if err != nil {
+			t.Fatalf("Copy failed: %v", err)
+		}
+
+		copyDir := s.dataPath(copied.ID)
+
+		// Plugins, mods, configs should NOT exist
+		checkNotExists := []string{
+			"plugins",
+			"mods",
+			"server.properties",
+			"config",
+		}
+		for _, f := range checkNotExists {
+			if _, err := os.Stat(filepath.Join(copyDir, f)); !os.IsNotExist(err) {
+				t.Errorf("expected %s to NOT exist in copy", f)
+			}
+		}
+
+		// World SHOULD exist
+		if _, err := os.Stat(filepath.Join(copyDir, "world/level.dat")); err != nil {
+			t.Errorf("expected world/level.dat to exist: %v", err)
+		}
+	})
+
+	t.Run("Copy with custom excludes", func(t *testing.T) {
+		copied, err := s.Copy(context.Background(), srcID, CopyInput{
+			Name:           "Custom Excludes",
+			CustomExcludes: []string{"backups/*", "*.jar"},
+		})
+		if err != nil {
+			t.Fatalf("Copy failed: %v", err)
+		}
+
+		copyDir := s.dataPath(copied.ID)
+
+		if _, err := os.Stat(filepath.Join(copyDir, "backups/backup1.zip")); !os.IsNotExist(err) {
+			t.Errorf("expected backups/backup1.zip to be excluded")
+		}
+		if _, err := os.Stat(filepath.Join(copyDir, "plugins/MyPlugin.jar")); !os.IsNotExist(err) {
+			t.Errorf("expected *.jar to be excluded")
+		}
+	})
+
+	t.Run("Port conflict check", func(t *testing.T) {
+		_, err := s.Copy(context.Background(), srcID, CopyInput{
+			Name:     "Conflict Server",
+			HostPort: 25565, // in use by source
+		})
+		if err == nil {
+			t.Fatal("expected port conflict error")
+		}
+		if !errors.Is(err, ErrPortInUse) {
+			t.Errorf("expected ErrPortInUse, got: %v", err)
+		}
+	})
+}
+
+

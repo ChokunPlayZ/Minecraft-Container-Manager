@@ -138,6 +138,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(false))))
 	s.mux.HandleFunc("POST /api/servers/{id}/install", s.requireAuth(s.wrapJSON(s.handleInstall(true))))
 	s.mux.HandleFunc("GET /api/servers/{id}/export", s.requireAuth(s.handleExportServer))
+	s.mux.HandleFunc("POST /api/servers/{id}/copy", s.requireAuth(s.wrapJSON(s.handleCopyServer)))
 
 	// Server management (players, ops, mods/plugins).
 	s.mux.HandleFunc("GET /api/servers/{id}/players", s.requireAuth(s.wrapJSON(s.handleListPlayers)))

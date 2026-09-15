@@ -1,13 +1,15 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Clock } from 'lucide-react';
+import { Clock, Copy } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../api/client';
 import type { Server } from '../api/types';
 import { formatUptimeFromStartedAt } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
+import { CopyServerDialog } from '../components/copy-server-dialog';
 import { CreateServerDialog } from '../components/create-server-dialog';
 import { RequireAuth } from '../components/require-auth';
 import { StatusBadge } from '../components/status-badge';
+import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Skeleton } from '../components/ui/skeleton';
 
@@ -18,6 +20,7 @@ export const Route = createFileRoute('/dashboard')({
 export function DashboardRoute() {
   const [servers, setServers] = useState<Server[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copyTargetServer, setCopyTargetServer] = useState<Server | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -73,8 +76,23 @@ export function DashboardRoute() {
                 <Card className="h-full transition-colors hover:border-primary/50">
                   <CardHeader>
                     <div className="flex items-start justify-between gap-2">
-                      <CardTitle>{server.name}</CardTitle>
-                      <StatusBadge state={server.state} />
+                      <CardTitle className="truncate">{server.name}</CardTitle>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <StatusBadge state={server.state} />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                          title="Copy server"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setCopyTargetServer(server);
+                          }}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
                     </div>
                     <CardDescription>
                       {server.server_type} · {server.version} (build {server.build})
@@ -109,6 +127,17 @@ export function DashboardRoute() {
               </Link>
             ))}
           </div>
+        )}
+
+        {copyTargetServer && (
+          <CopyServerDialog
+            server={copyTargetServer}
+            open={!!copyTargetServer}
+            onClose={() => setCopyTargetServer(null)}
+            onCopied={() => {
+              void load();
+            }}
+          />
         )}
       </AppShell>
     </RequireAuth>

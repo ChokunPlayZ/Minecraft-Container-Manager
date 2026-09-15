@@ -174,6 +174,40 @@ func (s *Server) handleExportServer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleCopyServer(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var in servers.CopyInput
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "name is required")
+		return
+	}
+	srv, err := s.servers.Copy(r.Context(), id, in)
+	if err != nil {
+		if errors.Is(err, servers.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "server not found")
+			return
+		}
+		if errors.Is(err, ports.ErrPortPoolFull) {
+			writeError(w, http.StatusConflict, "port_pool_full", "port pool full")
+			return
+		}
+		if errors.Is(err, servers.ErrPortInUse) {
+			writeError(w, http.StatusConflict, "port_in_use", "The selected port is already in use by another server.")
+			return
+		}
+		if s.logger != nil {
+			s.logger.Printf("copy server failed source_id=%s err=%v", id, err)
+		}
+		writeError(w, http.StatusInternalServerError, "internal", fmt.Sprintf("Failed to copy server: %v", err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, srv)
+}
+
 func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
 	rc, err := s.servers.Console(r.Context(), r.PathValue("id"), true)
 	if err != nil {

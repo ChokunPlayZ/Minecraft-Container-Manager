@@ -659,4 +659,20 @@ export interface InstallModpackOptions {
   created_with_modpack?: boolean;
 }
 
+export interface CopyServerInput {
+  name: string;
+  host_port?: number;
+  ram_mb?: number;
+  cpu_limit?: number;
+  memory_limit_mb?: number;
+  include_world?: boolean;
+  include_config?: boolean;
+  include_plugins?: boolean;
+  include_mods?: boolean;
+  include_player_data?: boolean;
+  include_logs?: boolean;
+  custom_excludes?: string[];
+}
+
+
 

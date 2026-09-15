@@ -38,6 +38,7 @@ import type {
   AvailableModJar,
   ServerModUpdatesResponse,
   AvailablePortsResponse,
+  CopyServerInput,
 } from './types';
 
 export class ApiError extends Error {
@@ -585,6 +586,9 @@ export const api = {
 
   createServer: (input: CreateServerInput) =>
     request<Server>('/api/servers', { method: 'POST', body: JSON.stringify(input) }),
+
+  copyServer: (id: string, input: CopyServerInput) =>
+    request<Server>(`/api/servers/${id}/copy`, { method: 'POST', body: JSON.stringify(input) }),
 
   getServer: (id: string) => request<Server>(`/api/servers/${id}`),
 

@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,6 +130,22 @@ type UpdateInput struct {
 	BackupEnabled         *bool         `json:"backup_enabled"`
 	BackupIntervalMinutes *int          `json:"backup_interval_minutes"`
 	ExtraPorts            *[]ExtraPort  `json:"extra_ports"`
+}
+
+// CopyInput is the payload for duplicating an existing server.
+type CopyInput struct {
+	Name              string   `json:"name"`
+	HostPort          int      `json:"host_port,omitempty"`
+	RAMMB             int      `json:"ram_mb,omitempty"`
+	CPULimit          float64  `json:"cpu_limit,omitempty"`
+	MemoryLimitMB     int      `json:"memory_limit_mb,omitempty"`
+	IncludeWorld      *bool    `json:"include_world,omitempty"`
+	IncludeConfig     *bool    `json:"include_config,omitempty"`
+	IncludePlugins    *bool    `json:"include_plugins,omitempty"`
+	IncludeMods       *bool    `json:"include_mods,omitempty"`
+	IncludePlayerData *bool    `json:"include_player_data,omitempty"`
+	IncludeLogs       *bool    `json:"include_logs,omitempty"`
+	CustomExcludes    []string `json:"custom_excludes,omitempty"`
 }
 
 // encodeExtraPorts serializes an extra-ports slice for storage. Nil or empty
@@ -839,5 +856,328 @@ func (s *Store) Export(ctx context.Context, id string, w io.Writer) error {
 		return err
 	}
 	return zw.Close()
+}
+
+// Copy creates a duplicate of an existing server with the specified configuration
+// and file inclusion/exclusion options.
+func (s *Store) Copy(ctx context.Context, id string, in CopyInput) (Server, error) {
+	src, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return Server{}, errors.New("name is required")
+	}
+
+	ramMB := in.RAMMB
+	if ramMB <= 0 {
+		ramMB = src.RAMMB
+	}
+	cpuLimit := in.CPULimit
+	if cpuLimit <= 0 {
+		cpuLimit = src.CPULimit
+	}
+	memLimit := in.MemoryLimitMB
+	if memLimit <= 0 {
+		memLimit = src.MemoryLimitMB
+	}
+	if err := validateLimits(cpuLimit, memLimit); err != nil {
+		return Server{}, err
+	}
+
+	var port int
+	if in.HostPort > 0 {
+		if in.HostPort < 1 || in.HostPort > 65535 {
+			return Server{}, fmt.Errorf("host_port must be between 1 and 65535")
+		}
+		if err := s.ensurePortFree(ctx, "", in.HostPort); err != nil {
+			return Server{}, err
+		}
+		port = in.HostPort
+	} else {
+		var err error
+		port, err = s.ports.Allocate(ctx)
+		if err != nil {
+			return Server{}, fmt.Errorf("allocate port: %w", err)
+		}
+	}
+
+	newID := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Persist server record in stopped state.
+	// ExtraPorts are not automatically copied to avoid port conflicts with the source container.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, backup_enabled, backup_interval_minutes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '', ?, ?, ?, ?, ?)`,
+		newID, in.Name, src.ServerType, src.Version, src.Build, ramMB, cpuLimit, memLimit, port, StateStopped, src.BackupEnabled, src.BackupIntervalMinutes, now, now)
+	if err != nil {
+		return Server{}, fmt.Errorf("insert server: %w", err)
+	}
+
+	srcDir := s.dataPath(src.ID)
+	dstDir := s.dataPath(newID)
+
+	if err := s.copyServerFiles(ctx, srcDir, dstDir, in); err != nil {
+		_ = os.RemoveAll(dstDir)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM servers WHERE id = ?`, newID)
+		return Server{}, fmt.Errorf("copy server files: %w", err)
+	}
+
+	return s.Get(ctx, newID)
+}
+
+func (s *Store) copyServerFiles(ctx context.Context, srcDir, dstDir string, in CopyInput) error {
+	fi, err := os.Stat(srcDir)
+	if err != nil || !fi.IsDir() {
+		return os.MkdirAll(dstDir, 0o755)
+	}
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return err
+	}
+
+	includeWorld := in.IncludeWorld == nil || *in.IncludeWorld
+	includeConfig := in.IncludeConfig == nil || *in.IncludeConfig
+	includePlugins := in.IncludePlugins == nil || *in.IncludePlugins
+	includeMods := in.IncludeMods == nil || *in.IncludeMods
+	includePlayerData := in.IncludePlayerData == nil || *in.IncludePlayerData
+	includeLogs := in.IncludeLogs != nil && *in.IncludeLogs
+	customExcludes := in.CustomExcludes
+
+	levelName := "world"
+	if props, err := readProps(filepath.Join(srcDir, "server.properties")); err == nil {
+		if ln := strings.TrimSpace(props["level-name"]); ln != "" {
+			levelName = ln
+		}
+	}
+
+	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Always exclude socket files and ephemeral lock files
+		if d.Type()&fs.ModeSocket != 0 || d.Name() == "session.lock" || d.Name() == ".session.lock" {
+			return nil
+		}
+
+		// Check custom excludes
+		if matchesCustomExclude(rel, d.Name(), customExcludes) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Check player data exclusion
+		if !includePlayerData && isPlayerData(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Check world exclusion
+		if !includeWorld && isWorldDirectory(srcDir, rel, levelName) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Check plugins exclusion
+		if !includePlugins && isPlugin(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Check mods exclusion
+		if !includeMods && isMod(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Check configs exclusion
+		if !includeConfig && isConfig(rel, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Check logs exclusion
+		if !includeLogs && isLog(rel, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		targetPath := filepath.Join(dstDir, rel)
+		if d.IsDir() {
+			return os.MkdirAll(targetPath, 0o755)
+		}
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+			return err
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+
+		srcFile, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer srcFile.Close()
+
+		dstFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		defer dstFile.Close()
+
+		if _, err := io.Copy(dstFile, srcFile); err != nil {
+			return err
+		}
+
+		return dstFile.Close()
+	})
+}
+
+func getFirstPathSegment(rel string) string {
+	slash := filepath.ToSlash(rel)
+	if idx := strings.Index(slash, "/"); idx >= 0 {
+		return slash[:idx]
+	}
+	return slash
+}
+
+func isWorldDirectory(srcDir, rel, levelName string) bool {
+	first := getFirstPathSegment(rel)
+	lowerFirst := strings.ToLower(first)
+
+	if strings.EqualFold(first, levelName) ||
+		strings.EqualFold(first, levelName+"_nether") ||
+		strings.EqualFold(first, levelName+"_the_end") ||
+		strings.HasPrefix(lowerFirst, "world") ||
+		first == "DIM-1" || first == "DIM1" {
+		return true
+	}
+
+	// Check if the top-level directory contains a level.dat
+	if _, err := os.Stat(filepath.Join(srcDir, first, "level.dat")); err == nil {
+		return true
+	}
+
+	// Standalone level.dat or region files in root
+	if first == rel {
+		if first == "level.dat" || first == "level.dat_old" || first == "uid.dat" {
+			return true
+		}
+	}
+	return false
+}
+
+func isPlayerData(rel string) bool {
+	slash := "/" + filepath.ToSlash(rel) + "/"
+	if strings.Contains(slash, "/playerdata/") ||
+		strings.Contains(slash, "/stats/") ||
+		strings.Contains(slash, "/advancements/") {
+		return true
+	}
+
+	base := filepath.Base(rel)
+	switch base {
+	case "usercache.json", "ops.json", "whitelist.json", "banned-players.json", "banned-ips.json":
+		return true
+	}
+	return false
+}
+
+func isPlugin(rel string) bool {
+	return getFirstPathSegment(rel) == "plugins"
+}
+
+func isMod(rel string) bool {
+	return getFirstPathSegment(rel) == "mods"
+}
+
+func isConfig(rel string, isDir bool) bool {
+	first := getFirstPathSegment(rel)
+	if first == "config" || first == "defaultconfigs" {
+		return true
+	}
+	// Root configuration files
+	if first == rel && !isDir {
+		if rel == "server.properties" {
+			return true
+		}
+		ext := strings.ToLower(filepath.Ext(rel))
+		switch ext {
+		case ".properties", ".yml", ".yaml", ".toml":
+			return true
+		case ".json":
+			// player data json files are classified separately
+			if !isPlayerData(rel) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isLog(rel string, isDir bool) bool {
+	first := getFirstPathSegment(rel)
+	if first == "logs" || first == "crash-reports" {
+		return true
+	}
+	lower := strings.ToLower(rel)
+	return strings.HasSuffix(lower, ".log") || strings.HasSuffix(lower, ".log.gz")
+}
+
+func matchesCustomExclude(rel, name string, customExcludes []string) bool {
+	if len(customExcludes) == 0 {
+		return false
+	}
+	slashRel := filepath.ToSlash(rel)
+	for _, raw := range customExcludes {
+		pat := filepath.ToSlash(strings.TrimSpace(raw))
+		if pat == "" {
+			continue
+		}
+		if matched, _ := filepath.Match(pat, slashRel); matched {
+			return true
+		}
+		if matched, _ := filepath.Match(pat, name); matched {
+			return true
+		}
+		trimmed := strings.TrimSuffix(pat, "/*")
+		trimmed = strings.TrimSuffix(trimmed, "/")
+		if slashRel == trimmed || strings.HasPrefix(slashRel, trimmed+"/") {
+			return true
+		}
+	}
+	return false
 }
 
