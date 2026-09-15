@@ -111,6 +111,8 @@ describe('Server Uptime Display', () => {
         server_id: runningServer.id,
         server_name: runningServer.name,
         host_port: runningServer.host_port,
+        record: null,
+        join_address: '',
       });
 
       render(<ServerDetailRoute />);
@@ -138,6 +140,8 @@ describe('Server Uptime Display', () => {
         server_id: stoppedServer.id,
         server_name: stoppedServer.name,
         host_port: stoppedServer.host_port,
+        record: null,
+        join_address: '',
       });
 
       render(<ServerDetailRoute />);

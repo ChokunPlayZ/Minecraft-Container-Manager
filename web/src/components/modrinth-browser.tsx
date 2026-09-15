@@ -10,6 +10,7 @@ import {
   Package,
   RefreshCw,
   Search,
+  Server as ServerIcon,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -90,6 +91,7 @@ export function ModrinthBrowser({
   const [matchLoader, setMatchLoader] = useState(true);
   const [matchVersion, setMatchVersion] = useState(true);
   const [serverSideOnly, setServerSideOnly] = useState(true);
+  const [onlyServerSide, setOnlyServerSide] = useState(false);
 
   // Results & pagination
   const [results, setResults] = useState<ModrinthSearchHit[]>([]);
@@ -188,6 +190,7 @@ export function ModrinthBrowser({
             gameVersion: activeVersion,
             category,
             serverSideOnly,
+            onlyServerSide,
             sort,
             offset: currentOffset,
             limit: 20,
@@ -212,7 +215,7 @@ export function ModrinthBrowser({
         setLoadingMore(false);
       }
     },
-    [query, activeLoaders, activeVersion, category, serverSideOnly, sort],
+    [query, activeLoaders, activeVersion, category, serverSideOnly, onlyServerSide, sort],
   );
 
   // Trigger search on filter changes with debounce for query
@@ -661,7 +664,21 @@ export function ModrinthBrowser({
               title="Exclude client-only mods from search results"
             >
               <Filter className="h-3.5 w-3.5" />
-              Server-Only
+              Server-Compatible
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setOnlyServerSide(!onlyServerSide)}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium transition-colors ${
+                onlyServerSide
+                  ? 'border-primary/40 bg-primary/10 text-primary shadow-2xs'
+                  : 'border-border bg-background text-muted-foreground hover:text-foreground'
+              }`}
+              title="Show only mods that run exclusively on the server (no client-side mod required)"
+            >
+              <ServerIcon className="h-3.5 w-3.5" />
+              Only Server-Sided
             </button>
           </div>
         </div>
@@ -773,9 +790,9 @@ export function ModrinthBrowser({
       ) : results.length === 0 && !error ? (
         <PluginEmptyState
           title="No matching projects found"
-          description={`No projects matched your criteria for ${loaderLabel} ${server.version ? `MC ${server.version}` : ''}. Try adjusting search terms or toggling the compatibility filters.`}
+          description={`No projects matched your criteria for ${loaderLabel} ${server.version ? `MC ${server.version}` : ''}${onlyServerSide ? ' (only server-sided)' : ''}. Try adjusting search terms or toggling the compatibility filters.`}
           action={
-            (matchVersion || matchLoader || serverSideOnly || category !== 'all') && (
+            (matchVersion || matchLoader || serverSideOnly || onlyServerSide || category !== 'all') && (
               <Button
                 variant="outline"
                 size="sm"
@@ -783,6 +800,7 @@ export function ModrinthBrowser({
                   setMatchVersion(false);
                   setMatchLoader(false);
                   setServerSideOnly(false);
+                  setOnlyServerSide(false);
                   setCategory('all');
                   setQuery('');
                 }}
@@ -799,6 +817,11 @@ export function ModrinthBrowser({
             const isInstalled = Boolean(installedMod) || checkInstalled(project);
             const isInstalling = installingId === project.project_id;
             const isClientOnly = project.server_side === 'unsupported';
+            const isServerOnly =
+              project.server_side !== 'unsupported' &&
+              (project.client_side === 'unsupported' ||
+                project.environment?.includes('server_only') ||
+                project.environment?.includes('dedicated_server_only'));
             const updateInfo = installedMod ? updates?.[installedMod.name] : undefined;
             const hasUpdate = Boolean(updateInfo);
 
@@ -809,7 +832,7 @@ export function ModrinthBrowser({
                     Client Only
                   </Badge>
                 )}
-                {project.server_side === 'required' && (
+                {isServerOnly && (
                   <Badge
                     variant="outline"
                     className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px] px-1.5 py-0"
@@ -946,6 +969,24 @@ export function ModrinthBrowser({
                   </p>
 
                   <div className="mt-2 flex flex-wrap gap-1.5">
+                    {selectedProject.server_side === 'unsupported' ? (
+                      <Badge variant="destructive" className="text-[10px]">
+                        Client Only
+                      </Badge>
+                    ) : selectedProject.client_side === 'unsupported' ||
+                      selectedProject.environment?.includes('server_only') ||
+                      selectedProject.environment?.includes('dedicated_server_only') ? (
+                      <Badge
+                        variant="outline"
+                        className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px]"
+                      >
+                        Server Only
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px]">
+                        Client & Server
+                      </Badge>
+                    )}
                     {selectedProject.categories?.map((cat) => (
                       <Badge key={cat} variant="secondary" className="text-[10px] capitalize">
                         {cat}

@@ -542,6 +542,53 @@ describe('ModrinthBrowser component', () => {
       expect(onModDeleted).toHaveBeenCalledWith('Chunky');
     });
   });
+
+  it('toggles Only Server-Sided filter and triggers search with server-only facets', async () => {
+    const user = userEvent.setup();
+    let capturedSearchUrl = '';
+
+    vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/search')) {
+        capturedSearchUrl = urlStr;
+        return {
+          ok: true,
+          json: async () => ({
+            hits: [mockHit1],
+            offset: 0,
+            limit: 20,
+            total_hits: 1,
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    });
+
+    render(
+      <ModrinthBrowser
+        server={mockServer}
+        installedMods={[]}
+        onModInstalled={vi.fn()}
+      />,
+    );
+
+    const serverSidedBtn = screen.getByRole('button', { name: /Only Server-Sided/i });
+    expect(serverSidedBtn).toBeInTheDocument();
+
+    // Click "Only Server-Sided" button
+    await user.click(serverSidedBtn);
+
+    await waitFor(() => {
+      expect(capturedSearchUrl).toContain('facets=');
+      const urlObj = new URL(capturedSearchUrl);
+      const facets = JSON.parse(urlObj.searchParams.get('facets')!);
+      expect(facets).toContainEqual([
+        'client_side:unsupported',
+        'environment:server_only',
+        'environment:dedicated_server_only',
+      ]);
+    });
+  });
 });
 
 describe('ModsPanel with tabs', () => {

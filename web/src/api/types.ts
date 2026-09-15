@@ -329,6 +329,7 @@ export interface ModrinthSearchHit {
   license: string;
   client_side: 'required' | 'optional' | 'unsupported';
   server_side: 'required' | 'optional' | 'unsupported';
+  environment?: string[];
   gallery?: string[];
   color?: number;
 }

@@ -18,6 +18,7 @@ export interface ModrinthSearchParams {
   category?: string;
   projectType?: 'mod' | 'modpack' | 'plugin';
   serverSideOnly?: boolean;
+  onlyServerSide?: boolean;
   sort?: 'relevance' | 'downloads' | 'follows' | 'newest' | 'updated';
   offset?: number;
   limit?: number;
@@ -268,6 +269,7 @@ export async function searchModrinth(
     category,
     projectType,
     serverSideOnly = true,
+    onlyServerSide = false,
     sort = 'downloads',
     offset = 0,
     limit = 20,
@@ -298,6 +300,15 @@ export async function searchModrinth(
   // Exclude client-only mods by default for servers, except for modpacks which are bundles
   if (serverSideOnly && projectType !== 'modpack') {
     facets.push(['server_side!=unsupported']);
+  }
+
+  // Filter for strictly server-side mods (unsupported on client or server-only environments)
+  if (onlyServerSide && projectType !== 'modpack') {
+    facets.push([
+      'client_side:unsupported',
+      'environment:server_only',
+      'environment:dedicated_server_only',
+    ]);
   }
 
   const searchParams = new URLSearchParams();

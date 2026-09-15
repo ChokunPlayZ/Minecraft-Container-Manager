@@ -15,7 +15,6 @@ import {
   Sliders,
   Users,
   X,
-  Zap,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { CopyServerInput, Server } from '../api/types';

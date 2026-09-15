@@ -218,6 +218,37 @@ describe('modrinth api & matching utilities', () => {
       expect(parsedFacets).toContainEqual(['server_side!=unsupported']);
     });
 
+    it('builds search facets with onlyServerSide filter', async () => {
+      let capturedUrl = '';
+      vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
+        capturedUrl = String(url);
+        return {
+          ok: true,
+          json: async () => ({ hits: [], offset: 0, limit: 20, total_hits: 0 }),
+        } as Response;
+      });
+
+      await searchModrinth({
+        query: 'chunky',
+        loaders: ['fabric'],
+        onlyServerSide: true,
+        serverSideOnly: true,
+      });
+
+      const urlObj = new URL(capturedUrl);
+      const facetsParam = urlObj.searchParams.get('facets');
+      expect(facetsParam).toBeTruthy();
+      const parsedFacets = JSON.parse(facetsParam!);
+
+      expect(parsedFacets).toContainEqual(['categories:fabric']);
+      expect(parsedFacets).toContainEqual(['server_side!=unsupported']);
+      expect(parsedFacets).toContainEqual([
+        'client_side:unsupported',
+        'environment:server_only',
+        'environment:dedicated_server_only',
+      ]);
+    });
+
     it('handles query for project versions', async () => {
       let capturedUrl = '';
       vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
