@@ -15,6 +15,7 @@ import {
   getCurseForgeApiKey,
   getCurseForgeFiles,
 } from '../api/curseforge';
+import { getProjectVersions } from '../api/modrinth';
 import type {
   InstalledModpack,
   ModpackManifest,
@@ -78,20 +79,7 @@ export function ModpacksPanel({
     try {
       if (pack.format === 'modrinth' && (pack.project_slug || pack.project_id)) {
         const id = pack.project_slug || pack.project_id;
-        const res = await fetch(`https://api.modrinth.com/v2/project/${id}/version`, {
-          headers: { Accept: 'application/json' },
-        });
-        if (!res.ok) throw new Error('Failed to fetch modpack versions');
-        const list = (await res.json()) as Array<{
-          id: string;
-          name: string;
-          version_number: string;
-          game_versions: string[];
-          loaders: string[];
-          version_type?: string;
-          date_published?: string;
-          files: Array<{ url: string; filename: string; primary: boolean }>;
-        }>;
+        const list = await getProjectVersions(id);
         const mapped = list
           .map((v) => {
             const f = v.files.find((file) => file.filename.endsWith('.mrpack')) || v.files[0];

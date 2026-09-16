@@ -21,7 +21,7 @@ import type {
   VersionInfo,
   VersionMeta,
 } from '../api/types';
-import { formatCount, searchModrinth } from '../api/modrinth';
+import { formatCount, getProjectVersions, searchModrinth } from '../api/modrinth';
 
 function recommendJava(ver: string): number {
   if (ver.startsWith('25w') || ver.startsWith('26w')) return 25;
@@ -325,18 +325,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
     setSelectingPack(true);
     setError(null);
     try {
-      const res = await fetch(`https://api.modrinth.com/v2/project/${hit.slug}/version`, {
-        headers: { Accept: 'application/json' },
-      });
-      if (!res.ok) throw new Error('Failed to fetch modpack versions');
-      const versions = (await res.json()) as Array<{
-        id: string;
-        name: string;
-        version_number: string;
-        game_versions: string[];
-        loaders: string[];
-        files: Array<{ url: string; filename: string; primary: boolean }>;
-      }>;
+      const versions = await getProjectVersions(hit.slug);
       if (versions.length === 0) throw new Error('No versions found for this modpack');
 
       const mappedVersions = versions
@@ -478,6 +467,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   }
 
   async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+
     if (!behindProxy) {
       if (isPortUsed) {
         setError(`Port ${port} is already in use by another server`);
@@ -500,8 +491,10 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       host_port: behindProxy ? 0 : (parsedPort > 0 ? parsedPort : undefined),
       no_host_port: behindProxy,
     };
+    let createdServerId: string | null = null;
     try {
       const srv = await api.createServer(input);
+      createdServerId = srv.id;
       if (createMode === 'search-modpack' && selectedPack) {
         await api.installModpackRemote(srv.id, {
           source: selectedPack.source,
@@ -526,7 +519,14 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       setSelectedPack(null);
       onCreated();
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Failed to create server');
+      if (createdServerId && (createMode === 'search-modpack' || createMode === 'modpack')) {
+        try {
+          await api.deleteServer(createdServerId);
+        } catch {
+          // ignore cleanup error
+        }
+      }
+      setError(err instanceof ApiError ? err.detail : (err instanceof Error ? err.message : 'Failed to create server'));
     } finally {
       setBusy(false);
       setCreateProgress(null);
