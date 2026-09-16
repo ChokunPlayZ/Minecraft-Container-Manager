@@ -1168,6 +1168,7 @@ export interface CreateServerInput {
   build: string;
   ram_mb: number;
   host_port?: number;
+  no_host_port?: boolean;
   java_version?: number;
   extra_ports?: ExtraPort[];
 }

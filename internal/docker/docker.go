@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -23,6 +24,9 @@ import (
 )
 
 const (
+	// NetworkName is the Docker bridge network used for inter-container communication.
+	NetworkName = "mcm-network"
+
 	mcPort        = 25565
 	mcProto       = "tcp"
 	containerData = "/data"
@@ -216,7 +220,20 @@ exit $EXIT_CODE
 		PortBindings: portBindings(opts),
 	}
 
-	resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
+	_ = m.EnsureNetwork(ctx)
+	netCfg := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			NetworkName: {
+				Aliases: []string{name},
+			},
+		},
+	}
+
+	resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+	if err != nil && (strings.Contains(err.Error(), "network") || strings.Contains(err.Error(), NetworkName)) {
+		// Fallback to default networking if custom network creation/attachment fails
+		resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
+	}
 	if err != nil {
 		// If the image vanished between the presence check and the create (or a
 		// concurrent pull is still converging), pull again and retry once.
@@ -224,7 +241,10 @@ exit $EXIT_CODE
 			if perr := m.pullNamedImage(ctx, img); perr != nil {
 				return "", fmt.Errorf("pull image after create failure: %w", perr)
 			}
-			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
+			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+			if err != nil {
+				resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
+			}
 			if err != nil {
 				return "", fmt.Errorf("create container: %w", err)
 			}
@@ -233,6 +253,25 @@ exit $EXIT_CODE
 		return "", fmt.Errorf("create container: %w", err)
 	}
 	return resp.ID, nil
+}
+
+// EnsureNetwork verifies that the panel's bridge network (NetworkName) exists,
+// creating it if missing so that containers can resolve each other by name (mcm-<id>).
+func (m *Manager) EnsureNetwork(ctx context.Context) error {
+	if m.client == nil {
+		return nil
+	}
+	_, err := m.client.NetworkInspect(ctx, NetworkName, network.InspectOptions{})
+	if err == nil {
+		return nil
+	}
+	_, err = m.client.NetworkCreate(ctx, NetworkName, network.CreateOptions{
+		Driver: "bridge",
+	})
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+		return fmt.Errorf("create network %s: %w", NetworkName, err)
+	}
+	return nil
 }
 
 // EnsureImage makes sure the default runtime image is present locally, pulling it
@@ -353,6 +392,10 @@ func (m *Manager) EnsureRestartPolicyDisabled(ctx context.Context, containerID s
 // Start starts a stopped or created container.
 func (m *Manager) Start(ctx context.Context, containerID string) error {
 	_ = m.EnsureRestartPolicyDisabled(ctx, containerID)
+	if m.client != nil {
+		_ = m.EnsureNetwork(ctx)
+		_ = m.client.NetworkConnect(ctx, NetworkName, containerID, nil)
+	}
 	if err := m.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("start container: %w", err)
 	}
@@ -598,7 +641,7 @@ func primaryContainerPort(serverType string) (int, string) {
 	switch strings.ToLower(serverType) {
 	case "geysermc":
 		return 19132, "udp"
-	case "waterfall", "bungeecord":
+	case "velocity", "waterfall", "bungeecord":
 		return 25577, "tcp"
 	default:
 		return mcPort, mcProto
@@ -626,17 +669,21 @@ func exposedPortsFor(serverType string, extras []ExtraPort) nat.PortSet {
 // portBindings builds the host-to-container port bindings. The primary game
 // port binds srv HostPort -> container primary port. Each extra port binds its
 // host port to its container port/protocol. All bind on 0.0.0.0.
+// If HostPort <= 0, no host binding is created (e.g. for servers behind a proxy).
 func portBindings(opts CreateOpts) nat.PortMap {
 	cPort, cProto := primaryContainerPort(opts.ServerType)
-	bindings := nat.PortMap{
-		nat.Port(fmt.Sprintf("%d/%s", cPort, cProto)): []nat.PortBinding{
+	bindings := nat.PortMap{}
+	if opts.HostPort > 0 {
+		bindings[nat.Port(fmt.Sprintf("%d/%s", cPort, cProto))] = []nat.PortBinding{
 			{HostIP: "0.0.0.0", HostPort: strconv.Itoa(opts.HostPort)},
-		},
+		}
 	}
 	for _, e := range opts.ExtraPorts {
-		key := nat.Port(fmt.Sprintf("%d/%s", e.ContainerPort, normalizeProto(e.Protocol)))
-		bindings[key] = []nat.PortBinding{
-			{HostIP: "0.0.0.0", HostPort: strconv.Itoa(e.HostPort)},
+		if e.HostPort > 0 {
+			key := nat.Port(fmt.Sprintf("%d/%s", e.ContainerPort, normalizeProto(e.Protocol)))
+			bindings[key] = []nat.PortBinding{
+				{HostIP: "0.0.0.0", HostPort: strconv.Itoa(e.HostPort)},
+			}
 		}
 	}
 	return bindings

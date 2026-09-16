@@ -62,6 +62,8 @@ func (s *Server) handleJarVersions(w http.ResponseWriter, r *http.Request) {
 		versions, err = s.jars.FoliaVersions(r.Context())
 	case "waterfall":
 		versions, err = s.jars.WaterfallVersions(r.Context())
+	case "velocity":
+		versions, err = s.jars.VelocityVersions(r.Context())
 	case "quilt":
 		versions, err = s.jars.QuiltGameVersions(r.Context())
 	case "mohist":
@@ -130,6 +132,8 @@ func (s *Server) handleJarBuilds(w http.ResponseWriter, r *http.Request) {
 		builds, err = s.jars.FoliaBuilds(r.Context(), version)
 	case "waterfall":
 		builds, err = s.jars.WaterfallBuilds(r.Context(), version)
+	case "velocity":
+		builds, err = s.jars.VelocityBuilds(r.Context(), version)
 	case "quilt":
 		builds, err = s.jars.QuiltLoaders(r.Context(), version)
 	case "mohist":

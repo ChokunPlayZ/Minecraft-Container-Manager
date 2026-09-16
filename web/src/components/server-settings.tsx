@@ -242,18 +242,57 @@ export function ServerSettings({
                 </p>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="edit-port">Game port (host)</Label>
-                <Input
-                  id="edit-port"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={hostPort}
-                  onChange={(e) => setHostPort(Number(e.target.value))}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Container settings (RAM, CPU, and ports) take effect after rebuilding the container.
-                </p>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="edit-port">Game port (host)</Label>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={hostPort === 0}
+                      onChange={(e) => setHostPort(e.target.checked ? 0 : 25565)}
+                      className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
+                    />
+                    <span>Behind Proxy (Port 0)</span>
+                  </label>
+                </div>
+                {hostPort === 0 ? (
+                  <div className="flex h-9 items-center justify-between px-3 rounded-lg border border-border bg-muted/40 text-xs font-mono text-muted-foreground">
+                    <span>Internal Network: mcm-{server.id}</span>
+                    <span className="text-[10px] text-primary font-sans font-medium">No host port</span>
+                  </div>
+                ) : (
+                  <Input
+                    id="edit-port"
+                    type="number"
+                    min={0}
+                    max={65535}
+                    value={hostPort}
+                    onChange={(e) => setHostPort(Number(e.target.value))}
+                  />
+                )}
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    {hostPort === 0
+                      ? 'Accessible to proxies on the panel network via "mcm-:id".'
+                      : 'Changes take effect after rebuilding the container.'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cPort =
+                        server.server_type === 'geysermc'
+                          ? 19132
+                          : server.server_type === 'velocity' ||
+                              server.server_type === 'waterfall' ||
+                              server.server_type === 'bungeecord'
+                            ? 25577
+                            : 25565;
+                      void navigator.clipboard.writeText(`mcm-${server.id}:${cPort}`);
+                    }}
+                    className="text-primary hover:underline text-[11px] font-mono cursor-pointer"
+                  >
+                    Copy Docker addr
+                  </button>
+                </div>
               </div>
               <fieldset className="space-y-3">
                 <legend className="text-sm font-medium">Additional ports</legend>

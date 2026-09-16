@@ -366,6 +366,28 @@ func (r *Resolver) WaterfallBuilds(ctx context.Context, version string) ([]strin
 	return out, nil
 }
 
+// VelocityVersions returns supported Velocity versions.
+func (r *Resolver) VelocityVersions(ctx context.Context) ([]string, error) {
+	var p PaperProject
+	if err := r.getJSON(ctx, r.PaperBase+"/projects/velocity", &p); err != nil {
+		return nil, err
+	}
+	return flattenPaperVersions(p.Versions), nil
+}
+
+// VelocityBuilds returns builds for a Velocity version.
+func (r *Resolver) VelocityBuilds(ctx context.Context, version string) ([]string, error) {
+	var raw []PaperBuild
+	if err := r.getJSON(ctx, fmt.Sprintf("%s/projects/velocity/versions/%s/builds", r.PaperBase, version), &raw); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(raw))
+	for _, b := range raw {
+		out = append(out, strconv.Itoa(b.ID))
+	}
+	return out, nil
+}
+
 // QuiltGameVersions returns Quilt game versions.
 func (r *Resolver) QuiltGameVersions(ctx context.Context) ([]string, error) {
 	var games []struct {

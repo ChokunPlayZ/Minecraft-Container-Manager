@@ -58,43 +58,64 @@ func (s *Store) readRCONConfig(id string) (rconConfig, error) {
 	return cfg, nil
 }
 
-// ServerProperties is the result of reading a server's server.properties file.
+// ServerProperties is the result of reading a server's configuration file
+// (server.properties, velocity.toml, or config.yml).
 // Content holds the raw file text (preserving comments and formatting) and
 // Exists reports whether the file is present on disk yet.
 type ServerProperties struct {
-	Content string `json:"content"`
-	Exists  bool   `json:"exists"`
+	Content    string `json:"content"`
+	Exists     bool   `json:"exists"`
+	FileName   string `json:"file_name"`
+	ServerType string `json:"server_type"`
 }
 
-// propertiesPath returns the on-disk path of a server's server.properties file.
-func (s *Store) propertiesPath(id string) string {
-	return filepath.Join(s.dataPath(id), "server.properties")
+// ConfigFileNameFor returns the configuration filename for a server type.
+func ConfigFileNameFor(serverType string) string {
+	switch strings.ToLower(serverType) {
+	case "velocity":
+		return "velocity.toml"
+	case "waterfall", "bungeecord":
+		return "config.yml"
+	default:
+		return "server.properties"
+	}
 }
 
-// GetProperties returns the raw server.properties content for a server. If the
+// propertiesPath returns the on-disk path of a server's configuration file,
+// along with the file basename and server type.
+func (s *Store) propertiesPath(id string) (string, string, string) {
+	var srvType string
+	if s.db != nil {
+		_ = s.db.QueryRow(`SELECT server_type FROM servers WHERE id = ?`, id).Scan(&srvType)
+	}
+	fileName := ConfigFileNameFor(srvType)
+	return filepath.Join(s.dataPath(id), fileName), fileName, srvType
+}
+
+// GetProperties returns the raw configuration content for a server. If the
 // file has not been generated yet (a stopped or never-started server), Exists
 // is false and Content is empty so the UI can still render an editor.
 func (s *Store) GetProperties(id string) (ServerProperties, error) {
-	path := s.propertiesPath(id)
+	path, fileName, srvType := s.propertiesPath(id)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return ServerProperties{Content: "", Exists: false}, nil
+			return ServerProperties{Content: "", Exists: false, FileName: fileName, ServerType: srvType}, nil
 		}
-		return ServerProperties{}, err
+		return ServerProperties{FileName: fileName, ServerType: srvType}, err
 	}
-	return ServerProperties{Content: string(data), Exists: true}, nil
+	return ServerProperties{Content: string(data), Exists: true, FileName: fileName, ServerType: srvType}, nil
 }
 
-// SaveProperties writes the full server.properties content for a server,
+// SaveProperties writes the full configuration content for a server,
 // creating the data directory and file if they do not exist yet.
 func (s *Store) SaveProperties(id, content string) (ServerProperties, error) {
 	if err := os.MkdirAll(s.dataPath(id), 0o755); err != nil {
 		return ServerProperties{}, err
 	}
-	path := s.propertiesPath(id)
+	path, fileName, srvType := s.propertiesPath(id)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return ServerProperties{}, err
 	}
-	return ServerProperties{Content: content, Exists: true}, nil
+	return ServerProperties{Content: content, Exists: true, FileName: fileName, ServerType: srvType}, nil
 }

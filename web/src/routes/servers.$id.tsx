@@ -222,8 +222,21 @@ export function ServerDetailRoute() {
 
   function copyAddress() {
     if (!server) return;
-    const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
-    const address = `${host}:${server.host_port}`;
+    let address = '';
+    if (server.host_port > 0) {
+      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+      address = `${host}:${server.host_port}`;
+    } else {
+      const cPort =
+        server.server_type === 'geysermc'
+          ? 19132
+          : server.server_type === 'velocity' ||
+              server.server_type === 'waterfall' ||
+              server.server_type === 'bungeecord'
+            ? 25577
+            : 25565;
+      address = `mcm-${server.id}:${cPort}`;
+    }
     void navigator.clipboard.writeText(address);
     setCopiedAddress(true);
     setTimeout(() => setCopiedAddress(false), 2000);
@@ -328,10 +341,12 @@ export function ServerDetailRoute() {
                   <button
                     type="button"
                     onClick={copyAddress}
-                    title="Click to copy host & port"
-                    className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-0.5 text-xs hover:bg-muted hover:text-foreground transition-colors"
+                    title={server.host_port > 0 ? "Click to copy host & port" : "Click to copy internal Docker network address"}
+                    className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-0.5 text-xs hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                   >
-                    <span className="font-mono">Port {server.host_port}</span>
+                    <span className="font-mono">
+                      {server.host_port > 0 ? `Port ${server.host_port}` : `Behind Proxy (mcm-${server.id.slice(0, 8)})`}
+                    </span>
                     {copiedAddress ? (
                       <Check className="h-3 w-3 text-emerald-500" />
                     ) : (

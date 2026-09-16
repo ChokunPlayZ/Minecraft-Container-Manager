@@ -19,6 +19,7 @@ export type ServerType =
   | 'custom'
   | 'waterfall'
   | 'bungeecord'
+  | 'velocity'
   | 'geysermc';
 
 export type ServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
@@ -319,6 +320,8 @@ export type { ModUpdateInfo } from './mod-updates';
 export interface ServerProperties {
   content: string;
   exists: boolean;
+  file_name?: string;
+  server_type?: string;
 }
 
 export interface FileEntry {

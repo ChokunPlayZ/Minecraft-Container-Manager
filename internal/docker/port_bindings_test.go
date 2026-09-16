@@ -70,6 +70,14 @@ func TestPortBindings(t *testing.T) {
 }
 
 func TestPortBindingsProxyAndGeyser(t *testing.T) {
+	pmVelocity := portBindings(CreateOpts{
+		ServerType: "velocity",
+		HostPort:   25577,
+	})
+	if b, ok := pmVelocity[nat.Port("25577/tcp")]; !ok || b[0].HostPort != "25577" {
+		t.Fatalf("expected velocity binding for 25577/tcp, got %v", pmVelocity)
+	}
+
 	pmBungee := portBindings(CreateOpts{
 		ServerType: "bungeecord",
 		HostPort:   25577,
@@ -92,6 +100,23 @@ func TestPortBindingsProxyAndGeyser(t *testing.T) {
 	})
 	if b, ok := pmGeyser[nat.Port("19132/udp")]; !ok || b[0].HostPort != "19132" {
 		t.Fatalf("expected geysermc binding for 19132/udp, got %v", pmGeyser)
+	}
+}
+
+func TestPortBindingsNoHostPort(t *testing.T) {
+	// A server behind a proxy has HostPort: 0
+	pm := portBindings(CreateOpts{
+		ServerType: "paper",
+		HostPort:   0,
+	})
+	if len(pm) != 0 {
+		t.Fatalf("expected no port bindings when HostPort is 0, got %v", pm)
+	}
+
+	// But exposed ports should still contain the container port (25565/tcp) for internal network access
+	eps := exposedPortsFor("paper", nil)
+	if _, ok := eps[nat.Port("25565/tcp")]; !ok {
+		t.Fatalf("expected exposedPortsFor paper to include 25565/tcp, got %v", eps)
 	}
 }
 

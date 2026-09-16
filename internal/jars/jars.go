@@ -44,6 +44,7 @@ const (
 	TypeLeaf       JarType = "leaf"
 	TypeWaterfall  JarType = "waterfall"
 	TypeBungeeCord JarType = "bungeecord"
+	TypeVelocity   JarType = "velocity"
 	TypeGeyser     JarType = "geysermc"
 	TypeCustom     JarType = "custom"
 )
@@ -54,7 +55,7 @@ func ParseJarType(s string) (JarType, error) {
 	case TypePaper, TypeFabric, TypeVanilla, TypeForge, TypeNeoForge, TypeSpigot,
 		TypePurpur, TypeFolia, TypeQuilt, TypeMohist, TypeKetting, TypeSponge,
 		TypeLimbo, TypeNanoLimbo, TypeCrucible, TypePufferfish, TypeLeaf,
-		TypeWaterfall, TypeBungeeCord, TypeGeyser, TypeCustom:
+		TypeWaterfall, TypeBungeeCord, TypeVelocity, TypeGeyser, TypeCustom:
 		return JarType(strings.ToLower(s)), nil
 	default:
 		return "", fmt.Errorf("unsupported jar type %q", s)
@@ -424,6 +425,16 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 			b = builds[len(builds)-1]
 		}
 		return Resolved{Type: TypeWaterfall, Version: version, Build: b}, nil
+	case TypeVelocity:
+		builds, err := r.VelocityBuilds(ctx, version)
+		if err != nil || len(builds) == 0 {
+			return Resolved{Type: TypeVelocity, Version: version, Build: "latest"}, nil
+		}
+		b, err := selectString(builds, build)
+		if err != nil {
+			b = builds[len(builds)-1]
+		}
+		return Resolved{Type: TypeVelocity, Version: version, Build: b}, nil
 	case TypeQuilt:
 		loaders, err := r.QuiltLoaders(ctx, version)
 		if err != nil || len(loaders) == 0 {
@@ -754,6 +765,16 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			build = builds[len(builds)-1]
 		}
 		dlURL = fmt.Sprintf("%s/projects/waterfall/versions/%s/builds/%s/downloads/waterfall-%s-%s.jar", r.PaperBase, version, build, version, build)
+
+	case TypeVelocity:
+		if build == "" || build == "latest" {
+			builds, err := r.VelocityBuilds(ctx, version)
+			if err != nil || len(builds) == 0 {
+				return fmt.Errorf("resolve velocity build: %w", err)
+			}
+			build = builds[len(builds)-1]
+		}
+		dlURL = fmt.Sprintf("%s/projects/velocity/versions/%s/builds/%s/downloads/velocity-%s-%s.jar", r.PaperBase, version, build, version, build)
 
 	case TypeSpigot:
 		dlURL = fmt.Sprintf("https://cdn.getbukkit.org/spigot/spigot-%s.jar", version)

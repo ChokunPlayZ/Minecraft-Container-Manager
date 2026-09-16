@@ -93,3 +93,18 @@ func TestReadPropsSkipsCommentsAndBlankLines(t *testing.T) {
 		t.Fatalf("expected comments/blank lines excluded")
 	}
 }
+
+func TestConfigFileNameFor(t *testing.T) {
+	if got := ConfigFileNameFor("velocity"); got != "velocity.toml" {
+		t.Fatalf("expected velocity.toml for velocity, got %q", got)
+	}
+	if got := ConfigFileNameFor("waterfall"); got != "config.yml" {
+		t.Fatalf("expected config.yml for waterfall, got %q", got)
+	}
+	if got := ConfigFileNameFor("bungeecord"); got != "config.yml" {
+		t.Fatalf("expected config.yml for bungeecord, got %q", got)
+	}
+	if got := ConfigFileNameFor("paper"); got != "server.properties" {
+		t.Fatalf("expected server.properties for paper, got %q", got)
+	}
+}

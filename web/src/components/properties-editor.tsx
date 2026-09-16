@@ -34,6 +34,7 @@ import {
   updatePropertyInLines,
 } from '../lib/server-properties';
 import { MotdDesigner } from './motd-designer';
+import { ProxyConfigEditor } from './proxy-config-editor';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -69,6 +70,14 @@ const CATEGORY_ICONS: Record<PropertyCategory, typeof Sparkles> = {
 };
 
 export function PropertiesEditor({ server }: { server: Server }) {
+  if (
+    server.server_type === 'velocity' ||
+    server.server_type === 'waterfall' ||
+    server.server_type === 'bungeecord'
+  ) {
+    return <ProxyConfigEditor server={server} />;
+  }
+
   const [rawContent, setRawContent] = useState('');
   const [initialContent, setInitialContent] = useState('');
   const [parsedLines, setParsedLines] = useState<ParsedPropertyLine[]>([]);

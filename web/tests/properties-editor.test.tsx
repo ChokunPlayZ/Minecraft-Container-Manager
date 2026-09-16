@@ -150,4 +150,77 @@ describe('PropertiesEditor', () => {
     // The new key should appear in the custom properties list
     expect(screen.getByText('enable-voice-chat')).toBeInTheDocument();
   });
+
+  it('renders ProxyConfigEditor for velocity proxy and supports adding backend server', async () => {
+    const user = userEvent.setup();
+    const velocityServer: Server = {
+      ...mockServer,
+      id: 'proxy-velocity-id',
+      name: 'Velocity Network',
+      server_type: 'velocity',
+      host_port: 25577,
+    };
+
+    const mockBackendServers: Server[] = [
+      {
+        ...mockServer,
+        id: 'lobby-srv-123',
+        name: 'Lobby SMP',
+        server_type: 'paper',
+        host_port: 0,
+      },
+    ];
+
+    vi.spyOn(api, 'getProperties').mockResolvedValue({
+      exists: true,
+      content: `# Velocity
+bind = "0.0.0.0:25577"
+player-info-forwarding-mode = "modern"
+[servers]
+`,
+    });
+    vi.spyOn(api, 'listServers').mockResolvedValue(mockBackendServers);
+    const saveSpy = vi.spyOn(api, 'saveProperties').mockResolvedValue({
+      exists: true,
+      content: '',
+    });
+
+    render(<PropertiesEditor server={velocityServer} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Proxy Configuration \(velocity\.toml\)/i)).toBeInTheDocument();
+    });
+
+    // Open add backend server form
+    const addBtn = screen.getByRole('button', { name: /Add Backend Server/i });
+    await user.click(addBtn);
+
+    // Check quick pick dropdown exists
+    expect(screen.getByText(/Quick Select from MCM Panel Servers/i)).toBeInTheDocument();
+
+    // Select the panel server from the dropdown
+    const select = screen.getByRole('combobox');
+    await user.selectOptions(select, 'lobby-srv-123');
+
+    // Confirm that address is populated with mcm-<id>:25565
+    const addrInput = screen.getByDisplayValue('mcm-lobby-srv-123:25565');
+    expect(addrInput).toBeInTheDocument();
+
+    // Click confirm & add server
+    const confirmBtn = screen.getByRole('button', { name: /Confirm & Add Server/i });
+    await user.click(confirmBtn);
+
+    // Check server card is rendered
+    expect(screen.getAllByText('lobby-smp').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('mcm-lobby-srv-123:25565')).toBeInTheDocument();
+
+    // Click Save
+    const saveBtn = screen.getByRole('button', { name: /Save Changes/i });
+    await user.click(saveBtn);
+
+    expect(saveSpy).toHaveBeenCalledWith(
+      'proxy-velocity-id',
+      expect.stringContaining('lobby-smp = "mcm-lobby-srv-123:25565"')
+    );
+  });
 });

@@ -115,6 +115,7 @@ type CreateInput struct {
 	Build         string       `json:"build,omitempty"`
 	RAMMB         int          `json:"ram_mb"`
 	HostPort      int          `json:"host_port,omitempty"`
+	NoHostPort    bool         `json:"no_host_port,omitempty"`
 	CPULimit      float64      `json:"cpu_limit"`
 	MemoryLimitMB int          `json:"memory_limit_mb"`
 	JavaVersion   int          `json:"java_version"`
@@ -439,7 +440,9 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 		return Server{}, fmt.Errorf("%w: validate jar: %v", ErrInvalidJar, err)
 	}
 	var port int
-	if in.HostPort > 0 {
+	if in.NoHostPort || in.HostPort == -1 {
+		port = 0
+	} else if in.HostPort > 0 {
 		if in.HostPort < 1 || in.HostPort > 65535 {
 			return Server{}, fmt.Errorf("host_port must be between 1 and 65535")
 		}
@@ -510,11 +513,13 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 	}
 	if in.HostPort != nil && *in.HostPort != srv.HostPort {
 		port := *in.HostPort
-		if port < 1 || port > 65535 {
-			return Server{}, fmt.Errorf("host_port must be between 1 and 65535")
+		if port < 0 || port > 65535 {
+			return Server{}, fmt.Errorf("host_port must be between 0 and 65535")
 		}
-		if err := s.ensurePortFree(ctx, id, port); err != nil {
-			return Server{}, err
+		if port > 0 {
+			if err := s.ensurePortFree(ctx, id, port); err != nil {
+				return Server{}, err
+			}
 		}
 		srv.HostPort = port
 		// Docker binds host ports at container creation, so a changed primary
@@ -566,6 +571,9 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 // In the context of the port pool, a port that was previously allocated to this
 // server is freed when the old host_port is overwritten below.
 func (s *Store) ensurePortFree(ctx context.Context, id string, port int) error {
+	if port <= 0 {
+		return nil
+	}
 	var other string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id FROM servers WHERE host_port = ? AND id != ?`, port, id).Scan(&other)
@@ -618,7 +626,7 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	if err := s.setStateWithStartedAt(ctx, id, StateRunning, &now); err != nil {
 		return Server{}, err
 	}
-	if s.dns != nil {
+	if s.dns != nil && srv.HostPort > 0 {
 		_ = s.dns.Upsert(ctx, id, "", srv.HostPort)
 	}
 	return s.Get(ctx, id)

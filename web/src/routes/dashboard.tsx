@@ -115,7 +115,13 @@ export function DashboardRoute() {
                       </div>
                       <div>
                         <dt className="text-muted-foreground">Port</dt>
-                        <dd>{server.host_port}</dd>
+                        <dd>
+                          {server.host_port > 0 ? (
+                            server.host_port
+                          ) : (
+                            <span className="text-xs text-primary font-medium">Behind Proxy</span>
+                          )}
+                        </dd>
                       </div>
                       {server.state === 'running' && (server.started_at || server.uptime_seconds != null) && (
                         <div

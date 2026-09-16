@@ -104,6 +104,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
 
   // Port pool state
   const [port, setPort] = useState<string>('');
+  const [behindProxy, setBehindProxy] = useState<boolean>(false);
   const [availablePorts, setAvailablePorts] = useState<number[]>([]);
   const [usedPorts, setUsedPorts] = useState<number[]>([]);
   const [loadingPorts, setLoadingPorts] = useState(false);
@@ -477,14 +478,15 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   }
 
   async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (isPortUsed) {
-      setError(`Port ${port} is already in use by another server`);
-      return;
-    }
-    if (port && isPortInvalid) {
-      setError('Please enter a valid port between 1 and 65535');
-      return;
+    if (!behindProxy) {
+      if (isPortUsed) {
+        setError(`Port ${port} is already in use by another server`);
+        return;
+      }
+      if (port && isPortInvalid) {
+        setError('Please enter a valid port between 1 and 65535');
+        return;
+      }
     }
     setBusy(true);
     setError(null);
@@ -495,7 +497,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       build: createMode === 'search-modpack' ? '' : (serverType === 'custom' ? (build || 'custom') : build),
       ram_mb: ramMb,
       java_version: javaVersion,
-      host_port: parsedPort > 0 ? parsedPort : undefined,
+      host_port: behindProxy ? 0 : (parsedPort > 0 ? parsedPort : undefined),
+      no_host_port: behindProxy,
     };
     try {
       const srv = await api.createServer(input);
@@ -970,30 +973,50 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                       <Label htmlFor="server-port">Server Port</Label>
                       {loadingPorts && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                     </div>
-                    {isPortUsed ? (
-                      <span className="text-[11px] font-semibold text-destructive">Already in use</span>
-                    ) : isPortInvalid ? (
-                      <span className="text-[11px] font-semibold text-destructive">Invalid port</span>
-                    ) : (
-                      <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">Available</span>
+                    {!behindProxy && (
+                      isPortUsed ? (
+                        <span className="text-[11px] font-semibold text-destructive">Already in use</span>
+                      ) : isPortInvalid ? (
+                        <span className="text-[11px] font-semibold text-destructive">Invalid port</span>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">Available</span>
+                      )
                     )}
                   </div>
-                  <Input
-                    id="server-port"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={port}
-                    onChange={(e) => setPort(e.target.value)}
-                    placeholder={availablePorts[0] ? String(availablePorts[0]) : "25565"}
-                    className={isPortUsed ? "border-destructive focus-visible:ring-destructive" : ""}
-                  />
-                  {isPortUsed && (
+                  {behindProxy ? (
+                    <div className="flex h-9 items-center justify-between px-3 rounded-lg border border-border bg-muted/40 text-xs text-muted-foreground font-mono">
+                      <span>Internal Network Only (mcm-:id)</span>
+                      <span className="text-[10px] text-primary font-sans font-medium">No host port required</span>
+                    </div>
+                  ) : (
+                    <Input
+                      id="server-port"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={port}
+                      onChange={(e) => setPort(e.target.value)}
+                      placeholder={availablePorts[0] ? String(availablePorts[0]) : "25565"}
+                      className={isPortUsed ? "border-destructive focus-visible:ring-destructive" : ""}
+                    />
+                  )}
+                  <div className="flex items-center justify-between pt-1">
+                    <label className="flex items-center gap-1.5 cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={behindProxy}
+                        onChange={(e) => setBehindProxy(e.target.checked)}
+                        className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
+                      />
+                      <span>Behind Proxy (Internal only, no open host port)</span>
+                    </label>
+                  </div>
+                  {!behindProxy && isPortUsed && (
                     <p className="text-[11px] text-destructive font-medium">
                       Port {port} is already used by an existing server.
                     </p>
                   )}
-                  {!isPortUsed && !isPortInvalid && availablePorts.length > 0 && (
+                  {!behindProxy && !isPortUsed && !isPortInvalid && availablePorts.length > 0 && (
                     <p className="text-[11px] text-muted-foreground">
                       Prefilled from available port pool.
                     </p>
@@ -1011,7 +1034,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                       onChange={(e) => {
                         const nextType = e.target.value as ServerType;
                         setServerType(nextType);
-                        if (nextType === 'waterfall' || nextType === 'bungeecord') {
+                        if (nextType === 'velocity' || nextType === 'waterfall' || nextType === 'bungeecord') {
                           if (!port || port === '25565') setPort('25577');
                         } else if (nextType === 'geysermc') {
                           if (!port || port === '25565') setPort('19132');
@@ -1040,6 +1063,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                         <option value="crucible">Crucible (1.7.10 Hybrid)</option>
                       </optgroup>
                       <optgroup label="Proxies &amp; Lightweight">
+                        <option value="velocity">Velocity (PaperMC Modern Proxy)</option>
                         <option value="waterfall">Waterfall (PaperMC Proxy)</option>
                         <option value="bungeecord">BungeeCord (Proxy)</option>
                         <option value="limbo">Limbo (Ultra-lightweight Fake Server)</option>

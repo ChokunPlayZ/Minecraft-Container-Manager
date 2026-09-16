@@ -693,4 +693,74 @@ func TestStopFallbackWhenConsoleTimesOut(t *testing.T) {
 	}
 }
 
+func TestCreateServerBehindProxyNoHostPort(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := NewStore(dbHandle, nil, jars.NewResolver(), 25565, 25570, dir, dir)
+	store.docker = fake
+
+	ctx := context.Background()
+
+	// 1. Create first server behind proxy with NoHostPort: true
+	srv1, err := store.Create(ctx, CreateInput{
+		Name:       "Lobby Backend",
+		ServerType: "paper",
+		Version:    "1.21.1",
+		RAMMB:      2048,
+		NoHostPort: true,
+	})
+	if err != nil {
+		t.Fatalf("Create srv1: %v", err)
+	}
+	if srv1.HostPort != 0 {
+		t.Fatalf("expected srv1.HostPort == 0, got %d", srv1.HostPort)
+	}
+
+	// 2. Create second server behind proxy with NoHostPort: true (must not conflict on unique constraint)
+	srv2, err := store.Create(ctx, CreateInput{
+		Name:       "Survival Backend",
+		ServerType: "paper",
+		Version:    "1.21.1",
+		RAMMB:      4096,
+		NoHostPort: true,
+	})
+	if err != nil {
+		t.Fatalf("Create srv2 with 0 host port failed (conflict?): %v", err)
+	}
+	if srv2.HostPort != 0 {
+		t.Fatalf("expected srv2.HostPort == 0, got %d", srv2.HostPort)
+	}
+
+	// 3. Create a normal server with a port
+	srv3, err := store.Create(ctx, CreateInput{
+		Name:       "Proxy Velocity",
+		ServerType: "velocity",
+		Version:    "3.3.0-SNAPSHOT",
+		RAMMB:      1024,
+		HostPort:   25577,
+	})
+	if err != nil {
+		t.Fatalf("Create proxy: %v", err)
+	}
+	if srv3.HostPort != 25577 {
+		t.Fatalf("expected proxy HostPort == 25577, got %d", srv3.HostPort)
+	}
+
+	// 4. Update srv3 to move behind proxy (HostPort -> 0)
+	zero := 0
+	updatedSrv3, err := store.Update(ctx, srv3.ID, UpdateInput{
+		HostPort: &zero,
+	})
+	if err != nil {
+		t.Fatalf("Update srv3 to 0 port failed: %v", err)
+	}
+	if updatedSrv3.HostPort != 0 {
+		t.Fatalf("expected updatedSrv3.HostPort == 0, got %d", updatedSrv3.HostPort)
+	}
+}
+
 
