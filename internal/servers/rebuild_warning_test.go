@@ -214,3 +214,40 @@ func TestRebuildWarningJavaVersion(t *testing.T) {
 	}
 }
 
+func TestRebuildWarningEntrypointVersion(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	// Insert server with an older container_config that has EntrypointVersion 0 / missing
+	oldConfig := `{"server_type":"paper","version":"1.21.1","build":"120","ram_mb":2048,"cpu_limit":0,"memory_limit_mb":0,"host_port":25565,"java_version":21,"extra_ports":[]}`
+	_, err = dbHandle.DB.Exec(`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, container_config, java_version) VALUES (?, 'legacy', 'paper', '1.21.1', '120', 2048, 0, 0, 25565, '[]', 'container-legacy', 'stopped', datetime('now'), datetime('now'), ?, 21)`, id, oldConfig)
+	if err != nil {
+		t.Fatalf("insert legacy server: %v", err)
+	}
+
+	ctx := context.Background()
+	srv, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == true for container with legacy entrypoint version")
+	}
+	found := false
+	for _, r := range srv.RebuildReasons {
+		if r == "Container runtime script updated to support clean process exit on crash" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected entrypoint update rebuild reason in %v", srv.RebuildReasons)
+	}
+}
+

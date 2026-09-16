@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/ports"
 )
@@ -434,6 +435,82 @@ func TestCopyServer(t *testing.T) {
 			t.Errorf("expected ErrPortInUse, got: %v", err)
 		}
 	})
+}
+
+func TestMapDockerState(t *testing.T) {
+	tests := []struct {
+		status   string
+		exitCode int
+		want     string
+	}{
+		{"running", 0, StateRunning},
+		{"restarting", 0, StateStarting},
+		{"paused", 0, StateRunning},
+		{"created", 0, StateStopped},
+		{"stopped", 0, StateStopped},
+		{"exited", 0, StateStopped},
+		{"exited", 143, StateStopped}, // SIGTERM / docker stop
+		{"exited", 130, StateStopped}, // SIGINT / Ctrl+C
+		{"exited", 1, StateError},     // Java crash / unhandled exception
+		{"exited", 137, StateError},   // SIGKILL / OOM
+		{"dead", 0, StateStopped},
+		{"dead", 1, StateError},
+		{"unknown", 0, StateError},
+	}
+
+	for _, tt := range tests {
+		got := mapDockerState(tt.status, tt.exitCode)
+		if got != tt.want {
+			t.Errorf("mapDockerState(%q, %d) = %q, want %q", tt.status, tt.exitCode, got, tt.want)
+		}
+	}
+}
+
+func TestStatusReconcilesCrashToError(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+
+	ctx := context.Background()
+	srv, err := store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srv.State != StateRunning {
+		t.Fatalf("expected state running, got %s", srv.State)
+	}
+
+	// Simulate server process crashing with exit code 1
+	fake.mu.Lock()
+	fake.inspectState = &docker.ContainerState{
+		Status:   "exited",
+		ExitCode: 1,
+	}
+	fake.mu.Unlock()
+
+	status, err := store.Status(ctx, id)
+	if err != nil {
+		t.Fatalf("Status error: %v", err)
+	}
+	if status.State != StateError {
+		t.Errorf("expected state %q after crash, got %q", StateError, status.State)
+	}
+
+	// Verify database was also updated to StateError
+	reloaded, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if reloaded.State != StateError {
+		t.Errorf("expected reloaded state %q, got %q", StateError, reloaded.State)
+	}
 }
 
 

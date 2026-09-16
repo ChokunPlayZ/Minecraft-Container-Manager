@@ -122,12 +122,24 @@ func (r *Resolver) AvailableJavaVersions(ctx context.Context) ([]JavaRelease, er
 
 // RecommendJavaVersion returns the recommended Java major version for a given Minecraft version.
 func RecommendJavaVersion(mcVersion string) int {
+	if strings.HasPrefix(mcVersion, "25w") || strings.HasPrefix(mcVersion, "26w") {
+		return 25
+	}
 	parts := strings.Split(mcVersion, ".")
+	if len(parts) >= 1 {
+		major, _ := strconv.Atoi(parts[0])
+		if major >= 25 {
+			return 25
+		}
+	}
 	if len(parts) >= 2 {
 		minor, _ := strconv.Atoi(parts[1])
 		patch := 0
 		if len(parts) >= 3 {
 			patch, _ = strconv.Atoi(parts[2])
+		}
+		if minor >= 22 {
+			return 25
 		}
 		if minor >= 21 || (minor == 20 && patch >= 5) {
 			return 21

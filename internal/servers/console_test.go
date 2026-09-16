@@ -23,7 +23,8 @@ type fakeRuntime struct {
 	createID string
 	lastOpts docker.CreateOpts
 	// existing container ids reported present by Exists.
-	existing map[string]bool
+	existing     map[string]bool
+	inspectState *docker.ContainerState
 }
 
 func (f *fakeRuntime) Ping(context.Context) error { return nil }
@@ -40,6 +41,11 @@ func (f *fakeRuntime) Status(context.Context, string) (string, error) {
 	return "stopped", nil
 }
 func (f *fakeRuntime) Inspect(context.Context, string) (docker.ContainerState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.inspectState != nil {
+		return *f.inspectState, nil
+	}
 	return docker.ContainerState{Status: "stopped"}, nil
 }
 func (f *fakeRuntime) Exists(_ context.Context, id string) (bool, error) {

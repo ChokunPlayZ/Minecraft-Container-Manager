@@ -169,10 +169,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	entryScript := `FIFO="/tmp/console.in"
 rm -f "$FIFO"
 mkfifo -m 666 "$FIFO"
+exec 3<> "$FIFO"
 if [ -f "/data/run.sh" ]; then
-  cat <> "$FIFO" | exec sh /data/run.sh nogui
+  exec sh /data/run.sh nogui < "$FIFO"
 elif [ -f "/data/server.jar" ]; then
-  cat <> "$FIFO" | exec java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui
+  exec java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui < "$FIFO"
 else
   echo "No server.jar or run.sh found in /data"
   exit 1
@@ -362,6 +363,8 @@ func (m *Manager) Remove(ctx context.Context, containerID string) error {
 type ContainerState struct {
 	Status    string
 	StartedAt string
+	ExitCode  int
+	OOMKilled bool
 }
 
 // Status returns the docker-reported state of a container.
@@ -381,15 +384,21 @@ func (m *Manager) Inspect(ctx context.Context, containerID string) (ContainerSta
 	}
 	started := ""
 	status := ""
+	exitCode := 0
+	oomKilled := false
 	if insp.State != nil {
 		status = insp.State.Status
 		if insp.State.Running {
 			started = insp.State.StartedAt
 		}
+		exitCode = insp.State.ExitCode
+		oomKilled = insp.State.OOMKilled
 	}
 	return ContainerState{
 		Status:    status,
 		StartedAt: started,
+		ExitCode:  exitCode,
+		OOMKilled: oomKilled,
 	}, nil
 }
 

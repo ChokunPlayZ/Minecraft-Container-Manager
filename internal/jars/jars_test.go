@@ -364,3 +364,32 @@ func TestSpigotResolve(t *testing.T) {
 		t.Fatalf("unexpected spigot resolve: %+v", res)
 	}
 }
+
+func TestRecommendJavaVersion(t *testing.T) {
+	tests := []struct {
+		mcVersion string
+		want      int
+	}{
+		{"25w07a", 25},
+		{"26w02a", 25},
+		{"26.1", 25},
+		{"1.22.0", 25},
+		{"1.22", 25},
+		{"1.23.1", 25},
+		{"1.21.4", 21},
+		{"1.21.1", 21},
+		{"1.20.5", 21},
+		{"1.20.4", 17},
+		{"1.18.2", 17},
+		{"1.17.1", 17},
+		{"1.16.5", 8},
+		{"1.12.2", 8},
+	}
+
+	for _, tt := range tests {
+		got := RecommendJavaVersion(tt.mcVersion)
+		if got != tt.want {
+			t.Errorf("RecommendJavaVersion(%q) = %d, want %d", tt.mcVersion, got, tt.want)
+		}
+	}
+}

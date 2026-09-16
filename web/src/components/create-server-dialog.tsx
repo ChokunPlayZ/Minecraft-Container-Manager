@@ -24,10 +24,16 @@ import type {
 import { formatCount, searchModrinth } from '../api/modrinth';
 
 function recommendJava(ver: string): number {
+  if (ver.startsWith('25w') || ver.startsWith('26w')) return 25;
   const parts = ver.split('.');
+  if (parts.length >= 1) {
+    const major = parseInt(parts[0], 10);
+    if (major >= 25) return 25;
+  }
   if (parts.length >= 2) {
     const minor = parseInt(parts[1], 10);
     const patch = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+    if (minor >= 22) return 25;
     if (minor >= 21 || (minor === 20 && patch >= 5)) return 21;
     if (minor >= 17) return 17;
     if (minor > 0 && minor <= 16) return 8;

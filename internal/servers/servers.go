@@ -189,9 +189,10 @@ type ContainerConfig struct {
 	RAMMB         int         `json:"ram_mb"`
 	CPULimit      float64     `json:"cpu_limit"`
 	MemoryLimitMB int         `json:"memory_limit_mb"`
-	HostPort      int         `json:"host_port"`
-	JavaVersion   int         `json:"java_version"`
-	ExtraPorts    []ExtraPort `json:"extra_ports"`
+	HostPort          int         `json:"host_port"`
+	JavaVersion       int         `json:"java_version"`
+	ExtraPorts        []ExtraPort `json:"extra_ports"`
+	EntrypointVersion int         `json:"entrypoint_version,omitempty"`
 }
 
 func encodeContainerConfig(c ContainerConfig) string {
@@ -212,9 +213,10 @@ func currentContainerConfig(srv *Server) ContainerConfig {
 		RAMMB:         srv.RAMMB,
 		CPULimit:      srv.CPULimit,
 		MemoryLimitMB: srv.MemoryLimitMB,
-		HostPort:      srv.HostPort,
-		JavaVersion:   srv.JavaVersion,
-		ExtraPorts:    ports,
+		HostPort:          srv.HostPort,
+		JavaVersion:       srv.JavaVersion,
+		ExtraPorts:        ports,
+		EntrypointVersion: 1,
 	}
 }
 
@@ -277,6 +279,9 @@ func checkRebuildNeeded(srv *Server, rawConfig string) (bool, []string) {
 	}
 	if !extraPortsEqual(srv.ExtraPorts, applied.ExtraPorts) {
 		reasons = append(reasons, "Additional ports configuration changed")
+	}
+	if applied.EntrypointVersion < 1 {
+		reasons = append(reasons, "Container runtime script updated to support clean process exit on crash")
 	}
 	return len(reasons) > 0, reasons
 }
@@ -716,7 +721,7 @@ func (s *Store) Status(ctx context.Context, id string) (Server, error) {
 	if err != nil {
 		return srv, nil
 	}
-	mapped := mapDockerState(insp.Status)
+	mapped := mapDockerState(insp.Status, insp.ExitCode)
 	if mapped != srv.State {
 		if mapped == StateRunning {
 			started := insp.StartedAt
@@ -726,6 +731,9 @@ func (s *Store) Status(ctx context.Context, id string) (Server, error) {
 			_ = s.setStateWithStartedAt(ctx, id, mapped, &started)
 		} else {
 			_ = s.setState(ctx, id, mapped)
+			if s.dns != nil && (mapped == StateStopped || mapped == StateError) {
+				_ = s.dns.Remove(ctx, id)
+			}
 		}
 		return s.Get(ctx, id)
 	}
@@ -913,11 +921,16 @@ func validateLimits(cpu float64, memoryMB int) error {
 	return nil
 }
 
-func mapDockerState(state string) string {
+func mapDockerState(state string, exitCode int) string {
 	switch state {
 	case "running":
 		return StateRunning
-	case "stopped", "exited", "created", "dead":
+	case "stopped", "exited", "dead":
+		if exitCode != 0 && exitCode != 143 && exitCode != 130 {
+			return StateError
+		}
+		return StateStopped
+	case "created":
 		return StateStopped
 	case "restarting":
 		return StateStarting
