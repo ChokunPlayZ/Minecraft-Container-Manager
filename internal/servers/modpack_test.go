@@ -490,4 +490,64 @@ func TestModpackAutoConfigureJavaVersion(t *testing.T) {
 	}
 }
 
+func TestModpackCleansStaleBinariesOnLoaderChange(t *testing.T) {
+	serverID := "srv-clean-stale-binaries"
+	store := newTestStore(t, serverID, StateStopped)
+	ctx := context.Background()
+	dataDir := store.dataPath(serverID)
+
+	// Simulate existing server running Paper with an old server.jar and run.sh
+	oldServerJar := filepath.Join(dataDir, "server.jar")
+	oldRunSh := filepath.Join(dataDir, "run.sh")
+	oldInstallerJar := filepath.Join(dataDir, "installer.jar")
+	_ = os.WriteFile(oldServerJar, []byte("old-paper-jar"), 0644)
+	_ = os.WriteFile(oldRunSh, []byte("old-run-sh"), 0755)
+	_ = os.WriteFile(oldInstallerJar, []byte("old-installer"), 0644)
+
+	// Create a Modrinth modpack requiring Forge 1.20.1
+	idx := modrinthIndex{
+		FormatVersion: 1,
+		Game:          "minecraft",
+		VersionID:     "v1.0.0",
+		Name:          "Better MC Forge",
+		Dependencies: map[string]string{
+			"minecraft": "1.20.1",
+			"forge":     "47.2.0",
+		},
+	}
+	b, _ := json.Marshal(idx)
+	packZip := createTestZip(t, map[string]string{
+		"modrinth.index.json": string(b),
+	})
+	packPath := filepath.Join(t.TempDir(), "BetterMC.mrpack")
+	d, _ := io.ReadAll(packZip)
+	_ = os.WriteFile(packPath, d, 0o644)
+
+	_, err := store.InstallModpack(ctx, serverID, packPath, InstallModpackOpts{
+		Source:              "modrinth",
+		AutoConfigureServer: true,
+	})
+	if err != nil {
+		t.Fatalf("InstallModpack: %v", err)
+	}
+
+	// Old stale binaries from the previous server type must be removed so they don't clash with the new loader
+	if _, err := os.Stat(oldServerJar); !os.IsNotExist(err) {
+		t.Errorf("expected old server.jar to be removed when switching to forge modpack")
+	}
+	if _, err := os.Stat(oldRunSh); !os.IsNotExist(err) {
+		t.Errorf("expected old run.sh to be removed when switching to forge modpack")
+	}
+	if _, err := os.Stat(oldInstallerJar); !os.IsNotExist(err) {
+		t.Errorf("expected old installer.jar to be removed when switching to forge modpack")
+	}
+
+	srv, err := store.Get(ctx, serverID)
+	if err != nil {
+		t.Fatalf("Get server: %v", err)
+	}
+	if srv.ServerType != "forge" {
+		t.Errorf("expected serverType to be forge, got %q", srv.ServerType)
+	}
+}
 

@@ -503,6 +503,29 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			_, _ = s.db.ExecContext(ctx, "UPDATE servers SET server_type=?, version=?, build=?, java_version=?, updated_at=? WHERE id=?",
 				targetType, targetVersion, targetBuild, targetJava, now, serverID)
 		}
+
+		// Modpacks (e.g. Modrinth .mrpack or CurseForge) only contain mods and configs;
+		// they do not include the server software JAR/installer.
+		// If the server was previously on a different loader or version, clean up stale executables.
+		if srv.ServerType != targetType || srv.Version != targetVersion {
+			_ = os.Remove(filepath.Join(dataDir, "server.jar"))
+			_ = os.Remove(filepath.Join(dataDir, "run.sh"))
+			_ = os.Remove(filepath.Join(dataDir, "installer.jar"))
+			matches, _ := filepath.Glob(filepath.Join(dataDir, "*forge*.jar"))
+			for _, m := range matches {
+				_ = os.Remove(m)
+			}
+		}
+
+		// Download the required server software / installer JAR for the modpack's loader.
+		if s.jars != nil {
+			currSrv, err := s.Get(ctx, serverID)
+			if err == nil && currSrv.ServerType != "custom" {
+				if jt, err := jars.ParseJarType(currSrv.ServerType); err == nil {
+					_ = s.jars.DownloadServerJar(ctx, jt, currSrv.Version, currSrv.Build, dataDir)
+				}
+			}
+		}
 	}
 
 	installedFiles := make([]string, 0)
