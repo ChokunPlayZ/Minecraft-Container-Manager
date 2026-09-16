@@ -763,4 +763,38 @@ func TestCreateServerBehindProxyNoHostPort(t *testing.T) {
 	}
 }
 
+func TestHasForgeJar(t *testing.T) {
+	tmp := t.TempDir()
 
+	// Empty dir: no forge jar
+	if hasForgeJar(tmp) {
+		t.Errorf("expected hasForgeJar to be false for empty dir")
+	}
+
+	// Only installer.jar: should not be treated as installed forge jar
+	installerPath := filepath.Join(tmp, "installer.jar")
+	if err := os.WriteFile(installerPath, []byte("fake"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if hasForgeJar(tmp) {
+		t.Errorf("expected hasForgeJar to be false when only installer.jar is present")
+	}
+
+	// Another installer name: forge-1.20.1-47.2.0-installer.jar
+	forgeInstallerPath := filepath.Join(tmp, "forge-1.20.1-47.2.0-installer.jar")
+	if err := os.WriteFile(forgeInstallerPath, []byte("fake"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if hasForgeJar(tmp) {
+		t.Errorf("expected hasForgeJar to be false when only installer jars are present")
+	}
+
+	// Legacy Forge server jar: forge-1.12.2-14.23.5.2860.jar
+	legacyJarPath := filepath.Join(tmp, "forge-1.12.2-14.23.5.2860.jar")
+	if err := os.WriteFile(legacyJarPath, []byte("fake"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !hasForgeJar(tmp) {
+		t.Errorf("expected hasForgeJar to be true when forge server jar is present")
+	}
+}

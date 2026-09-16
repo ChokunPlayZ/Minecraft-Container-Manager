@@ -1155,7 +1155,16 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                         MCM will run <code>server.jar</code> (or <code>run.sh</code>) directly in the lightweight Java Alpine container. Place your JAR in the server directory after creation.
                       </p>
                     </div>
-                  ) : (
+                  ) : (serverType === 'forge' || serverType === 'neoforge') ? (
+                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs space-y-1">
+                      <span className="font-semibold text-foreground">{serverType === 'neoforge' ? 'NeoForge' : 'Forge'} Server Setup</span>
+                      <p className="text-muted-foreground text-[11px]">
+                        The installer jar will run automatically on first start to generate server libraries and launch scripts.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {serverType !== 'custom' && (
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1.5">
                         <Label htmlFor="server-version">Version</Label>

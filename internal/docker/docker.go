@@ -36,6 +36,79 @@ const (
 	errNoSuchImage = "No such image"
 )
 
+// DefaultEntryScript is the container entrypoint script used to handle console FIFO,
+// graceful shutdown traps, installer execution (e.g. for Forge/NeoForge), and server process lifecycle.
+const DefaultEntryScript = `FIFO="/tmp/console.in"
+rm -f "$FIFO"
+mkfifo -m 666 "$FIFO"
+exec 3<> "$FIFO"
+
+term_handler() {
+  test -p "$FIFO" && printf '%s\n' "stop" "end" "shutdown" > "$FIFO" || true
+  wait "$SERVER_PID" 2>/dev/null || true
+  exit 0
+}
+trap term_handler TERM INT
+
+if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
+  INSTALLER=""
+  if [ -f "/data/installer.jar" ]; then
+    INSTALLER="/data/installer.jar"
+  else
+    for f in /data/*installer*.jar; do
+      if [ -f "$f" ]; then
+        INSTALLER="$f"
+        break
+      fi
+    done
+  fi
+
+  if [ -n "$INSTALLER" ]; then
+    echo "Running server installer ($INSTALLER)..."
+    java -jar "$INSTALLER" --installServer
+    INSTALL_EXIT=$?
+    if [ $INSTALL_EXIT -ne 0 ]; then
+      echo "Server installer failed with exit code $INSTALL_EXIT"
+      exit $INSTALL_EXIT
+    fi
+    echo "Server installer completed successfully."
+
+    # In older Forge (<= 1.16.5), the installer creates forge-*.jar instead of run.sh
+    if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
+      for f in /data/forge-*.jar /data/*forge*.jar; do
+        case "$f" in
+          *installer*) ;;
+          *)
+            if [ -f "$f" ]; then
+              echo "Found Forge server jar $f, linking to /data/server.jar"
+              ln -sf "$f" /data/server.jar
+              break
+            fi
+            ;;
+        esac
+      done
+    fi
+  fi
+fi
+
+if [ -f "/data/run.sh" ]; then
+  if [ -f "/data/user_jvm_args.txt" ] && ! grep -q "^-Xmx" /data/user_jvm_args.txt 2>/dev/null; then
+    printf '\n-Xms512M\n-Xmx%sM\n' "${RAM_MB:-2048}" >> /data/user_jvm_args.txt
+  fi
+  chmod +x /data/run.sh 2>/dev/null || true
+  sh /data/run.sh nogui < "$FIFO" &
+elif [ -f "/data/server.jar" ]; then
+  java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui < "$FIFO" &
+else
+  echo "No server.jar or run.sh found in /data"
+  exit 1
+fi
+SERVER_PID=$!
+wait "$SERVER_PID"
+EXIT_CODE=$?
+exit $EXIT_CODE
+`
+
 // Manager wraps a Docker client and owns the container lifecycle operations for
 // MCM servers.
 type Manager struct {
@@ -170,36 +243,10 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	name := Name(opts.ID)
 	cPort, _ := primaryContainerPort(opts.ServerType)
 
-	entryScript := `FIFO="/tmp/console.in"
-rm -f "$FIFO"
-mkfifo -m 666 "$FIFO"
-exec 3<> "$FIFO"
-
-term_handler() {
-  test -p "$FIFO" && printf '%s\n' "stop" "end" "shutdown" > "$FIFO" || true
-  wait "$SERVER_PID" 2>/dev/null || true
-  exit 0
-}
-trap term_handler TERM INT
-
-if [ -f "/data/run.sh" ]; then
-  sh /data/run.sh nogui < "$FIFO" &
-elif [ -f "/data/server.jar" ]; then
-  java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui < "$FIFO" &
-else
-  echo "No server.jar or run.sh found in /data"
-  exit 1
-fi
-SERVER_PID=$!
-wait "$SERVER_PID"
-EXIT_CODE=$?
-exit $EXIT_CODE
-`
-
 	cfg := &container.Config{
 		Image:        img,
 		WorkingDir:   containerData,
-		Entrypoint:   []string{"sh", "-c", entryScript},
+		Entrypoint:   []string{"sh", "-c", DefaultEntryScript},
 		Env: []string{
 			fmt.Sprintf("RAM_MB=%d", opts.RAMMB),
 			fmt.Sprintf("SERVER_PORT=%d", cPort),

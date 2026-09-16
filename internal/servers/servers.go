@@ -877,16 +877,19 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 		srv.ContainerID = ""
 	}
 
-	// Ensure server.jar exists in data directory (download if missing)
+	// Ensure server executable/installer exists in data directory (download if missing)
 	dataDir := s.dataPath(srv.ID)
 	serverJar := filepath.Join(dataDir, "server.jar")
 	runSh := filepath.Join(dataDir, "run.sh")
+	installerJar := filepath.Join(dataDir, "installer.jar")
 	if _, err := os.Stat(serverJar); os.IsNotExist(err) {
 		if _, errSh := os.Stat(runSh); os.IsNotExist(errSh) {
-			if s.jars != nil && srv.ServerType != "custom" {
-				jt, err := jars.ParseJarType(srv.ServerType)
-				if err == nil {
-					_ = s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir)
+			if _, errInst := os.Stat(installerJar); os.IsNotExist(errInst) && !hasForgeJar(dataDir) {
+				if s.jars != nil && srv.ServerType != "custom" {
+					jt, err := jars.ParseJarType(srv.ServerType)
+					if err == nil {
+						_ = s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir)
+					}
 				}
 			}
 		}
@@ -931,6 +934,19 @@ func toDockerExtras(ports []ExtraPort) []docker.ExtraPort {
 		})
 	}
 	return out
+}
+
+func hasForgeJar(dir string) bool {
+	matches, err := filepath.Glob(filepath.Join(dir, "*forge*.jar"))
+	if err != nil {
+		return false
+	}
+	for _, m := range matches {
+		if !strings.Contains(strings.ToLower(filepath.Base(m)), "installer") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) dataPath(id string) string {
