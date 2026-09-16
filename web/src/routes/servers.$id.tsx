@@ -39,6 +39,7 @@ import { PlayersPanel } from '../components/players-panel';
 import { PropertiesEditor } from '../components/properties-editor';
 import { RequireAuth } from '../components/require-auth';
 import { ServerSettings } from '../components/server-settings';
+import { ServerStatsGrid } from '../components/server-stats-grid';
 import { StatusBadge } from '../components/status-badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
@@ -512,6 +513,9 @@ export function ServerDetailRoute() {
               </Button>
             </div>
           )}
+
+          {/* Server Stats Grid (CPU, MEM, Disk, Network) */}
+          <ServerStatsGrid serverId={server.id} isRunning={isRunning} />
 
           {/* Tab Navigation */}
           <div

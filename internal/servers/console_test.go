@@ -28,6 +28,7 @@ type fakeRuntime struct {
 	consoleCommands []string
 	stopCalled      bool
 	lastStopTimeout time.Duration
+	statsResult     docker.ContainerStats
 }
 
 func (f *fakeRuntime) Ping(context.Context) error { return nil }
@@ -62,6 +63,11 @@ func (f *fakeRuntime) Exists(_ context.Context, id string) (bool, error) {
 		return false, nil
 	}
 	return f.existing[id], nil
+}
+func (f *fakeRuntime) Stats(_ context.Context, _ string) (docker.ContainerStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.statsResult, nil
 }
 func (f *fakeRuntime) HostAddress() string { return "127.0.0.1" }
 func (f *fakeRuntime) Create(_ context.Context, opts docker.CreateOpts) (string, error) {

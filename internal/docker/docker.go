@@ -5,12 +5,16 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -116,12 +120,33 @@ EXIT_CODE=$?
 exit $EXIT_CODE
 `
 
+type cpuSample struct {
+	readAt      time.Time
+	totalUsage  uint64
+	systemUsage uint64
+}
+
+// ContainerStats represents resource consumption metrics for a container.
+type ContainerStats struct {
+	CPUPercent       float64 `json:"cpu_percent"`
+	CPUCores         int     `json:"cpu_cores"`
+	MemoryUsageBytes uint64  `json:"memory_usage_bytes"`
+	MemoryLimitBytes uint64  `json:"memory_limit_bytes"`
+	MemoryPercent    float64 `json:"memory_percent"`
+	DiskReadBytes    uint64  `json:"disk_read_bytes"`
+	DiskWriteBytes   uint64  `json:"disk_write_bytes"`
+	NetRxBytes       uint64  `json:"net_rx_bytes"`
+	NetTxBytes       uint64  `json:"net_tx_bytes"`
+}
+
 // Manager wraps a Docker client and owns the container lifecycle operations for
 // MCM servers.
 type Manager struct {
-	client *client.Client
-	host   string
-	image  string
+	client   *client.Client
+	host     string
+	image    string
+	cpuMu    sync.Mutex
+	cpuCache map[string]cpuSample
 }
 
 // New builds a Manager from a Docker host string (e.g. "unix:///...") and the
@@ -135,7 +160,12 @@ func New(host, image string) (*Manager, error) {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
 	cli.NegotiateAPIVersion(context.Background())
-	return &Manager{client: cli, host: host, image: image}, nil
+	return &Manager{
+		client:   cli,
+		host:     host,
+		image:    image,
+		cpuCache: make(map[string]cpuSample),
+	}, nil
 }
 
 // Ping verifies the Docker daemon is reachable and responds. It is used by the
@@ -749,4 +779,119 @@ func normalizeProto(proto string) string {
 		return "tcp"
 	}
 	return "udp"
+}
+
+// Stats returns resource consumption statistics (CPU, Memory, Disk I/O, Network) for a container.
+func (m *Manager) Stats(ctx context.Context, containerID string) (ContainerStats, error) {
+	resp, err := m.client.ContainerStats(ctx, containerID, false)
+	if err != nil {
+		return ContainerStats{}, fmt.Errorf("container stats: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var raw container.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return ContainerStats{}, fmt.Errorf("decode container stats: %w", err)
+	}
+
+	return m.CalculateStats(containerID, &raw), nil
+}
+
+// CalculateStats computes normalized resource metrics from a Docker StatsResponse.
+func (m *Manager) CalculateStats(containerID string, raw *container.StatsResponse) ContainerStats {
+	if raw == nil {
+		return ContainerStats{}
+	}
+
+	// 1. CPU Cores
+	onlineCPUs := int(raw.CPUStats.OnlineCPUs)
+	if onlineCPUs == 0 {
+		onlineCPUs = len(raw.CPUStats.CPUUsage.PercpuUsage)
+	}
+	if onlineCPUs == 0 {
+		onlineCPUs = runtime.NumCPU()
+	}
+	if onlineCPUs == 0 {
+		onlineCPUs = 1
+	}
+
+	// 2. CPU Percentage
+	var cpuPercent float64
+	cpuDelta := float64(raw.CPUStats.CPUUsage.TotalUsage) - float64(raw.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(raw.CPUStats.SystemUsage) - float64(raw.PreCPUStats.SystemUsage)
+
+	if raw.PreCPUStats.SystemUsage > 0 && systemDelta > 0 && cpuDelta > 0 {
+		cpuPercent = (cpuDelta / systemDelta) * float64(onlineCPUs) * 100.0
+	} else if containerID != "" {
+		m.cpuMu.Lock()
+		prev, hasPrev := m.cpuCache[containerID]
+		m.cpuCache[containerID] = cpuSample{
+			readAt:      time.Now(),
+			totalUsage:  raw.CPUStats.CPUUsage.TotalUsage,
+			systemUsage: raw.CPUStats.SystemUsage,
+		}
+		m.cpuMu.Unlock()
+
+		if hasPrev {
+			cDelta := float64(raw.CPUStats.CPUUsage.TotalUsage) - float64(prev.totalUsage)
+			sDelta := float64(raw.CPUStats.SystemUsage) - float64(prev.systemUsage)
+			if raw.CPUStats.SystemUsage > 0 && prev.systemUsage > 0 && sDelta > 0 && cDelta > 0 {
+				cpuPercent = (cDelta / sDelta) * float64(onlineCPUs) * 100.0
+			} else {
+				elapsedNs := float64(time.Since(prev.readAt).Nanoseconds())
+				if elapsedNs > 0 && cDelta > 0 {
+					cpuPercent = (cDelta / elapsedNs) * 100.0
+				}
+			}
+		}
+	}
+	if cpuPercent < 0 {
+		cpuPercent = 0
+	}
+	cpuPercent = math.Round(cpuPercent*100) / 100
+
+	// 3. Memory
+	memUsage := raw.MemoryStats.Usage
+	if inactive, ok := raw.MemoryStats.Stats["inactive_file"]; ok && memUsage > inactive {
+		memUsage -= inactive
+	} else if inactive, ok := raw.MemoryStats.Stats["total_inactive_file"]; ok && memUsage > inactive {
+		memUsage -= inactive
+	}
+
+	memLimit := raw.MemoryStats.Limit
+	var memPercent float64
+	if memLimit > 0 && memLimit < (1<<60) {
+		memPercent = (float64(memUsage) / float64(memLimit)) * 100.0
+		memPercent = math.Round(memPercent*100) / 100
+	}
+
+	// 4. Disk I/O (Blkio)
+	var diskRead, diskWrite uint64
+	for _, entry := range raw.BlkioStats.IoServiceBytesRecursive {
+		op := strings.ToLower(entry.Op)
+		if strings.Contains(op, "read") {
+			diskRead += entry.Value
+		} else if strings.Contains(op, "write") {
+			diskWrite += entry.Value
+		}
+	}
+
+	// 5. Networks
+	var netRx, netTx uint64
+	for _, netStat := range raw.Networks {
+		netRx += netStat.RxBytes
+		netTx += netStat.TxBytes
+	}
+
+	return ContainerStats{
+		CPUPercent:       cpuPercent,
+		CPUCores:         onlineCPUs,
+		MemoryUsageBytes: memUsage,
+		MemoryLimitBytes: memLimit,
+		MemoryPercent:    memPercent,
+		DiskReadBytes:    diskRead,
+		DiskWriteBytes:   diskWrite,
+		NetRxBytes:       netRx,
+		NetTxBytes:       netTx,
+	}
 }

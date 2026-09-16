@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,7 @@ type dockerRuntime interface {
 	SendConsole(ctx context.Context, containerID, command string) error
 	Create(ctx context.Context, opts docker.CreateOpts) (string, error)
 	HostAddress() string
+	Stats(ctx context.Context, containerID string) (docker.ContainerStats, error)
 }
 
 var _ dockerRuntime = (*docker.Manager)(nil)
@@ -95,6 +97,23 @@ type Server struct {
 	RebuildReasons        []string `json:"rebuild_reasons,omitempty"`
 	CreatedAt             string   `json:"created_at"`
 	UpdatedAt             string   `json:"updated_at"`
+}
+
+// ServerStats represents consolidated resource consumption metrics for a server.
+type ServerStats struct {
+	ServerID         string  `json:"server_id"`
+	Online           bool    `json:"online"`
+	CPUPercent       float64 `json:"cpu_percent"`
+	CPUCores         int     `json:"cpu_cores"`
+	CPULimit         float64 `json:"cpu_limit"`
+	MemoryUsageBytes uint64  `json:"memory_bytes"`
+	MemoryLimitBytes uint64  `json:"memory_limit_bytes"`
+	MemoryPercent    float64 `json:"memory_percent"`
+	DiskBytes        uint64  `json:"disk_bytes"`
+	DiskReadBytes    uint64  `json:"disk_read_bytes"`
+	DiskWriteBytes   uint64  `json:"disk_write_bytes"`
+	NetRxBytes       uint64  `json:"net_rx_bytes"`
+	NetTxBytes       uint64  `json:"net_tx_bytes"`
 }
 
 // ExtraPort describes an additional port published for a server beyond the
@@ -318,6 +337,14 @@ type Store struct {
 	tasksMu  sync.RWMutex
 	tasks    map[string]*TaskProgress
 	taskSubs map[string][]chan TaskProgress
+
+	diskMu    sync.RWMutex
+	diskCache map[string]diskCacheEntry
+}
+
+type diskCacheEntry struct {
+	size      uint64
+	checkedAt time.Time
 }
 
 type updatesFlightCall struct {
@@ -338,6 +365,7 @@ func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, en
 		updatesInFlight: make(map[string]*updatesFlightCall),
 		tasks:           make(map[string]*TaskProgress),
 		taskSubs:        make(map[string][]chan TaskProgress),
+		diskCache:       make(map[string]diskCacheEntry),
 	}
 }
 
@@ -819,6 +847,99 @@ func (s *Store) Status(ctx context.Context, id string) (Server, error) {
 		return s.Get(ctx, id)
 	}
 	return srv, nil
+}
+
+// Stats returns resource consumption metrics (CPU, Memory, Disk, Network) for a server.
+func (s *Store) Stats(ctx context.Context, id string) (ServerStats, error) {
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		return ServerStats{}, err
+	}
+
+	diskBytes := s.cachedDiskSize(id)
+	memLimit := uint64(srv.RAMMB) * 1024 * 1024
+	if srv.MemoryLimitMB > 0 {
+		memLimit = uint64(srv.MemoryLimitMB) * 1024 * 1024
+	}
+
+	result := ServerStats{
+		ServerID:         srv.ID,
+		Online:           false,
+		CPULimit:         srv.CPULimit,
+		MemoryLimitBytes: memLimit,
+		DiskBytes:        diskBytes,
+	}
+
+	if srv.ContainerID == "" || srv.State != StateRunning {
+		return result, nil
+	}
+
+	cStats, err := s.docker.Stats(ctx, srv.ContainerID)
+	if err != nil {
+		return result, nil
+	}
+
+	result.Online = true
+	result.CPUPercent = cStats.CPUPercent
+	result.CPUCores = cStats.CPUCores
+	result.MemoryUsageBytes = cStats.MemoryUsageBytes
+	if cStats.MemoryLimitBytes > 0 && cStats.MemoryLimitBytes < (1<<60) {
+		result.MemoryLimitBytes = cStats.MemoryLimitBytes
+	}
+	if result.MemoryLimitBytes > 0 {
+		result.MemoryPercent = math.Round((float64(result.MemoryUsageBytes)/float64(result.MemoryLimitBytes))*10000) / 100
+	}
+	result.DiskReadBytes = cStats.DiskReadBytes
+	result.DiskWriteBytes = cStats.DiskWriteBytes
+	result.NetRxBytes = cStats.NetRxBytes
+	result.NetTxBytes = cStats.NetTxBytes
+
+	return result, nil
+}
+
+func (s *Store) cachedDiskSize(id string) uint64 {
+	s.diskMu.RLock()
+	if s.diskCache != nil {
+		if entry, ok := s.diskCache[id]; ok && time.Since(entry.checkedAt) < 10*time.Second {
+			s.diskMu.RUnlock()
+			return entry.size
+		}
+	}
+	s.diskMu.RUnlock()
+
+	size := calculateDirSize(s.dataPath(id))
+
+	s.diskMu.Lock()
+	if s.diskCache == nil {
+		s.diskCache = make(map[string]diskCacheEntry)
+	}
+	s.diskCache[id] = diskCacheEntry{
+		size:      size,
+		checkedAt: time.Now(),
+	}
+	s.diskMu.Unlock()
+
+	return size
+}
+
+func calculateDirSize(path string) uint64 {
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil {
+			return nil
+		}
+		if !d.IsDir() {
+			info, err := d.Info()
+			if err == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	if total < 0 {
+		return 0
+	}
+	return uint64(total)
 }
 
 // Console streams container logs for a server.

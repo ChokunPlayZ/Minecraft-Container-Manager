@@ -94,6 +94,22 @@ export interface ServerStatus {
   rebuild_reasons?: string[];
 }
 
+export interface ServerStats {
+  server_id: string;
+  online: boolean;
+  cpu_percent: number;
+  cpu_cores: number;
+  cpu_limit: number;
+  memory_bytes: number;
+  memory_limit_bytes: number;
+  memory_percent: number;
+  disk_bytes: number;
+  disk_read_bytes?: number;
+  disk_write_bytes?: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
+}
+
 export interface ConsoleLine {
   timestamp: string;
   level?: string;

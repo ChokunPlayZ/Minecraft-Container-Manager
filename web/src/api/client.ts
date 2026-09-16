@@ -4,6 +4,7 @@ import type {
   InstallInfo,
   Me,
   Server,
+  ServerStats,
   ServerStatus,
   ServerType,
   JavaRelease,
@@ -639,6 +640,27 @@ export const api = {
   recreateServer: (id: string) => request<Server>(`/api/servers/${id}/recreate`, { method: 'POST' }),
 
   serverStatus: (id: string) => request<ServerStatus>(`/api/servers/${id}/status`),
+
+  serverStats: (id: string) => {
+    if (isMock()) {
+      return Promise.resolve<ServerStats>({
+        server_id: id,
+        online: true,
+        cpu_percent: 14.8,
+        cpu_cores: 4,
+        cpu_limit: 2,
+        memory_bytes: 1845493760,
+        memory_limit_bytes: 4294967296,
+        memory_percent: 42.97,
+        disk_bytes: 471859200,
+        disk_read_bytes: 10485760,
+        disk_write_bytes: 25165824,
+        net_rx_bytes: 12582912,
+        net_tx_bytes: 34603008,
+      });
+    }
+    return request<ServerStats>(`/api/servers/${id}/stats`);
+  },
 
   openConsoleStream: (id: string, onLine: (line: ConsoleLine) => void): (() => void) => {
     if (isMock()) {

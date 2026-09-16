@@ -125,6 +125,15 @@ func (s *Server) handleServerStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, srv)
 }
 
+func (s *Server) handleServerStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.servers.Stats(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
 func (s *Server) handleRecreateServer(w http.ResponseWriter, r *http.Request) {
 	srv, err := s.servers.Recreate(r.Context(), r.PathValue("id"))
 	if err != nil {
