@@ -115,6 +115,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   const [inspectStats, setInspectStats] = useState<{ loaded: number; total: number } | null>(null);
   const [createProgress, setCreateProgress] = useState<number | null>(null);
   const [createProgressStats, setCreateProgressStats] = useState<{ loaded: number; total: number } | null>(null);
+  const [createStageInfo, setCreateStageInfo] = useState<{ index: number; total: number; title?: string } | null>(null);
+  const [createStageDetail, setCreateStageDetail] = useState<string>('');
 
   // Modpack search state
   const [searchSource, setSearchSource] = useState<'modrinth' | 'curseforge'>('modrinth');
@@ -508,9 +510,23 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       no_host_port: behindProxy,
     };
     let createdServerId: string | null = null;
+    let unsubTask: (() => void) | null = null;
     try {
       const srv = await api.createServer(input);
       createdServerId = srv.id;
+
+      if (createMode === 'search-modpack' || createMode === 'modpack') {
+        unsubTask = api.subscribeTaskEvents(srv.id, (p) => {
+          if (p.operation === 'modpack_install') {
+            if (p.stage_index && p.stage_total) {
+              setCreateStageInfo({ index: p.stage_index, total: p.stage_total, title: p.stage_title });
+            }
+            setCreateProgress(p.percent);
+            setCreateStageDetail(p.message || '');
+          }
+        });
+      }
+
       if (createMode === 'search-modpack' && selectedPack) {
         await api.installModpackRemote(srv.id, {
           source: selectedPack.source,
@@ -523,8 +539,14 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         });
       } else if (createMode === 'modpack' && modpackFile) {
         setCreateProgress(0);
+        setCreateStageInfo({ index: 1, total: 4, title: 'Uploading Modpack' });
         await api.installModpackFile(srv.id, modpackFile, true, true, (loaded, total) => {
-          if (total > 0) setCreateProgress(Math.round((loaded / total) * 100));
+          if (total > 0) {
+            setCreateProgress(Math.round((loaded / total) * 25));
+            const mbDone = (loaded / (1024 * 1024)).toFixed(1);
+            const mbTotal = (total / (1024 * 1024)).toFixed(1);
+            setCreateStageDetail(`${mbDone} MB / ${mbTotal} MB`);
+          }
           setCreateProgressStats({ loaded, total });
         });
       }
@@ -544,9 +566,12 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       }
       setError(err instanceof ApiError ? err.detail : (err instanceof Error ? err.message : 'Failed to create server'));
     } finally {
+      if (unsubTask) unsubTask();
       setBusy(false);
       setCreateProgress(null);
       setCreateProgressStats(null);
+      setCreateStageInfo(null);
+      setCreateStageDetail('');
     }
   }
 
@@ -1212,24 +1237,38 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
               {/* Server creation / modpack upload progress bar */}
               {busy && (
                 <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+                  {createStageInfo && createStageInfo.total > 0 && (
+                    <div className="flex items-center justify-between text-xs text-muted-foreground pb-1">
+                      <span className="font-semibold text-primary">
+                        Stage {createStageInfo.index} of {createStageInfo.total}
+                      </span>
+                      <span className="font-medium text-foreground truncate max-w-[240px]">
+                        {createStageInfo.title}
+                      </span>
+                    </div>
+                  )}
                   <ProgressBar
                     value={createProgress}
+                    showPercent={createProgress !== null}
                     label={
                       <span className="flex items-center gap-2 font-medium">
                         <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
                         <span>
-                          {createMode === 'modpack' && createProgress !== null
-                            ? 'Uploading & installing modpack archive...'
-                            : createMode === 'search-modpack'
-                              ? 'Creating container & downloading modpack...'
-                              : 'Creating server container...'}
+                          {createStageInfo?.title
+                            ? createStageInfo.title
+                            : createMode === 'modpack' && createProgress !== null
+                              ? 'Uploading & installing modpack archive...'
+                              : createMode === 'search-modpack'
+                                ? 'Creating container & downloading modpack...'
+                                : 'Creating server container...'}
                         </span>
                       </span>
                     }
                     subtext={
-                      createProgressStats && createProgressStats.total > 0
+                      createStageDetail ||
+                      (createProgressStats && createProgressStats.total > 0
                         ? `${(createProgressStats.loaded / (1024 * 1024)).toFixed(1)} MB / ${(createProgressStats.total / (1024 * 1024)).toFixed(1)} MB`
-                        : undefined
+                        : undefined)
                     }
                     size="md"
                   />

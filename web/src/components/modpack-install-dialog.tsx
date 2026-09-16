@@ -37,6 +37,8 @@ export function ModpackInstallDialog({
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [statusText, setStatusText] = useState<string>('');
+  const [detailText, setDetailText] = useState<string>('');
+  const [stageInfo, setStageInfo] = useState<{ index: number; total: number; title?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -54,12 +56,35 @@ export function ModpackInstallDialog({
   async function handleInstall() {
     setInstalling(true);
     setError(null);
-    setProgress(10);
+    setProgress(0);
     setStatusText(isUpdate ? 'Preparing modpack update...' : 'Preparing modpack installation...');
+    setDetailText('');
+    setStageInfo(null);
+
+    const unsub = api.subscribeTaskEvents(server.id, (p) => {
+      if (p.operation === 'modpack_install') {
+        if (p.stage === 'failed') {
+          setError(p.error || p.message || 'Installation failed');
+        } else if (p.stage === 'completed') {
+          setProgress(100);
+          setStatusText(p.stage_title || 'Installation Complete');
+          setDetailText(p.message || '');
+          setSuccess(true);
+        } else {
+          setProgress(p.percent);
+          setStatusText(p.stage_title || p.stage || 'Installing...');
+          setDetailText(p.message || '');
+          if (p.stage_index && p.stage_total) {
+            setStageInfo({ index: p.stage_index, total: p.stage_total, title: p.stage_title });
+          }
+        }
+      }
+    });
 
     try {
       if (modpackFile) {
-        setStatusText(isUpdate ? 'Uploading & applying modpack update...' : 'Uploading & extracting modpack...');
+        setStatusText(isUpdate ? 'Uploading modpack update...' : 'Uploading modpack...');
+        setStageInfo({ index: 1, total: 4, title: 'Uploading Modpack' });
         await api.installModpackFile(
           server.id,
           modpackFile,
@@ -67,15 +92,16 @@ export function ModpackInstallDialog({
           false,
           (loaded, total) => {
             if (total > 0) {
-              const pct = Math.round((loaded / total) * 60);
-              setProgress(10 + pct);
-              setStatusText(`Uploading modpack archive (${Math.round((loaded / (1024 * 1024)) * 10) / 10} MB)...`);
+              const pct = Math.round((loaded / total) * 25);
+              setProgress(pct);
+              const mbDone = (loaded / (1024 * 1024)).toFixed(1);
+              const mbTotal = (total / (1024 * 1024)).toFixed(1);
+              setDetailText(`${mbDone} MB / ${mbTotal} MB`);
             }
           },
         );
       } else {
-        setStatusText(isUpdate ? 'Downloading & updating modpack files...' : 'Downloading & installing modpack files...');
-        setProgress(40);
+        setStatusText(isUpdate ? 'Starting modpack update...' : 'Starting modpack installation...');
         await api.installModpackRemote(server.id, {
           ...installOptions,
           auto_configure_server: autoConfigure,
@@ -93,6 +119,7 @@ export function ModpackInstallDialog({
       setError(err instanceof ApiError ? err.detail : (isUpdate ? 'Failed to update modpack' : 'Failed to install modpack'));
       setProgress(null);
     } finally {
+      unsub();
       setInstalling(false);
     }
   }
@@ -245,6 +272,16 @@ export function ModpackInstallDialog({
           {/* Progress / Status */}
           {installing && (
             <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
+              {stageInfo && stageInfo.total > 0 && (
+                <div className="flex items-center justify-between text-xs text-muted-foreground pb-1">
+                  <span className="font-semibold text-primary">
+                    Stage {stageInfo.index} of {stageInfo.total}
+                  </span>
+                  <span className="font-medium text-foreground truncate max-w-[240px]">
+                    {stageInfo.title || statusText}
+                  </span>
+                </div>
+              )}
               <ProgressBar
                 value={progress}
                 label={
@@ -253,6 +290,8 @@ export function ModpackInstallDialog({
                     <span>{statusText}</span>
                   </span>
                 }
+                subtext={detailText || undefined}
+                showPercent={progress !== null}
                 variant="default"
                 size="md"
               />

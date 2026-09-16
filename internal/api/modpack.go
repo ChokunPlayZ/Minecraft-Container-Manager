@@ -222,8 +222,35 @@ func (s *Server) handleInstallModpack(w http.ResponseWriter, r *http.Request) {
 		in.CurseForgeAPIKey = cfKey
 	}
 
-	tmpPath, err := downloadURLToTemp(r.Context(), in.URL)
+	onDlProgress := func(written, total int64) {
+		pct := 0
+		if total > 0 {
+			pct = int(float64(written) / float64(total) * 25.0)
+		}
+		s.servers.SetTaskProgress(serverID, servers.TaskProgress{
+			Operation:  "modpack_install",
+			Stage:      "downloading_archive",
+			StageTitle: "Downloading Modpack Archive",
+			StageIndex: 1,
+			StageTotal: 4,
+			Percent:    pct,
+			Message:    "Downloading modpack archive...",
+			BytesDone:  written,
+			BytesTotal: total,
+		})
+	}
+
+	tmpPath, err := downloadURLToTempWithProgress(r.Context(), in.URL, onDlProgress)
 	if err != nil {
+		s.servers.SetTaskProgress(serverID, servers.TaskProgress{
+			Operation:  "modpack_install",
+			Stage:      "failed",
+			StageTitle: "Download Failed",
+			StageIndex: 1,
+			StageTotal: 4,
+			Error:      err.Error(),
+			Message:    err.Error(),
+		})
 		writeError(w, http.StatusBadGateway, "download_failed", fmt.Sprintf("failed to download modpack archive: %v", err))
 		return
 	}
@@ -283,7 +310,29 @@ func (s *Server) handleUninstallModpack(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+type progressWriter struct {
+	total      int64
+	written    int64
+	onProgress func(written, total int64)
+	lastUpdate time.Time
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	pw.written += int64(n)
+	now := time.Now()
+	if pw.onProgress != nil && (now.Sub(pw.lastUpdate) >= 100*time.Millisecond || (pw.total > 0 && pw.written >= pw.total)) {
+		pw.lastUpdate = now
+		pw.onProgress(pw.written, pw.total)
+	}
+	return n, nil
+}
+
 func downloadURLToTemp(ctx context.Context, rawURL string) (string, error) {
+	return downloadURLToTempWithProgress(ctx, rawURL, nil)
+}
+
+func downloadURLToTempWithProgress(ctx context.Context, rawURL string, onProgress func(written, total int64)) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", errors.New("invalid URL")
@@ -312,7 +361,17 @@ func downloadURLToTemp(ctx context.Context, rawURL string) (string, error) {
 	}
 	defer tmpFile.Close()
 
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+	var writer io.Writer = tmpFile
+	if onProgress != nil {
+		onProgress(0, resp.ContentLength)
+		pw := &progressWriter{
+			total:      resp.ContentLength,
+			onProgress: onProgress,
+		}
+		writer = io.MultiWriter(tmpFile, pw)
+	}
+
+	if _, err := io.Copy(writer, resp.Body); err != nil {
 		_ = os.Remove(tmpFile.Name())
 		return "", err
 	}

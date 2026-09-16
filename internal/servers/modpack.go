@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mcm-panel/mcm/internal/jars"
@@ -360,7 +361,37 @@ func (s *Store) InspectModpackFile(filePath string) (*ModpackManifest, error) {
 }
 
 // InstallModpack installs a modpack from an archive file onto the specified server.
-func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath string, opts InstallModpackOpts) (*InstalledModpack, error) {
+func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath string, opts InstallModpackOpts) (installed *InstalledModpack, err error) {
+	stageOffset := 0
+	if opts.Source != "upload" && opts.URL != "" {
+		stageOffset = 1
+	}
+	stageTotal := stageOffset + 3
+
+	defer func() {
+		if err != nil {
+			s.SetTaskProgress(serverID, TaskProgress{
+				Operation:  "modpack_install",
+				Stage:      "failed",
+				StageTitle: "Installation Failed",
+				StageIndex: stageOffset + 1,
+				StageTotal: stageTotal,
+				Error:      err.Error(),
+				Message:    err.Error(),
+			})
+		}
+	}()
+
+	s.SetTaskProgress(serverID, TaskProgress{
+		Operation:  "modpack_install",
+		Stage:      "preparing",
+		StageTitle: "Preparing Modpack",
+		StageIndex: stageOffset + 1,
+		StageTotal: stageTotal,
+		Percent:    (stageOffset * 100) / stageTotal,
+		Message:    "Inspecting modpack archive...",
+	})
+
 	srv, err := s.Get(ctx, serverID)
 	if err != nil {
 		return nil, err
@@ -381,6 +412,24 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 	if err != nil {
 		return nil, err
 	}
+
+	if manifest.Format == ModpackFormatGeneric {
+		stageTotal = stageOffset + 2
+	}
+
+	stage1Index := stageOffset + 1
+	stage1Base := (stage1Index - 1) * 100 / stageTotal
+	stageWidth := 100 / stageTotal
+
+	s.SetTaskProgress(serverID, TaskProgress{
+		Operation:  "modpack_install",
+		Stage:      "preparing",
+		StageTitle: "Preparing Server",
+		StageIndex: stage1Index,
+		StageTotal: stageTotal,
+		Percent:    stage1Base + stageWidth/2,
+		Message:    fmt.Sprintf("Configuring server runtime (%s %s)", manifest.Loader, manifest.MinecraftVersion),
+	})
 
 	existing, _ := s.GetInstalledModpack(ctx, serverID)
 	createdWithModpack := opts.CreatedWithModpack
@@ -474,6 +523,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		return nil, err
 	}
 
+	extractStageIndex := stageOffset + 2
+	extractBasePct := (extractStageIndex - 1) * 100 / stageTotal
+	dlStageIndex := stageOffset + 3
+	dlBasePct := (dlStageIndex - 1) * 100 / stageTotal
+
 	switch manifest.Format {
 	case ModpackFormatModrinth:
 		// Extract index again
@@ -490,7 +544,18 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			}
 		}
 
+		// Count overrides for progress tracking
+		totalOverrides := 0
+		for _, zf := range zr.File {
+			cleanName := filepath.ToSlash(zf.Name)
+			if (strings.HasPrefix(cleanName, "overrides/") || strings.HasPrefix(cleanName, "server-overrides/")) && !zf.FileInfo().IsDir() {
+				totalOverrides++
+			}
+		}
+
 		// Extract overrides and server-overrides
+		extractedOverrides := 0
+		var lastExtractUpdate time.Time
 		for _, zf := range zr.File {
 			cleanName := filepath.ToSlash(zf.Name)
 			var relPath string
@@ -520,6 +585,27 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			if err := extractZipFile(zf, targetPath); err == nil {
 				recordFile(relPath)
 			}
+			extractedOverrides++
+
+			now := time.Now()
+			if extractedOverrides == totalOverrides || now.Sub(lastExtractUpdate) >= 100*time.Millisecond {
+				lastExtractUpdate = now
+				pct := extractBasePct
+				if totalOverrides > 0 {
+					pct += int(float64(extractedOverrides) / float64(totalOverrides) * float64(stageWidth))
+				}
+				s.SetTaskProgress(serverID, TaskProgress{
+					Operation:  "modpack_install",
+					Stage:      "extracting",
+					StageTitle: fmt.Sprintf("Extracting Files (%d/%d)", extractedOverrides, totalOverrides),
+					StageIndex: extractStageIndex,
+					StageTotal: stageTotal,
+					Percent:    pct,
+					Message:    filepath.Base(relPath),
+					Current:    int64(extractedOverrides),
+					Total:      int64(totalOverrides),
+				})
+			}
 		}
 
 		// Filter files for server compatibility
@@ -539,6 +625,43 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		if concurrency == 0 {
 			concurrency = 1
 		}
+
+		totalMods := len(eligibleFiles)
+		var downloadedCount atomic.Int64
+		var lastDlUpdateMu sync.Mutex
+		var lastDlUpdate time.Time
+
+		emitModProgress := func(curr int64, currentName string) {
+			lastDlUpdateMu.Lock()
+			now := time.Now()
+			if curr < int64(totalMods) && now.Sub(lastDlUpdate) < 100*time.Millisecond {
+				lastDlUpdateMu.Unlock()
+				return
+			}
+			lastDlUpdate = now
+			lastDlUpdateMu.Unlock()
+
+			pct := dlBasePct
+			if totalMods > 0 {
+				pct += int(float64(curr) / float64(totalMods) * float64(stageWidth))
+			}
+			if pct > 99 {
+				pct = 99
+			}
+			s.SetTaskProgress(serverID, TaskProgress{
+				Operation:  "modpack_install",
+				Stage:      "downloading_mods",
+				StageTitle: fmt.Sprintf("Downloading Mods (%d/%d)", curr, totalMods),
+				StageIndex: dlStageIndex,
+				StageTotal: stageTotal,
+				Percent:    pct,
+				Message:    currentName,
+				Current:    curr,
+				Total:      int64(totalMods),
+			})
+		}
+
+		emitModProgress(0, "Starting mod downloads...")
 
 		fileCh := make(chan modrinthIndexFile, len(eligibleFiles))
 		for _, ef := range eligibleFiles {
@@ -592,6 +715,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 							DownloadURL:      dlURL,
 						}, manifest.ModID)
 					}
+
+					curr := downloadedCount.Add(1)
+					emitModProgress(curr, filepath.Base(targetRel))
 				}
 			}()
 		}
@@ -622,6 +748,16 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		}
 		overridesPrefix := overridesDir + "/"
 
+		totalOverrides := 0
+		for _, zf := range zr.File {
+			cleanName := filepath.ToSlash(zf.Name)
+			if strings.HasPrefix(cleanName, overridesPrefix) && !zf.FileInfo().IsDir() {
+				totalOverrides++
+			}
+		}
+
+		extractedOverrides := 0
+		var lastExtractUpdate time.Time
 		for _, zf := range zr.File {
 			cleanName := filepath.ToSlash(zf.Name)
 			if !strings.HasPrefix(cleanName, overridesPrefix) {
@@ -645,6 +781,27 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			if err := extractZipFile(zf, targetPath); err == nil {
 				recordFile(relPath)
 			}
+			extractedOverrides++
+
+			now := time.Now()
+			if extractedOverrides == totalOverrides || now.Sub(lastExtractUpdate) >= 100*time.Millisecond {
+				lastExtractUpdate = now
+				pct := extractBasePct
+				if totalOverrides > 0 {
+					pct += int(float64(extractedOverrides) / float64(totalOverrides) * float64(stageWidth))
+				}
+				s.SetTaskProgress(serverID, TaskProgress{
+					Operation:  "modpack_install",
+					Stage:      "extracting",
+					StageTitle: fmt.Sprintf("Extracting Files (%d/%d)", extractedOverrides, totalOverrides),
+					StageIndex: extractStageIndex,
+					StageTotal: stageTotal,
+					Percent:    pct,
+					Message:    filepath.Base(relPath),
+					Current:    int64(extractedOverrides),
+					Total:      int64(totalOverrides),
+				})
+			}
 		}
 
 		// Download CurseForge mods
@@ -655,6 +812,43 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		if concurrency == 0 {
 			concurrency = 1
 		}
+
+		totalCFMods := len(man.Files)
+		var downloadedCF atomic.Int64
+		var lastCFUpdateMu sync.Mutex
+		var lastCFUpdate time.Time
+
+		emitCFProgress := func(curr int64, currentName string) {
+			lastCFUpdateMu.Lock()
+			now := time.Now()
+			if curr < int64(totalCFMods) && now.Sub(lastCFUpdate) < 100*time.Millisecond {
+				lastCFUpdateMu.Unlock()
+				return
+			}
+			lastCFUpdate = now
+			lastCFUpdateMu.Unlock()
+
+			pct := dlBasePct
+			if totalCFMods > 0 {
+				pct += int(float64(curr) / float64(totalCFMods) * float64(stageWidth))
+			}
+			if pct > 99 {
+				pct = 99
+			}
+			s.SetTaskProgress(serverID, TaskProgress{
+				Operation:  "modpack_install",
+				Stage:      "downloading_mods",
+				StageTitle: fmt.Sprintf("Downloading Mods (%d/%d)", curr, totalCFMods),
+				StageIndex: dlStageIndex,
+				StageTotal: stageTotal,
+				Percent:    pct,
+				Message:    currentName,
+				Current:    curr,
+				Total:      int64(totalCFMods),
+			})
+		}
+
+		emitCFProgress(0, "Starting mod downloads...")
 
 		cfCh := make(chan struct {
 			ProjectID int
@@ -697,6 +891,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 						InstalledVersion: manifest.Version,
 						DownloadURL:      dlURL,
 					}, manifest.ModID)
+
+					curr := downloadedCF.Add(1)
+					emitCFProgress(curr, fileName)
 				}
 			}()
 		}
@@ -706,17 +903,20 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		// Extract zip directly. If all jars are at root, extract into mods/.
 		// Otherwise extract with folder hierarchy intact.
 		allJarsRoot := true
+		totalFiles := 0
 		for _, zf := range zr.File {
 			if zf.FileInfo().IsDir() {
 				continue
 			}
+			totalFiles++
 			clean := filepath.ToSlash(zf.Name)
 			if strings.Contains(clean, "/") && strings.HasSuffix(strings.ToLower(clean), ".jar") {
 				allJarsRoot = false
-				break
 			}
 		}
 
+		extractedFiles := 0
+		var lastExtractUpdate time.Time
 		for _, zf := range zr.File {
 			if zf.FileInfo().IsDir() {
 				continue
@@ -749,10 +949,31 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 					}, manifest.ModID)
 				}
 			}
+			extractedFiles++
+
+			now := time.Now()
+			if extractedFiles == totalFiles || now.Sub(lastExtractUpdate) >= 100*time.Millisecond {
+				lastExtractUpdate = now
+				pct := extractBasePct
+				if totalFiles > 0 {
+					pct += int(float64(extractedFiles) / float64(totalFiles) * float64(stageWidth))
+				}
+				s.SetTaskProgress(serverID, TaskProgress{
+					Operation:  "modpack_install",
+					Stage:      "extracting",
+					StageTitle: fmt.Sprintf("Extracting Files (%d/%d)", extractedFiles, totalFiles),
+					StageIndex: extractStageIndex,
+					StageTotal: stageTotal,
+					Percent:    pct,
+					Message:    filepath.Base(relPath),
+					Current:    int64(extractedFiles),
+					Total:      int64(totalFiles),
+				})
+			}
 		}
 	}
 
-	installed := &InstalledModpack{
+	installed = &InstalledModpack{
 		Name:               manifest.Name,
 		Version:            manifest.Version,
 		Summary:            manifest.Summary,
@@ -779,12 +1000,33 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		installed.IconURL = existing.IconURL
 	}
 
+	s.SetTaskProgress(serverID, TaskProgress{
+		Operation:  "modpack_install",
+		Stage:      "finalizing",
+		StageTitle: "Finalizing Installation",
+		StageIndex: stageTotal,
+		StageTotal: stageTotal,
+		Percent:    99,
+		Message:    "Saving modpack metadata...",
+	})
+
 	// Persist installed modpack record
 	if data, err := json.MarshalIndent(installed, "", "  "); err == nil {
 		_ = os.WriteFile(modpackMetaFile(dataDir), data, 0o644)
 	}
 
 	s.InvalidateModUpdatesCache(serverID)
+
+	s.SetTaskProgress(serverID, TaskProgress{
+		Operation:  "modpack_install",
+		Stage:      "completed",
+		StageTitle: "Installation Complete",
+		StageIndex: stageTotal,
+		StageTotal: stageTotal,
+		Percent:    100,
+		Message:    fmt.Sprintf("Installed %s %s successfully", installed.Name, installed.Version),
+	})
+
 	return installed, nil
 }
 

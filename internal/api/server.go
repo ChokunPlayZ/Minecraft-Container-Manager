@@ -166,6 +166,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/servers/{id}/modpack/install", s.requireAuth(s.wrapJSON(s.handleInstallModpack)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}/modpack", s.requireAuth(s.wrapJSON(s.handleUninstallModpack)))
 
+	// Server tasks (modpack installs, zipping, etc.)
+	s.mux.HandleFunc("GET /api/servers/{id}/tasks/progress", s.requireAuth(s.wrapJSON(s.handleTaskProgress)))
+	s.mux.HandleFunc("GET /api/servers/{id}/tasks/events", s.requireAuth(s.handleTaskEvents))
+
 	s.mux.HandleFunc("GET /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleGetProperties)))
 	s.mux.HandleFunc("PUT /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleSaveProperties)))
 

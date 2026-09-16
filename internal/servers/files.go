@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -161,14 +162,19 @@ func (s *Store) UploadFile(id, dir, name string, r io.Reader) (FileEntry, error)
 }
 
 // zipWriter is a helper to write one file into a zip archive.
+// onFile is called before each file is written with its relative path and size.
 type zipWriter struct {
-	zw *zip.Writer
+	zw     *zip.Writer
+	onFile func(base string, size int64)
 }
 
 func (z *zipWriter) addFile(base, fsPath string, info os.FileInfo) error {
 	if info.IsDir() {
 		_, err := z.zw.Create(base + "/")
 		return err
+	}
+	if z.onFile != nil {
+		z.onFile(base, info.Size())
 	}
 	hdr, err := zip.FileInfoHeader(info)
 	if err != nil {
@@ -226,6 +232,24 @@ func (z *zipWriter) addTree(base, fsRoot string) error {
 	return nil
 }
 
+// scanArchiveSources pre-walks all sources and returns total file count and total bytes.
+func scanArchiveSources(absPaths []string) (totalFiles int64, totalBytes int64) {
+	var walkFn filepath.WalkFunc = func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			totalFiles++
+			totalBytes += info.Size()
+		}
+		return nil
+	}
+	for _, src := range absPaths {
+		_ = filepath.Walk(src, walkFn)
+	}
+	return
+}
+
 // Archive creates a zip of a source file or directory into the server data dir,
 // returning the new zip entry. The default archive name is the source basename.
 func (s *Store) Archive(id, source, name string) (FileEntry, error) {
@@ -233,6 +257,7 @@ func (s *Store) Archive(id, source, name string) (FileEntry, error) {
 }
 
 // ArchiveMultiple archives multiple source files and directories into a zip file in destDir.
+// It emits real-time progress via SetTaskProgress while compressing.
 func (s *Store) ArchiveMultiple(id string, sources []string, destDir, name string) (FileEntry, error) {
 	if len(sources) == 0 {
 		return FileEntry{}, ErrInvalidPath
@@ -263,35 +288,104 @@ func (s *Store) ArchiveMultiple(id string, sources []string, destDir, name strin
 		return FileEntry{}, err
 	}
 
-	dst, err := os.Create(target)
-	if err != nil {
-		return FileEntry{}, err
-	}
-	zw := zip.NewWriter(dst)
-	z := &zipWriter{zw: zw}
-
+	// Resolve all source absolute paths first.
+	absPaths := make([]string, 0, len(sources))
 	for _, source := range sources {
 		src, err := s.resolvePath(id, source)
 		if err != nil {
-			_ = zw.Close()
-			_ = dst.Close()
-			_ = os.Remove(target)
 			return FileEntry{}, err
 		}
 		if _, statErr := os.Stat(src); statErr != nil {
-			_ = zw.Close()
-			_ = dst.Close()
-			_ = os.Remove(target)
 			if os.IsNotExist(statErr) {
 				return FileEntry{}, ErrPathNotFound
 			}
 			return FileEntry{}, statErr
 		}
+		absPaths = append(absPaths, src)
+	}
+
+	// Emit scanning stage progress.
+	s.SetTaskProgress(id, TaskProgress{
+		ID:         name,
+		Operation:  "archive",
+		Stage:      "scanning",
+		StageTitle: "Scanning Files",
+		StageIndex: 1,
+		StageTotal: 2,
+		Percent:    2,
+		Message:    fmt.Sprintf("Scanning %d source(s)...", len(absPaths)),
+	})
+
+	totalFiles, totalBytes := scanArchiveSources(absPaths)
+
+	var doneFiles atomic.Int64
+	var doneBytes atomic.Int64
+	var lastUpdate time.Time
+
+	emitProgress := func(currentFile string, force bool) {
+		if !force && time.Since(lastUpdate) < 100*time.Millisecond {
+			return
+		}
+		lastUpdate = time.Now()
+		df := doneFiles.Load()
+		db := doneBytes.Load()
+		pct := 5
+		if totalBytes > 0 {
+			pct = 5 + int((float64(db)/float64(totalBytes))*92.0)
+			if pct > 97 {
+				pct = 97
+			}
+		} else if totalFiles > 0 {
+			pct = 5 + int((float64(df)/float64(totalFiles))*92.0)
+			if pct > 97 {
+				pct = 97
+			}
+		}
+		msg := fmt.Sprintf("Compressing %s (%d / %d files)", currentFile, df, totalFiles)
+		s.SetTaskProgress(id, TaskProgress{
+			ID:         name,
+			Operation:  "archive",
+			Stage:      "compressing",
+			StageTitle: fmt.Sprintf("Compressing Files (%d/%d)", df, totalFiles),
+			StageIndex: 2,
+			StageTotal: 2,
+			Percent:    pct,
+			Message:    msg,
+			Current:    df,
+			Total:      totalFiles,
+			BytesDone:  db,
+			BytesTotal: totalBytes,
+		})
+	}
+
+	dst, err := os.Create(target)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	zw := zip.NewWriter(dst)
+	z := &zipWriter{
+		zw: zw,
+		onFile: func(base string, size int64) {
+			doneFiles.Add(1)
+			doneBytes.Add(size)
+			emitProgress(base, false)
+		},
+	}
+
+	for _, src := range absPaths {
 		base := filepath.Base(src)
 		if perr := z.addTree(base, src); perr != nil {
 			_ = zw.Close()
 			_ = dst.Close()
 			_ = os.Remove(target)
+			s.SetTaskProgress(id, TaskProgress{
+				ID:        name,
+				Operation: "archive",
+				Stage:     "failed",
+				Percent:   100,
+				Message:   perr.Error(),
+				Error:     perr.Error(),
+			})
 			return FileEntry{}, perr
 		}
 	}
@@ -299,12 +393,35 @@ func (s *Store) ArchiveMultiple(id string, sources []string, destDir, name strin
 	if cerr := zw.Close(); cerr != nil {
 		_ = dst.Close()
 		_ = os.Remove(target)
+		s.SetTaskProgress(id, TaskProgress{
+			ID:        name,
+			Operation: "archive",
+			Stage:     "failed",
+			Percent:   100,
+			Message:   cerr.Error(),
+			Error:     cerr.Error(),
+		})
 		return FileEntry{}, cerr
 	}
 	if cerr := dst.Close(); cerr != nil {
 		_ = os.Remove(target)
 		return FileEntry{}, cerr
 	}
+
+	s.SetTaskProgress(id, TaskProgress{
+		ID:         name,
+		Operation:  "archive",
+		Stage:      "completed",
+		StageTitle: "Compression Complete",
+		StageIndex: 2,
+		StageTotal: 2,
+		Percent:    100,
+		Message:    fmt.Sprintf("Compressed %d files into %s", doneFiles.Load(), name),
+		Current:    doneFiles.Load(),
+		Total:      totalFiles,
+		BytesDone:  doneBytes.Load(),
+		BytesTotal: totalBytes,
+	})
 	return statEntry(target, name)
 }
 

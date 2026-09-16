@@ -10,6 +10,8 @@ import type {
   BackupRecord,
   BackupProgress,
   BackupProgressResponse,
+  TaskProgress,
+  TaskProgressResponse,
   VersionInfo,
   VersionMeta,
   Op,
@@ -948,6 +950,34 @@ export const api = {
     source.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data) as BackupProgress;
+        onProgress(data);
+      } catch {
+        /* ignore parse errors on comments/heartbeats */
+      }
+    };
+    if (onError) {
+      source.onerror = onError;
+    }
+    return () => source.close();
+  },
+
+  getTaskProgress: (serverId: string) =>
+    request<TaskProgressResponse>(`/api/servers/${serverId}/tasks/progress`),
+
+  subscribeTaskEvents: (
+    serverId: string,
+    onProgress: (p: TaskProgress) => void,
+    onError?: (err: Event) => void,
+  ) => {
+    if (typeof EventSource === 'undefined') {
+      return () => {};
+    }
+    const source = new EventSource(`/api/servers/${serverId}/tasks/events`, {
+      withCredentials: true,
+    });
+    source.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data) as TaskProgress;
         onProgress(data);
       } catch {
         /* ignore parse errors on comments/heartbeats */

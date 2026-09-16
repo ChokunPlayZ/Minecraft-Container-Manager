@@ -80,7 +80,12 @@ export function FileManager({ server }: { server: Server }) {
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadStats, setUploadStats] = useState<{ fileName: string; loaded: number; total: number } | null>(null);
-  const [activeTask, setActiveTask] = useState<{ title: string; subtext?: string } | null>(null);
+  const [activeTask, setActiveTask] = useState<{
+    title: string;
+    subtext?: string;
+    percent?: number;
+    showPercent?: boolean;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [url, setUrl] = useState('');
@@ -94,6 +99,43 @@ export function FileManager({ server }: { server: Server }) {
   const [editorError, setEditorError] = useState<string | null>(null);
   const [editorBusy, setEditorBusy] = useState(false);
   const { confirm, prompt, dialog } = useModal();
+
+  useEffect(() => {
+    const unsub = api.subscribeTaskEvents(server.id, (p) => {
+      if (p.operation === 'archive') {
+        if (p.stage === 'completed') {
+          setActiveTask({
+            title: p.stage_title || 'Compression Complete',
+            subtext: p.message,
+            percent: 100,
+            showPercent: true,
+          });
+          setTimeout(() => {
+            setActiveTask((curr) => (curr?.percent === 100 ? null : curr));
+          }, 800);
+        } else if (p.stage === 'failed') {
+          setActiveTask({
+            title: 'Compression Failed',
+            subtext: p.error || p.message,
+            percent: 100,
+            showPercent: false,
+          });
+        } else {
+          let sub = p.message || '';
+          if (p.bytes_total && p.bytes_total > 0) {
+            sub = `${formatSize(p.bytes_done || 0)} / ${formatSize(p.bytes_total)} • ${p.message || ''}`;
+          }
+          setActiveTask({
+            title: p.stage_title || 'Compressing Files',
+            subtext: sub,
+            percent: p.percent,
+            showPercent: true,
+          });
+        }
+      }
+    });
+    return unsub;
+  }, [server.id]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -261,12 +303,19 @@ export function FileManager({ server }: { server: Server }) {
     );
     if (!zipName || !zipName.trim()) return;
     const sources = names.map((n) => joinPath(cwd, n));
-    setActiveTask({ title: `Compressing ${zipName.trim()}...`, subtext: `Archiving ${names.length} items` });
+    setActiveTask({
+      title: `Compressing ${zipName.trim()}...`,
+      subtext: `Scanning ${names.length} items...`,
+      percent: 0,
+      showPercent: true,
+    });
     try {
       await run(() => api.archiveFiles(server.id, sources, cwd, zipName.trim()));
       setSelectedNames(new Set());
     } finally {
-      setActiveTask(null);
+      setTimeout(() => {
+        setActiveTask((curr) => (curr?.percent === 100 ? null : curr));
+      }, 600);
     }
   }
 
@@ -278,11 +327,18 @@ export function FileManager({ server }: { server: Server }) {
       { title: 'Archive as Zip', confirmLabel: 'Archive' },
     );
     if (!zipName || !zipName.trim()) return;
-    setActiveTask({ title: `Compressing ${zipName.trim()}...`, subtext: `Archiving ${entry.name}` });
+    setActiveTask({
+      title: `Compressing ${zipName.trim()}...`,
+      subtext: `Scanning ${entry.name}...`,
+      percent: 0,
+      showPercent: true,
+    });
     try {
       await run(() => api.archiveFile(server.id, joinPath(cwd, entry.name), zipName.trim(), cwd));
     } finally {
-      setActiveTask(null);
+      setTimeout(() => {
+        setActiveTask((curr) => (curr?.percent === 100 ? null : curr));
+      }, 600);
     }
   }
 
@@ -418,6 +474,7 @@ export function FileManager({ server }: { server: Server }) {
       {activeTask && (
         <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 animate-fadeIn">
           <ProgressBar
+            value={activeTask.percent}
             label={
               <span className="flex items-center gap-2 font-medium">
                 <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
@@ -425,7 +482,7 @@ export function FileManager({ server }: { server: Server }) {
               </span>
             }
             subtext={activeTask.subtext}
-            showPercent={false}
+            showPercent={activeTask.showPercent ?? (activeTask.percent !== undefined)}
             variant="default"
             size="md"
           />

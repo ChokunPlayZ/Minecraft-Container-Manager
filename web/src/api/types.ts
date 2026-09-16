@@ -210,6 +210,29 @@ export interface BackupProgressResponse {
   progress?: BackupProgress;
 }
 
+export interface TaskProgress {
+  id?: string;
+  server_id: string;
+  operation: string;
+  stage: string;
+  stage_title?: string;
+  stage_index?: number;
+  stage_total?: number;
+  percent: number;
+  message?: string;
+  current?: number;
+  total?: number;
+  bytes_done?: number;
+  bytes_total?: number;
+  error?: string;
+  updated_at?: string;
+}
+
+export interface TaskProgressResponse {
+  active: boolean;
+  progress?: TaskProgress;
+}
+
 export interface AvailablePortsResponse {
   available: number[];
   pool?: number[];

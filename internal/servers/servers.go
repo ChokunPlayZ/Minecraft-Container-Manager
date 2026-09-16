@@ -314,6 +314,10 @@ type Store struct {
 	updatesCache    map[string]*ServerModUpdatesResponse
 	updatesFlightMu sync.Mutex
 	updatesInFlight map[string]*updatesFlightCall
+
+	tasksMu  sync.RWMutex
+	tasks    map[string]*TaskProgress
+	taskSubs map[string][]chan TaskProgress
 }
 
 type updatesFlightCall struct {
@@ -332,6 +336,8 @@ func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, en
 		dataDir:         dataDir,
 		dataDirHost:     dataDirHost,
 		updatesInFlight: make(map[string]*updatesFlightCall),
+		tasks:           make(map[string]*TaskProgress),
+		taskSubs:        make(map[string][]chan TaskProgress),
 	}
 }
 
