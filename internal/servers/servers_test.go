@@ -513,4 +513,184 @@ func TestStatusReconcilesCrashToError(t *testing.T) {
 	}
 }
 
+func TestStopCommandFor(t *testing.T) {
+	cases := []struct {
+		serverType string
+		want       string
+	}{
+		{"paper", "stop"},
+		{"vanilla", "stop"},
+		{"fabric", "stop"},
+		{"forge", "stop"},
+		{"neoforge", "stop"},
+		{"spigot", "stop"},
+		{"purpur", "stop"},
+		{"folia", "stop"},
+		{"bungeecord", "end"},
+		{"waterfall", "end"},
+		{"velocity", "shutdown"},
+		{"geysermc", "stop"},
+		{"unknown", "stop"},
+	}
+	for _, tc := range cases {
+		got := stopCommandFor(tc.serverType)
+		if got != tc.want {
+			t.Errorf("stopCommandFor(%q) = %q, want %q", tc.serverType, got, tc.want)
+		}
+	}
+}
+
+func TestStopSendsGracefulConsoleCommand(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+
+	ctx := context.Background()
+	srv, err := store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srv.State != StateRunning {
+		t.Fatalf("expected state running, got %s", srv.State)
+	}
+
+	fake.mu.Lock()
+	fake.inspectState = &docker.ContainerState{Status: StateRunning}
+	fake.mu.Unlock()
+
+	// When SendConsole is called, simulate server shutting down shortly after
+	go func() {
+		for {
+			time.Sleep(50 * time.Millisecond)
+			fake.mu.Lock()
+			if len(fake.consoleCommands) > 0 {
+				fake.inspectState = &docker.ContainerState{Status: "exited", ExitCode: 0}
+				fake.mu.Unlock()
+				return
+			}
+			fake.mu.Unlock()
+		}
+	}()
+
+	srv, err = store.Stop(ctx, id)
+	if err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if srv.State != StateStopped {
+		t.Errorf("expected state %q, got %q", StateStopped, srv.State)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.consoleCommands) == 0 || fake.consoleCommands[0] != "stop" {
+		t.Errorf("expected console command 'stop', got %v", fake.consoleCommands)
+	}
+	// Verify it did not need to fall back to hard docker Stop
+	if fake.stopCalled {
+		t.Errorf("expected clean exit without fallback docker.Stop")
+	}
+}
+
+func TestSendConsoleCommandStopSetsStoppingState(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+
+	ctx := context.Background()
+	_, err = store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Sending "stop" to running server sets StateStopping
+	if err := store.SendConsoleCommand(ctx, id, "stop"); err != nil {
+		t.Fatalf("SendConsoleCommand: %v", err)
+	}
+	srv, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if srv.State != StateStopping {
+		t.Errorf("expected state %q after console stop, got %q", StateStopping, srv.State)
+	}
+
+	// Re-set to running and test "/stop" with leading slash
+	if err := store.setState(ctx, id, StateRunning); err != nil {
+		t.Fatalf("setState: %v", err)
+	}
+	if err := store.SendConsoleCommand(ctx, id, "/stop"); err != nil {
+		t.Fatalf("SendConsoleCommand: %v", err)
+	}
+	srv, err = store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if srv.State != StateStopping {
+		t.Errorf("expected state %q after /stop, got %q", StateStopping, srv.State)
+	}
+}
+
+func TestStopFallbackWhenConsoleTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+
+	ctx := context.Background()
+	_, err = store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	fake.mu.Lock()
+	fake.inspectState = &docker.ContainerState{Status: StateRunning}
+	fake.mu.Unlock()
+
+	// Call Stop with a 50ms deadline to trigger timeout fallback quickly
+	stopCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+
+	// When Stop falls back to docker.Stop, simulate container exit
+	fake.mu.Lock()
+	fake.inspectState = &docker.ContainerState{Status: StateRunning}
+	fake.mu.Unlock()
+
+	srv, err := store.Stop(stopCtx, id)
+	if err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if srv.State != StateStopped {
+		t.Errorf("expected state %q, got %q", StateStopped, srv.State)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if !fake.stopCalled {
+		t.Errorf("expected fake.stopCalled == true on fallback")
+	}
+	if fake.lastStopTimeout != 10*time.Second {
+		t.Errorf("expected lastStopTimeout 10s, got %v", fake.lastStopTimeout)
+	}
+}
+
 

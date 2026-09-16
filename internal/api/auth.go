@@ -158,6 +158,15 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, userID str
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(auth.SessionLifetime / time.Second),
 	})
+	if csrf, err := generateCSRFToken(); err == nil {
+		http.SetCookie(w, &http.Cookie{
+			Name:     CSRFCookieName,
+			Value:    csrf,
+			Path:     "/",
+			Secure:   s.secureCookies(),
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
 
 func (s *Server) secureCookies() bool {
@@ -173,6 +182,13 @@ func clearSessionCookie(w http.ResponseWriter) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     CSRFCookieName,
+		Value:    "",
+		Path:     "/",
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

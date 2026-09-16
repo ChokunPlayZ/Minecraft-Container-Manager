@@ -216,7 +216,7 @@ func currentContainerConfig(srv *Server) ContainerConfig {
 		HostPort:          srv.HostPort,
 		JavaVersion:       srv.JavaVersion,
 		ExtraPorts:        ports,
-		EntrypointVersion: 1,
+		EntrypointVersion: 2,
 	}
 }
 
@@ -280,7 +280,7 @@ func checkRebuildNeeded(srv *Server, rawConfig string) (bool, []string) {
 	if !extraPortsEqual(srv.ExtraPorts, applied.ExtraPorts) {
 		reasons = append(reasons, "Additional ports configuration changed")
 	}
-	if applied.EntrypointVersion < 1 {
+	if applied.EntrypointVersion < 2 {
 		reasons = append(reasons, "Container runtime script updated to support clean process exit on crash")
 	}
 	return len(reasons) > 0, reasons
@@ -624,28 +624,91 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	return s.Get(ctx, id)
 }
 
+// stopCommandFor returns the graceful console stop command for a given server type.
+func stopCommandFor(serverType string) string {
+	switch strings.ToLower(serverType) {
+	case "bungeecord", "waterfall":
+		return "end"
+	case "velocity":
+		return "shutdown"
+	default:
+		return "stop"
+	}
+}
+
 // Stop stops a running container if one exists.
 func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Server{}, err
 	}
+	if srv.State == StateStopped && srv.ContainerID == "" {
+		return srv, nil
+	}
 	if err := s.setState(ctx, id, StateStopping); err != nil {
 		return Server{}, err
 	}
 	if srv.ContainerID != "" {
-		if err := s.docker.Stop(ctx, srv.ContainerID, 30*time.Second); err != nil {
-			_ = s.setState(ctx, id, StateError)
-			return Server{}, err
+		insp, err := s.docker.Inspect(ctx, srv.ContainerID)
+		if err == nil && insp.Status == StateRunning {
+			stopCmd := stopCommandFor(srv.ServerType)
+			sendErr := s.docker.SendConsole(ctx, srv.ContainerID, stopCmd)
+			if sendErr != nil {
+				// Console pipe not available; fall back to docker Stop directly
+				if err := s.docker.Stop(ctx, srv.ContainerID, 15*time.Second); err != nil {
+					_ = s.setState(ctx, id, StateError)
+					return Server{}, err
+				}
+			} else {
+				// Wait for container to cleanly exit after console stop
+				waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				defer cancel()
+				ticker := time.NewTicker(250 * time.Millisecond)
+				defer ticker.Stop()
+
+				stopped := false
+				for !stopped {
+					select {
+					case <-waitCtx.Done():
+						stopped = false
+						goto doneWaiting
+					case <-ticker.C:
+						insp, err := s.docker.Inspect(ctx, srv.ContainerID)
+						if err != nil || insp.Status != StateRunning {
+							stopped = true
+							goto doneWaiting
+						}
+					}
+				}
+			doneWaiting:
+				if !stopped {
+					// Fallback to docker Stop if graceful console stop timed out
+					stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+					defer stopCancel()
+					if err := s.docker.Stop(stopCtx, srv.ContainerID, 10*time.Second); err != nil {
+						_ = s.setState(stopCtx, id, StateError)
+						return Server{}, err
+					}
+				}
+			}
+		} else if err == nil && insp.Status != StateStopped && insp.Status != "exited" {
+			stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer stopCancel()
+			if err := s.docker.Stop(stopCtx, srv.ContainerID, 10*time.Second); err != nil {
+				_ = s.setState(stopCtx, id, StateError)
+				return Server{}, err
+			}
 		}
 	}
-	if err := s.setState(ctx, id, StateStopped); err != nil {
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cleanupCancel()
+	if err := s.setState(cleanupCtx, id, StateStopped); err != nil {
 		return Server{}, err
 	}
 	if s.dns != nil {
-		_ = s.dns.Remove(ctx, id)
+		_ = s.dns.Remove(cleanupCtx, id)
 	}
-	return s.Get(ctx, id)
+	return s.Get(cleanupCtx, id)
 }
 
 // Kill force-stops a running container without waiting for a graceful

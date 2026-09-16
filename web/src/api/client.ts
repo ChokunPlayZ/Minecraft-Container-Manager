@@ -59,13 +59,26 @@ const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 let csrfToken: string | null = null;
 let csrfPromise: Promise<string> | null = null;
 
-async function ensureCsrf(): Promise<string> {
-  if (csrfToken) return csrfToken;
-  if (!csrfPromise) {
+function getCsrfFromCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(?:^|;\s*)mcm_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function ensureCsrf(forceRefresh = false): Promise<string> {
+  if (!forceRefresh) {
+    const cookieToken = getCsrfFromCookie();
+    if (cookieToken) {
+      csrfToken = cookieToken;
+      return cookieToken;
+    }
+    if (csrfToken) return csrfToken;
+  }
+  if (!csrfPromise || forceRefresh) {
     csrfPromise = fetch('/api/auth/csrf', { credentials: 'include' })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error('csrf unavailable'))))
       .then((body) => {
-        csrfToken = String(body?.csrf_token ?? '');
+        csrfToken = String(body?.csrf_token ?? getCsrfFromCookie() ?? '');
         return csrfToken;
       })
       .finally(() => {
@@ -549,18 +562,37 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const res = await fetch(path, {
     credentials: 'include',
-    headers,
     ...init,
+    headers,
   });
 
   if (!res.ok) {
     let detail = `Request failed (${res.status})`;
+    let code = '';
     try {
       const body = await res.json();
+      code = body?.error?.code ?? '';
       detail = body?.error?.message ?? body?.message ?? detail;
     } catch {
       /* non-JSON error body */
     }
+
+    if (res.status === 403 && (code === 'csrf_missing' || detail.toLowerCase().includes('csrf'))) {
+      const freshToken = await ensureCsrf(true);
+      if (freshToken) {
+        headers['X-CSRF-Token'] = freshToken;
+        const retryRes = await fetch(path, {
+          credentials: 'include',
+          ...init,
+          headers,
+        });
+        if (retryRes.ok) {
+          if (retryRes.status === 204) return undefined as T;
+          return (await retryRes.json()) as T;
+        }
+      }
+    }
+
     throw new ApiError(res.status, detail, detail);
   }
 

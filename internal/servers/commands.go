@@ -266,5 +266,9 @@ func (s *Store) SendConsoleCommand(ctx context.Context, id, command string) erro
 	if err := s.docker.SendConsole(ctx, srv.ContainerID, command); err != nil {
 		return err
 	}
+	cleanCmd := strings.TrimPrefix(strings.ToLower(command), "/")
+	if cleanCmd == "stop" || cleanCmd == "end" {
+		_ = s.setState(ctx, id, StateStopping)
+	}
 	return nil
 }

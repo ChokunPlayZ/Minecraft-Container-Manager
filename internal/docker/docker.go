@@ -170,14 +170,26 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 rm -f "$FIFO"
 mkfifo -m 666 "$FIFO"
 exec 3<> "$FIFO"
+
+term_handler() {
+  test -p "$FIFO" && printf '%s\n' "stop" "end" "shutdown" > "$FIFO" || true
+  wait "$SERVER_PID" 2>/dev/null || true
+  exit 0
+}
+trap term_handler TERM INT
+
 if [ -f "/data/run.sh" ]; then
-  exec sh /data/run.sh nogui < "$FIFO"
+  sh /data/run.sh nogui < "$FIFO" &
 elif [ -f "/data/server.jar" ]; then
-  exec java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui < "$FIFO"
+  java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui < "$FIFO" &
 else
   echo "No server.jar or run.sh found in /data"
   exit 1
 fi
+SERVER_PID=$!
+wait "$SERVER_PID"
+EXIT_CODE=$?
+exit $EXIT_CODE
 `
 
 	cfg := &container.Config{
@@ -323,8 +335,24 @@ func containerResources(opts CreateOpts) container.Resources {
 	return res
 }
 
+// EnsureRestartPolicyDisabled updates the container's restart policy in Docker Engine
+// to disabled ("no") so that when the server exits (from /stop or console), Docker Engine
+// will not automatically restart it.
+func (m *Manager) EnsureRestartPolicyDisabled(ctx context.Context, containerID string) error {
+	_, err := m.client.ContainerUpdate(ctx, containerID, container.UpdateConfig{
+		RestartPolicy: container.RestartPolicy{
+			Name: container.RestartPolicyDisabled,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("update container restart policy: %w", err)
+	}
+	return nil
+}
+
 // Start starts a stopped or created container.
 func (m *Manager) Start(ctx context.Context, containerID string) error {
+	_ = m.EnsureRestartPolicyDisabled(ctx, containerID)
 	if err := m.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("start container: %w", err)
 	}
@@ -381,6 +409,9 @@ func (m *Manager) Inspect(ctx context.Context, containerID string) (ContainerSta
 	insp, err := m.client.ContainerInspect(ctx, containerID)
 	if err != nil {
 		return ContainerState{}, fmt.Errorf("inspect container: %w", err)
+	}
+	if insp.HostConfig != nil && insp.HostConfig.RestartPolicy.Name != "" && insp.HostConfig.RestartPolicy.Name != container.RestartPolicyDisabled {
+		_ = m.EnsureRestartPolicyDisabled(ctx, containerID)
 	}
 	started := ""
 	status := ""

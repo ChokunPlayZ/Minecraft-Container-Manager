@@ -25,6 +25,9 @@ type fakeRuntime struct {
 	// existing container ids reported present by Exists.
 	existing     map[string]bool
 	inspectState *docker.ContainerState
+	consoleCommands []string
+	stopCalled      bool
+	lastStopTimeout time.Duration
 }
 
 func (f *fakeRuntime) Ping(context.Context) error { return nil }
@@ -33,7 +36,11 @@ func (f *fakeRuntime) RuntimeStatus(context.Context) docker.RuntimeStatus {
 }
 func (f *fakeRuntime) Remove(context.Context, string) error { return nil }
 func (f *fakeRuntime) Start(context.Context, string) error  { return nil }
-func (f *fakeRuntime) Stop(context.Context, string, time.Duration) error {
+func (f *fakeRuntime) Stop(_ context.Context, _ string, timeout time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopCalled = true
+	f.lastStopTimeout = timeout
 	return nil
 }
 func (f *fakeRuntime) Kill(context.Context, string) error { return nil }
@@ -72,7 +79,10 @@ func (f *fakeRuntime) Create(_ context.Context, opts docker.CreateOpts) (string,
 func (f *fakeRuntime) Logs(context.Context, string, bool) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("console output")), nil
 }
-func (f *fakeRuntime) SendConsole(context.Context, string, string) error {
+func (f *fakeRuntime) SendConsole(_ context.Context, _ string, cmd string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.consoleCommands = append(f.consoleCommands, cmd)
 	return nil
 }
 

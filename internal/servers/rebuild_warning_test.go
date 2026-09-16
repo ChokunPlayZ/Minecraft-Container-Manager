@@ -249,5 +249,37 @@ func TestRebuildWarningEntrypointVersion(t *testing.T) {
 	if !found {
 		t.Errorf("expected entrypoint update rebuild reason in %v", srv.RebuildReasons)
 	}
+
+	// Insert server with EntrypointVersion 1 (legacy before graceful stop trap)
+	id2 := uuid.NewString()
+	v1Config := `{"server_type":"paper","version":"1.21.1","build":"120","ram_mb":2048,"cpu_limit":0,"memory_limit_mb":0,"host_port":25566,"java_version":21,"extra_ports":[],"entrypoint_version":1}`
+	_, err = dbHandle.DB.Exec(`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, container_config, java_version) VALUES (?, 'v1server', 'paper', '1.21.1', '120', 2048, 0, 0, 25566, '[]', 'container-v1', 'stopped', datetime('now'), datetime('now'), ?, 21)`, id2, v1Config)
+	if err != nil {
+		t.Fatalf("insert v1 server: %v", err)
+	}
+
+	srv2, err := store.Get(ctx, id2)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !srv2.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == true for container with entrypoint version 1")
+	}
+
+	// Insert server with EntrypointVersion 2 (latest)
+	id3 := uuid.NewString()
+	v2Config := `{"server_type":"paper","version":"1.21.1","build":"120","ram_mb":2048,"cpu_limit":0,"memory_limit_mb":0,"host_port":25567,"java_version":21,"extra_ports":[],"entrypoint_version":2}`
+	_, err = dbHandle.DB.Exec(`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, container_config, java_version) VALUES (?, 'v2server', 'paper', '1.21.1', '120', 2048, 0, 0, 25567, '[]', 'container-v2', 'stopped', datetime('now'), datetime('now'), ?, 21)`, id3, v2Config)
+	if err != nil {
+		t.Fatalf("insert v2 server: %v", err)
+	}
+
+	srv3, err := store.Get(ctx, id3)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if srv3.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false for container with entrypoint version 2, got reasons: %v", srv3.RebuildReasons)
+	}
 }
 
