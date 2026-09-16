@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,34 +122,29 @@ func (r *Resolver) AvailableJavaVersions(ctx context.Context) ([]JavaRelease, er
 	}, nil
 }
 
+var mcVersionRegex = regexp.MustCompile(`(\d+)\.(\d+)(?:\.(\d+))?`)
+
 // RecommendJavaVersion returns the recommended Java major version for a given Minecraft version.
 func RecommendJavaVersion(mcVersion string) int {
-	if strings.HasPrefix(mcVersion, "25w") || strings.HasPrefix(mcVersion, "26w") {
+	clean := strings.TrimSpace(strings.TrimPrefix(mcVersion, "v"))
+	if strings.HasPrefix(clean, "25w") || strings.HasPrefix(clean, "26w") {
 		return 25
 	}
-	parts := strings.Split(mcVersion, ".")
-	if len(parts) >= 1 {
-		major, _ := strconv.Atoi(parts[0])
-		if major >= 25 {
-			return 25
-		}
-	}
-	if len(parts) >= 2 {
-		minor, _ := strconv.Atoi(parts[1])
+	m := mcVersionRegex.FindStringSubmatch(clean)
+	if len(m) >= 3 {
+		major, _ := strconv.Atoi(m[1])
+		minor, _ := strconv.Atoi(m[2])
 		patch := 0
-		if len(parts) >= 3 {
-			patch, _ = strconv.Atoi(parts[2])
+		if len(m) >= 4 && m[3] != "" {
+			patch, _ = strconv.Atoi(m[3])
 		}
-		if minor >= 22 {
+		if major >= 25 || minor >= 22 {
 			return 25
 		}
 		if minor >= 21 || (minor == 20 && patch >= 5) {
 			return 21
 		}
-		if minor >= 18 {
-			return 17
-		}
-		if minor == 17 {
+		if minor >= 17 {
 			return 17
 		}
 		if minor > 0 && minor <= 16 {

@@ -419,13 +419,18 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		targetType := manifest.Loader
 		targetVersion := manifest.MinecraftVersion
 		targetBuild := manifest.LoaderVersion
+		targetJava := jars.RecommendJavaVersion(targetVersion)
+		if targetJava <= 0 {
+			targetJava = 21
+		}
 
 		if s.jars != nil {
 			srvType := jars.JarType(targetType)
 			upd := UpdateInput{
-				ServerType: &srvType,
-				Version:    &targetVersion,
-				Build:      &targetBuild,
+				ServerType:  &srvType,
+				Version:     &targetVersion,
+				Build:       &targetBuild,
+				JavaVersion: &targetJava,
 			}
 			if _, err := s.Update(ctx, serverID, upd); err == nil {
 				// Detach old container if it exists so next start provision uses new runtime
@@ -436,8 +441,8 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			} else {
 				// Direct update fallback if Validate fails due to upstream metadata differences
 				now := time.Now().UTC().Format(time.RFC3339)
-				_, _ = s.db.ExecContext(ctx, "UPDATE servers SET server_type=?, version=?, build=?, updated_at=? WHERE id=?",
-					targetType, targetVersion, targetBuild, now, serverID)
+				_, _ = s.db.ExecContext(ctx, "UPDATE servers SET server_type=?, version=?, build=?, java_version=?, updated_at=? WHERE id=?",
+					targetType, targetVersion, targetBuild, targetJava, now, serverID)
 				if srv.ContainerID != "" && s.docker != nil {
 					_ = s.docker.Remove(ctx, srv.ContainerID)
 					_ = s.clearContainerID(ctx, serverID)
@@ -446,8 +451,8 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		} else {
 			// Direct DB update when jars resolver is not wired (e.g. lightweight test)
 			now := time.Now().UTC().Format(time.RFC3339)
-			_, _ = s.db.ExecContext(ctx, "UPDATE servers SET server_type=?, version=?, build=?, updated_at=? WHERE id=?",
-				targetType, targetVersion, targetBuild, now, serverID)
+			_, _ = s.db.ExecContext(ctx, "UPDATE servers SET server_type=?, version=?, build=?, java_version=?, updated_at=? WHERE id=?",
+				targetType, targetVersion, targetBuild, targetJava, now, serverID)
 		}
 	}
 

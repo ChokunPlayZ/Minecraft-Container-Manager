@@ -447,3 +447,47 @@ func TestCreatedWithModpackLockingAndUpdate(t *testing.T) {
 	}
 }
 
+func TestModpackAutoConfigureJavaVersion(t *testing.T) {
+	store := newTestStore(t, "srv-autoconfig-java", StateStopped)
+	ctx := context.Background()
+	serverID := "srv-autoconfig-java"
+
+	// Initial server starts with Java 8 (legacy or stale default)
+	_, _ = store.db.ExecContext(ctx, "UPDATE servers SET java_version = 8 WHERE id = ?", serverID)
+
+	idx := modrinthIndex{
+		FormatVersion: 1,
+		Game:          "minecraft",
+		VersionID:     "v1.0.0",
+		Name:          "Cobblemon 1.21",
+		Dependencies: map[string]string{
+			"minecraft":     "1.21.1",
+			"fabric-loader": "0.16.0",
+		},
+	}
+	b, _ := json.Marshal(idx)
+	packZip := createTestZip(t, map[string]string{
+		"modrinth.index.json": string(b),
+	})
+	packPath := filepath.Join(t.TempDir(), "Cobblemon_121.mrpack")
+	d, _ := io.ReadAll(packZip)
+	_ = os.WriteFile(packPath, d, 0o644)
+
+	_, err := store.InstallModpack(ctx, serverID, packPath, InstallModpackOpts{
+		Source:              "modrinth",
+		AutoConfigureServer: true,
+	})
+	if err != nil {
+		t.Fatalf("InstallModpack: %v", err)
+	}
+
+	srv, err := store.Get(ctx, serverID)
+	if err != nil {
+		t.Fatalf("Get server: %v", err)
+	}
+	if srv.JavaVersion != 21 {
+		t.Errorf("expected JavaVersion to be auto-configured to 21 for MC 1.21.1, got %d", srv.JavaVersion)
+	}
+}
+
+

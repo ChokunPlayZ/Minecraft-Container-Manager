@@ -384,6 +384,9 @@ func TestRecommendJavaVersion(t *testing.T) {
 		{"1.17.1", 17},
 		{"1.16.5", 8},
 		{"1.12.2", 8},
+		{"v1.20.1", 17},
+		{"1.21.1-fabric", 21},
+		{" 1.16.5 ", 8},
 	}
 
 	for _, tt := range tests {

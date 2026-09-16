@@ -24,20 +24,18 @@ import type {
 import { formatCount, getProjectVersions, searchModrinth } from '../api/modrinth';
 
 function recommendJava(ver: string): number {
-  if (ver.startsWith('25w') || ver.startsWith('26w')) return 25;
-  const parts = ver.split('.');
-  if (parts.length >= 1) {
-    const major = parseInt(parts[0], 10);
-    if (major >= 25) return 25;
-  }
-  if (parts.length >= 2) {
-    const minor = parseInt(parts[1], 10);
-    const patch = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
-    if (minor >= 22) return 25;
+  const clean = ver.trim().replace(/^v/i, '');
+  const match = clean.match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+  if (match) {
+    const major = parseInt(match[1], 10);
+    const minor = parseInt(match[2], 10);
+    const patch = match[3] ? parseInt(match[3], 10) : 0;
+    if (major >= 25 || minor >= 22) return 25;
     if (minor >= 21 || (minor === 20 && patch >= 5)) return 21;
     if (minor >= 17) return 17;
     if (minor > 0 && minor <= 16) return 8;
   }
+  if (clean.startsWith('25w') || clean.startsWith('26w')) return 25;
   return 21;
 }
 import {
@@ -181,8 +179,22 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       .jarVersions(serverType)
       .then((v) => {
         if (cancelled) return;
-        setVersions(v);
-        const nextVer = (!version || !v.some((x) => x.name === version)) ? (v[0]?.name ?? '') : version;
+        const sorted = [...v].sort((a, b) => {
+          const ma = (a.name || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+          const mb = (b.name || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+          if (ma && mb) {
+            const a1 = parseInt(ma[1], 10), b1 = parseInt(mb[1], 10);
+            if (a1 !== b1) return b1 - a1;
+            const a2 = parseInt(ma[2], 10), b2 = parseInt(mb[2], 10);
+            if (a2 !== b2) return b2 - a2;
+            const a3 = ma[3] ? parseInt(ma[3], 10) : 0;
+            const b3 = mb[3] ? parseInt(mb[3], 10) : 0;
+            if (a3 !== b3) return b3 - a3;
+          }
+          return (b.name || '').localeCompare(a.name || '');
+        });
+        setVersions(sorted);
+        const nextVer = (!version || !sorted.some((x) => x.name === version)) ? (sorted[0]?.name ?? '') : version;
         setVersion(nextVer);
         if (nextVer) {
           setJavaVersion(recommendJava(nextVer));
@@ -306,6 +318,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       }
       if (manifest.minecraft_version) {
         setVersion(manifest.minecraft_version);
+        setJavaVersion(recommendJava(manifest.minecraft_version));
       }
       if (manifest.loader_version) {
         setBuild(manifest.loader_version);
@@ -374,6 +387,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       setVersion(mcVer);
       setBuild('');
       setRamMb(4096);
+      setJavaVersion(recommendJava(mcVer));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load modpack details');
     } finally {
@@ -433,6 +447,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       setVersion(mcVer);
       setBuild('');
       setRamMb(4096);
+      setJavaVersion(recommendJava(mcVer));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to prepare CurseForge modpack');
     } finally {
@@ -464,6 +479,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
     setServerType(detectedLoader);
     setVersion(mcVer);
     setBuild('');
+    setJavaVersion(recommendJava(mcVer));
   }
 
   async function onSubmit(e: FormEvent) {
