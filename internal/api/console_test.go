@@ -1,6 +1,12 @@
 package api
 
-import "testing"
+import (
+	"bytes"
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestParseConsoleLine(t *testing.T) {
 	cases := []struct {
@@ -68,5 +74,66 @@ func TestConsoleFrame(t *testing.T) {
 	want := "id: 3\ndata: {\"timestamp\":\"\",\"level\":\"INFO\",\"message\":\"hello\"}\n\n"
 	if string(got) != want {
 		t.Errorf("frame = %q, want %q", got, want)
+	}
+}
+
+func TestWriteConsoleSSE_LastEventID(t *testing.T) {
+	input := "line 1\nline 2\nline 3\n"
+	r := strings.NewReader(input)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var buf bytes.Buffer
+	flushed := 0
+	flush := func() { flushed++ }
+
+	// Cancel context after short delay so test finishes
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	// Skip first 2 lines
+	writeConsoleSSE(ctx, &buf, flush, r, 2)
+
+	out := buf.String()
+	if strings.Contains(out, "line 1") || strings.Contains(out, "line 2") {
+		t.Errorf("expected line 1 and 2 to be skipped, got: %s", out)
+	}
+	if !strings.Contains(out, "id: 3\ndata: {\"timestamp\":\"\",\"message\":\"line 3\"}") {
+		t.Errorf("expected line 3 to be delivered, got: %s", out)
+	}
+}
+
+func TestWriteConsoleSSE_EOFKeepAlive(t *testing.T) {
+	// After EOF, writeConsoleSSE should NOT exit immediately; it should wait for ctx.Done()
+	input := "line 1\n"
+	r := strings.NewReader(input)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+
+	go func() {
+		writeConsoleSSE(ctx, &buf, func() {}, r, 0)
+		close(done)
+	}()
+
+	// Give it enough time to process EOF
+	time.Sleep(50 * time.Millisecond)
+
+	select {
+	case <-done:
+		t.Fatal("writeConsoleSSE exited prematurely on EOF; should stay alive until ctx canceled")
+	default:
+		// Working as expected, still alive
+	}
+
+	cancel()
+	select {
+	case <-done:
+		// Exited cleanly after cancel
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("writeConsoleSSE did not exit after ctx was canceled")
 	}
 }

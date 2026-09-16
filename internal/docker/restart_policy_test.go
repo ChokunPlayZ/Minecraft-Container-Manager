@@ -32,9 +32,9 @@ func TestEntryScriptForgeInstallerHandling(t *testing.T) {
 	if !strings.Contains(DefaultEntryScript, `*installer*.jar`) {
 		t.Errorf("DefaultEntryScript missing glob check for installer jars")
 	}
-	// Should run installer with --installServer
-	if !strings.Contains(DefaultEntryScript, `java -jar "$INSTALLER" --installServer`) {
-		t.Errorf("DefaultEntryScript missing java -jar $INSTALLER --installServer")
+	// Should run installer with --installServer in headless mode
+	if !strings.Contains(DefaultEntryScript, `java -Djava.awt.headless=true -jar "$INSTALLER" --installServer`) {
+		t.Errorf("DefaultEntryScript missing headless java -jar $INSTALLER --installServer")
 	}
 	// Should check installer exit code
 	if !strings.Contains(DefaultEntryScript, `INSTALL_EXIT=$?`) {
@@ -44,12 +44,12 @@ func TestEntryScriptForgeInstallerHandling(t *testing.T) {
 	if !strings.Contains(DefaultEntryScript, `ln -sf "$f" /data/server.jar`) {
 		t.Errorf("DefaultEntryScript missing symlink from forge-*.jar to server.jar")
 	}
-	// For modern Forge, should execute run.sh
-	if !strings.Contains(DefaultEntryScript, `sh /data/run.sh nogui < "$FIFO" &`) {
-		t.Errorf("DefaultEntryScript missing execution of run.sh")
+	// For modern Forge, should execute run.sh with --nogui
+	if !strings.Contains(DefaultEntryScript, `sh /data/run.sh --nogui nogui < "$FIFO" &`) {
+		t.Errorf("DefaultEntryScript missing execution of run.sh with --nogui")
 	}
 	// For modern Forge, should configure user_jvm_args.txt if present
-	if !strings.Contains(DefaultEntryScript, `/data/user_jvm_args.txt`) {
-		t.Errorf("DefaultEntryScript missing user_jvm_args.txt memory config")
+	if !strings.Contains(DefaultEntryScript, `/data/user_jvm_args.txt`) || !strings.Contains(DefaultEntryScript, `-Djava.awt.headless=true`) {
+		t.Errorf("DefaultEntryScript missing user_jvm_args.txt headless/memory config")
 	}
 }

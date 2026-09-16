@@ -31,21 +31,51 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
 
+  const activeStreamRef = useRef<{ close: () => void; serverId: string } | null>(null);
+  const prevRunningRef = useRef<boolean | undefined>(undefined);
+
   useEffect(() => {
-    const seen = new Set<string>();
-    const close = api.openConsoleStream(serverId, (line) => {
-      const key = `${line.timestamp ?? ''}|${line.message}`;
-      if (seen.size > 5000) seen.clear();
-      if (seen.has(key)) return;
-      seen.add(key);
-      setLines((prev) => {
-        const next = [...prev, line];
-        return next.slice(-1000);
+    const wasRunning = prevRunningRef.current;
+    prevRunningRef.current = running;
+
+    const isFirstMount = wasRunning === undefined;
+    const serverChanged = activeStreamRef.current?.serverId !== serverId;
+    const startedRunning = !isFirstMount && !wasRunning && !!running;
+
+    if (serverChanged) {
+      setLines([]);
+      if (activeStreamRef.current) {
+        activeStreamRef.current.close();
+        activeStreamRef.current = null;
+      }
+    }
+
+    if (isFirstMount || serverChanged || startedRunning) {
+      if (activeStreamRef.current) {
+        activeStreamRef.current.close();
+        activeStreamRef.current = null;
+      }
+
+      const close = api.openConsoleStream(serverId, (line) => {
+        setLines((prev) => {
+          const next = [...prev, line];
+          return next.slice(-1000);
+        });
+        setError(null);
       });
-      setError(null);
-    });
-    return close;
-  }, [serverId]);
+
+      activeStreamRef.current = { close, serverId };
+    }
+  }, [serverId, running]);
+
+  useEffect(() => {
+    return () => {
+      if (activeStreamRef.current) {
+        activeStreamRef.current.close();
+        activeStreamRef.current = null;
+      }
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const consoleElement = scrollRef.current;

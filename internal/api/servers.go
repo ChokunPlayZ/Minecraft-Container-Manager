@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/mcm-panel/mcm/internal/docker"
@@ -215,7 +216,13 @@ func (s *Server) handleServerConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	s.streamConsole(r.Context(), w, rc)
+	lastID := 0
+	if lastIDStr := r.Header.Get("Last-Event-ID"); lastIDStr != "" {
+		if n, err := strconv.Atoi(lastIDStr); err == nil && n > 0 {
+			lastID = n
+		}
+	}
+	s.streamConsole(r.Context(), w, rc, lastID)
 }
 
 // handleServerConsoleCommand sends a single command to a running server's

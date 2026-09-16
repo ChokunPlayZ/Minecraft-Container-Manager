@@ -51,8 +51,8 @@ func consoleFrame(id int, ev consoleLine) ([]byte, error) {
 }
 
 // streamConsole demultiplexes the Docker stdcopy stream into plain lines and
-// emits them as SSE events until the underlying reader or context closes.
-func (s *Server) streamConsole(ctx context.Context, w http.ResponseWriter, rc io.ReadCloser) {
+// emits them as SSE events until context is canceled.
+func (s *Server) streamConsole(ctx context.Context, w http.ResponseWriter, rc io.ReadCloser, lastEventID int) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "internal", "streaming unsupported")
@@ -78,13 +78,15 @@ func (s *Server) streamConsole(ctx context.Context, w http.ResponseWriter, rc io
 		_ = pr.Close()
 	}()
 
-	writeConsoleSSE(ctx, w, flusher.Flush, pr)
+	writeConsoleSSE(ctx, w, flusher.Flush, pr, lastEventID)
 }
 
 // writeConsoleSSE reads text lines from r and writes them as SSE `data:` events.
 // It flushes after every event and sends a keep-alive comment while idle. Reads
-// stop as soon as ctx is canceled (e.g. client disconnect).
-func writeConsoleSSE(ctx context.Context, w io.Writer, flush func(), r io.Reader) {
+// stop as soon as ctx is canceled (e.g. client disconnect). When the underlying reader
+// reaches EOF (e.g. container stopped or errored out), the SSE connection remains open
+// sending heartbeats rather than closing and causing client reconnection loops.
+func writeConsoleSSE(ctx context.Context, w io.Writer, flush func(), r io.Reader, lastEventID int) {
 	lines := make(chan string)
 	go func() {
 		defer close(lines)
@@ -108,13 +110,19 @@ func writeConsoleSSE(ctx context.Context, w io.Writer, flush func(), r io.Reader
 			return
 		case line, ok := <-lines:
 			if !ok {
-				return
+				// Reached EOF on the container logs. Disable lines channel so we don't busy-spin,
+				// and keep the SSE stream alive with ticker pings so the client doesn't reconnect in a loop.
+				lines = nil
+				continue
 			}
 			ev := parseConsoleLine(line)
 			if ev.Message == "" {
 				continue
 			}
 			evID++
+			if evID <= lastEventID {
+				continue
+			}
 			frame, err := consoleFrame(evID, ev)
 			if err != nil {
 				continue

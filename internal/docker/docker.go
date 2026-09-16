@@ -65,7 +65,7 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
 
   if [ -n "$INSTALLER" ]; then
     echo "Running server installer ($INSTALLER)..."
-    java -jar "$INSTALLER" --installServer
+    java -Djava.awt.headless=true -jar "$INSTALLER" --installServer
     INSTALL_EXIT=$?
     if [ $INSTALL_EXIT -ne 0 ]; then
       echo "Server installer failed with exit code $INSTALL_EXIT"
@@ -92,13 +92,20 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
 fi
 
 if [ -f "/data/run.sh" ]; then
-  if [ -f "/data/user_jvm_args.txt" ] && ! grep -q "^-Xmx" /data/user_jvm_args.txt 2>/dev/null; then
-    printf '\n-Xms512M\n-Xmx%sM\n' "${RAM_MB:-2048}" >> /data/user_jvm_args.txt
+  if [ -f "/data/user_jvm_args.txt" ]; then
+    if ! grep -q "^-Xmx" /data/user_jvm_args.txt 2>/dev/null; then
+      printf '\n-Xms512M\n-Xmx%sM\n' "${RAM_MB:-2048}" >> /data/user_jvm_args.txt
+    fi
+    if ! grep -q "java.awt.headless" /data/user_jvm_args.txt 2>/dev/null; then
+      printf '\n-Djava.awt.headless=true\n' >> /data/user_jvm_args.txt
+    fi
+  else
+    printf -- '-Xms512M\n-Xmx%sM\n-Djava.awt.headless=true\n' "${RAM_MB:-2048}" > /data/user_jvm_args.txt
   fi
   chmod +x /data/run.sh 2>/dev/null || true
-  sh /data/run.sh nogui < "$FIFO" &
+  sh /data/run.sh --nogui nogui < "$FIFO" &
 elif [ -f "/data/server.jar" ]; then
-  java -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar nogui < "$FIFO" &
+  java -Djava.awt.headless=true -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar --nogui nogui < "$FIFO" &
 else
   echo "No server.jar or run.sh found in /data"
   exit 1
@@ -545,6 +552,7 @@ func (m *Manager) Logs(ctx context.Context, containerID string, follow bool) (io
 		ShowStderr: true,
 		Follow:     follow,
 		Timestamps: false,
+		Tail:       "1000",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get container logs: %w", err)

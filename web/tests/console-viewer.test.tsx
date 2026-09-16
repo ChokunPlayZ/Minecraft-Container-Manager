@@ -55,4 +55,55 @@ describe('ConsoleViewer', () => {
 
     expect(consoleElement.scrollTop).toBe(1000);
   });
+
+  it('preserves lines and does not close stream when server stops or errors out', () => {
+    let receiveLine: ((line: ConsoleLine) => void) | undefined;
+    const closeSpy = vi.fn();
+    const openSpy = vi.spyOn(api, 'openConsoleStream').mockImplementation((_serverId, onLine) => {
+      receiveLine = onLine;
+      return closeSpy;
+    });
+
+    const { container, rerender } = render(<ConsoleViewer serverId="server-1" running />);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      receiveLine?.({ timestamp: '', message: 'Line before crash' });
+      receiveLine?.({ timestamp: '', message: 'Encountered an unexpected exception' });
+    });
+
+    expect(container.textContent).toContain('Line before crash');
+    expect(container.textContent).toContain('Encountered an unexpected exception');
+
+    // Server transitions from running -> stopped/error
+    rerender(<ConsoleViewer serverId="server-1" running={false} />);
+
+    // Stream should NOT have been closed or re-opened
+    expect(closeSpy).not.toHaveBeenCalled();
+    expect(openSpy).toHaveBeenCalledTimes(1);
+
+    // Lines should still be present in the console viewer
+    expect(container.textContent).toContain('Line before crash');
+    expect(container.textContent).toContain('Encountered an unexpected exception');
+  });
+
+  it('renders repeated lines without suppressing them', () => {
+    let receiveLine: ((line: ConsoleLine) => void) | undefined;
+    vi.spyOn(api, 'openConsoleStream').mockImplementation((_serverId, onLine) => {
+      receiveLine = onLine;
+      return vi.fn();
+    });
+
+    const { container } = render(<ConsoleViewer serverId="server-1" running />);
+
+    act(() => {
+      receiveLine?.({ timestamp: '', message: 'Warning: overloaded' });
+      receiveLine?.({ timestamp: '', message: 'Warning: overloaded' });
+    });
+
+    const allMatches = container.querySelectorAll('.whitespace-pre-wrap');
+    expect(allMatches.length).toBe(2);
+    expect(allMatches[0].textContent).toContain('Warning: overloaded');
+    expect(allMatches[1].textContent).toContain('Warning: overloaded');
+  });
 });
