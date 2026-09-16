@@ -41,35 +41,37 @@ var (
 
 // ModpackManifest describes inspected metadata from a modpack archive or online entry.
 type ModpackManifest struct {
-	Format           ModpackFormat `json:"format"`
-	Name             string        `json:"name"`
-	Version          string        `json:"version"`
-	Summary          string        `json:"summary,omitempty"`
-	Author           string        `json:"author,omitempty"`
-	MinecraftVersion string        `json:"minecraft_version"`
-	Loader           string        `json:"loader"`
-	LoaderVersion    string        `json:"loader_version"`
-	TotalFiles       int           `json:"total_files"`
-	ServerFiles      int           `json:"server_files"`
-	ClientOnlyFiles  int           `json:"client_only_files"`
-	IconURL          string        `json:"icon_url,omitempty"`
+	Format            ModpackFormat `json:"format"`
+	Name              string        `json:"name"`
+	Version           string        `json:"version"`
+	Summary           string        `json:"summary,omitempty"`
+	Author            string        `json:"author,omitempty"`
+	MinecraftVersion  string        `json:"minecraft_version"`
+	Loader            string        `json:"loader"`
+	LoaderVersion     string        `json:"loader_version"`
+	TotalFiles        int           `json:"total_files"`
+	ServerFiles       int           `json:"server_files"`
+	ClientOnlyFiles   int           `json:"client_only_files"`
+	UserRequiredFiles []string      `json:"user_required_files,omitempty"`
+	IconURL           string        `json:"icon_url,omitempty"`
 }
 
 // InstalledModpack records the details of a modpack currently installed on a server.
 type InstalledModpack struct {
-	Name             string        `json:"name"`
-	Version          string        `json:"version"`
-	Summary          string        `json:"summary,omitempty"`
-	Author           string        `json:"author,omitempty"`
-	Format           ModpackFormat `json:"format"`
-	MinecraftVersion string        `json:"minecraft_version"`
-	Loader           string        `json:"loader"`
-	LoaderVersion    string        `json:"loader_version"`
-	InstalledAt      string        `json:"installed_at"`
-	Source           string        `json:"source"` // "upload", "modrinth", "curseforge", "url"
-	ProjectID        string        `json:"project_id,omitempty"`
-	ProjectSlug      string        `json:"project_slug,omitempty"`
+	Name               string        `json:"name"`
+	Version            string        `json:"version"`
+	Summary            string        `json:"summary,omitempty"`
+	Author             string        `json:"author,omitempty"`
+	Format             ModpackFormat `json:"format"`
+	MinecraftVersion   string        `json:"minecraft_version"`
+	Loader             string        `json:"loader"`
+	LoaderVersion      string        `json:"loader_version"`
+	InstalledAt        string        `json:"installed_at"`
+	Source             string        `json:"source"` // "upload", "modrinth", "curseforge", "url"
+	ProjectID          string        `json:"project_id,omitempty"`
+	ProjectSlug        string        `json:"project_slug,omitempty"`
 	InstalledFiles     []string      `json:"installed_files"`
+	UserRequiredFiles  []string      `json:"user_required_files,omitempty"`
 	IconURL            string        `json:"icon_url,omitempty"`
 	CreatedWithModpack bool          `json:"created_with_modpack,omitempty"`
 }
@@ -233,6 +235,7 @@ func inspectModrinthIndex(idx *modrinthIndex) *ModpackManifest {
 
 	serverFiles := 0
 	clientOnly := 0
+	var userRequiredFiles []string
 	for _, f := range idx.Files {
 		isClient := strings.ToLower(f.Env.Server) == "unsupported"
 		if !isClient {
@@ -244,20 +247,24 @@ func inspectModrinthIndex(idx *modrinthIndex) *ModpackManifest {
 			clientOnly++
 		} else {
 			serverFiles++
+			if len(f.Downloads) == 0 {
+				userRequiredFiles = append(userRequiredFiles, f.Path)
+			}
 		}
 	}
 
 	return &ModpackManifest{
-		Format:           ModpackFormatModrinth,
-		Name:             idx.Name,
-		Version:          idx.VersionID,
-		Summary:          idx.Summary,
-		MinecraftVersion: mcVersion,
-		Loader:           loader,
-		LoaderVersion:    loaderVersion,
-		TotalFiles:       len(idx.Files),
-		ServerFiles:      serverFiles,
-		ClientOnlyFiles:  clientOnly,
+		Format:            ModpackFormatModrinth,
+		Name:              idx.Name,
+		Version:           idx.VersionID,
+		Summary:           idx.Summary,
+		MinecraftVersion:  mcVersion,
+		Loader:            loader,
+		LoaderVersion:     loaderVersion,
+		TotalFiles:        len(idx.Files),
+		ServerFiles:       serverFiles,
+		ClientOnlyFiles:   clientOnly,
+		UserRequiredFiles: userRequiredFiles,
 	}
 }
 
@@ -556,6 +563,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 	dlStageIndex := stageOffset + 3
 	dlBasePct := (dlStageIndex - 1) * 100 / stageTotal
 
+	var userRequiredMu sync.Mutex
+	var userRequiredFiles []string
+
 	switch manifest.Format {
 	case ModpackFormatModrinth:
 		// Extract index again
@@ -717,6 +727,14 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		}
 		close(fileCh)
 
+		for _, mf := range eligibleFiles {
+			if len(mf.Downloads) == 0 {
+				userRequiredMu.Lock()
+				userRequiredFiles = append(userRequiredFiles, mf.Path)
+				userRequiredMu.Unlock()
+			}
+		}
+
 		client := &http.Client{Timeout: 90 * time.Second}
 		var wg sync.WaitGroup
 		var downloadErr error
@@ -744,7 +762,10 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 
 					dlURL := mf.Downloads[0]
 					if err := downloadToFile(ctx, client, dlURL, targetAbs); err != nil {
-						// Non-fatal if one optional file fails, but log
+						// Non-fatal if one file fails, but record as requiring manual provision
+						userRequiredMu.Lock()
+						userRequiredFiles = append(userRequiredFiles, mf.Path)
+						userRequiredMu.Unlock()
 						continue
 					}
 					recordFile(targetRel)
@@ -920,6 +941,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 				for item := range cfCh {
 					dlURL, fileName, err := resolveCurseForgeDownload(ctx, client, item.ProjectID, item.FileID, opts.CurseForgeAPIKey)
 					if err != nil || dlURL == "" {
+						userRequiredMu.Lock()
+						userRequiredFiles = append(userRequiredFiles, fmt.Sprintf("CurseForge File #%d (Project %d)", item.FileID, item.ProjectID))
+						userRequiredMu.Unlock()
+						curr := downloadedCF.Add(1)
+						emitCFProgress(curr, fmt.Sprintf("File #%d (failed to resolve)", item.FileID))
 						continue
 					}
 					if fileName == "" {
@@ -934,6 +960,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 
 					targetAbs := filepath.Join(modsDir, fileName)
 					if err := downloadToFile(ctx, client, dlURL, targetAbs); err != nil {
+						userRequiredMu.Lock()
+						userRequiredFiles = append(userRequiredFiles, fileName)
+						userRequiredMu.Unlock()
+						curr := downloadedCF.Add(1)
+						emitCFProgress(curr, fileName+" (download failed)")
 						continue
 					}
 					rel := filepath.Join("mods", fileName)
@@ -1066,6 +1097,7 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		ProjectID:          opts.ProjectID,
 		ProjectSlug:        opts.ProjectSlug,
 		InstalledFiles:     installedFiles,
+		UserRequiredFiles:  userRequiredFiles,
 		IconURL:            manifest.IconURL,
 		CreatedWithModpack: createdWithModpack,
 	}
@@ -1099,14 +1131,21 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 
 	s.InvalidateModUpdatesCache(serverID)
 
+	msg := fmt.Sprintf("Installed %s %s successfully", installed.Name, installed.Version)
+	stageTitle := "Installation Complete"
+	if len(userRequiredFiles) > 0 {
+		stageTitle = "Installation Complete (Action Required)"
+		msg = fmt.Sprintf("Installed %s. %d mod(s) could not be downloaded and must be provided manually.", installed.Name, len(userRequiredFiles))
+	}
+
 	s.SetTaskProgress(serverID, TaskProgress{
 		Operation:  "modpack_install",
 		Stage:      "completed",
-		StageTitle: "Installation Complete",
+		StageTitle: stageTitle,
 		StageIndex: stageTotal,
 		StageTotal: stageTotal,
 		Percent:    100,
-		Message:    fmt.Sprintf("Installed %s %s successfully", installed.Name, installed.Version),
+		Message:    msg,
 	})
 
 	return installed, nil

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
+  AlertTriangle,
   ArrowRight,
   Compass,
   Download,
@@ -990,7 +991,23 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                             ? modpackManifest.server_files
                             : modpackManifest.total_files}
                         </strong>
+                        {modpackManifest.user_required_files && modpackManifest.user_required_files.length > 0 && (
+                          <span className="text-amber-600 dark:text-amber-400 font-medium">
+                            {' '}· ({modpackManifest.user_required_files.length} manual required)
+                          </span>
+                        )}
                       </p>
+                      {modpackManifest.user_required_files && modpackManifest.user_required_files.length > 0 && (
+                        <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-900 dark:text-amber-200">
+                          <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                            <span>Manual action needed after creation:</span>
+                          </div>
+                          <p className="mt-0.5 text-muted-foreground">
+                            {modpackManifest.user_required_files.length} mod(s) cannot be auto-downloaded and must be placed into <code className="bg-muted px-1 py-0.5 rounded font-mono text-[10px]">mods/</code> manually ({modpackManifest.user_required_files.slice(0, 3).join(', ')}{modpackManifest.user_required_files.length > 3 ? '...' : ''}).
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

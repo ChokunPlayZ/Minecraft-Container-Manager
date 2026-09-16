@@ -222,8 +222,38 @@ export function ModpackInstallDialog({
                   ({manifest.client_only_files} client-only skipped)
                 </span>
               )}
+              {manifest.user_required_files && manifest.user_required_files.length > 0 && (
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium block">
+                  ({manifest.user_required_files.length} manual required)
+                </span>
+              )}
             </div>
           </div>
+
+          {/* User Required Mods Notice */}
+          {manifest.user_required_files && manifest.user_required_files.length > 0 && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 space-y-2 text-xs">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <span className="font-semibold text-amber-900 dark:text-amber-200">
+                    Manual Mods Required ({manifest.user_required_files.length})
+                  </span>
+                  <p className="mt-1 text-muted-foreground text-[11px] leading-relaxed">
+                    Some mods cannot be downloaded automatically due to creator licensing or distribution policies. You will need to provide these files manually in the server's <code className="bg-muted px-1 py-0.5 rounded font-mono text-[10px]">mods/</code> folder:
+                  </p>
+                  <div className="mt-2 max-h-28 overflow-y-auto space-y-1 rounded-lg border border-amber-500/20 bg-background/60 p-2 font-mono text-[11px] text-amber-950 dark:text-amber-100">
+                    {manifest.user_required_files.map((file, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5 truncate">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+                        <span className="truncate" title={file}>{file}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Software Reconfiguration Notice */}
           {needsReconfig ? (

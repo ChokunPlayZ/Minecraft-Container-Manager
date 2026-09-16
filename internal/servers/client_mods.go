@@ -44,9 +44,9 @@ var clientOnlyModTokens = map[string]string{
 	"indium":                 "Indium (client rendering adapter)",
 	"borderlessmining":       "Borderless Mining (client display window mode)",
 	"customcrosshairmod":     "Custom Crosshair Mod (client HUD crosshair)",
-	"shoulder架sur":           "Shoulder Surfing Reloaded (client third-person camera)",
 	"shouldersurfing":        "Shoulder Surfing Reloaded (client third-person camera)",
 	"smoothboot":             "Smooth Boot (client CPU scheduling tweak)",
+	"colorwheel":             "Colorwheel (client Iris/Oculus shaders compat)",
 }
 
 // clientOnlyExactModIDs maps exact mod IDs (from fabric.mod.json or mods.toml) to reasons.
@@ -58,6 +58,7 @@ var clientOnlyExactModIDs = map[string]string{
 	"sodium":                 "Sodium",
 	"iris":                   "Iris",
 	"optifine":               "OptiFine",
+	"colorwheel":             "Colorwheel",
 	"entityculling":          "Entity Culling",
 	"lambdynamiclights":      "LambDynamicLights",
 	"sound_physics_remastered": "Sound Physics Remastered",

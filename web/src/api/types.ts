@@ -696,6 +696,7 @@ export interface ModpackManifest {
   total_files: number;
   server_files: number;
   client_only_files: number;
+  user_required_files?: string[];
   icon_url?: string;
 }
 
@@ -713,6 +714,7 @@ export interface InstalledModpack {
   project_id?: string;
   project_slug?: string;
   installed_files: string[];
+  user_required_files?: string[];
   icon_url?: string;
   created_with_modpack?: boolean;
 }

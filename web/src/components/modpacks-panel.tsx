@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowUpCircle,
   CheckCircle2,
   HardDrive,
@@ -276,6 +277,15 @@ export function ModpacksPanel({
                       <Badge variant="outline" className="text-[10px] font-medium capitalize">
                         {installedModpack.loader} {installedModpack.minecraft_version}
                       </Badge>
+                      {installedModpack.user_required_files && installedModpack.user_required_files.length > 0 && (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[10px] uppercase font-bold px-2 py-0.5 gap-1"
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                          {installedModpack.user_required_files.length} Manual Mods Needed
+                        </Badge>
+                      )}
                     </div>
                     <CardTitle className="text-xl font-bold mt-1">
                       {installedModpack.name}
@@ -322,6 +332,31 @@ export function ModpacksPanel({
                 <p className="text-xs text-muted-foreground line-clamp-2">
                   {installedModpack.summary}
                 </p>
+              </CardContent>
+            )}
+            {installedModpack.user_required_files && installedModpack.user_required_files.length > 0 && (
+              <CardContent className="pt-0">
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-900 dark:text-amber-200 space-y-2">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <span className="font-semibold">
+                        Action Required: Manual Mods Missing ({installedModpack.user_required_files.length})
+                      </span>
+                      <p className="mt-0.5 text-muted-foreground text-[11px] leading-relaxed">
+                        These mods could not be downloaded automatically due to creator licensing restrictions. Upload them to the server's <code className="bg-muted px-1 py-0.5 rounded font-mono text-[10px]">mods/</code> folder via the File Manager or SFTP:
+                      </p>
+                      <div className="mt-2 max-h-28 overflow-y-auto space-y-1 rounded-lg border border-amber-500/20 bg-background/60 p-2 font-mono text-[11px] text-amber-950 dark:text-amber-100">
+                        {installedModpack.user_required_files.map((file, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 truncate">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+                            <span className="truncate" title={file}>{file}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             )}
           </Card>

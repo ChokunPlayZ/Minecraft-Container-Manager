@@ -85,6 +85,37 @@ describe('ModpacksPanel Component', () => {
     expect(screen.getByRole('button', { name: /Uninstall/i })).toBeInTheDocument();
   });
 
+  it('displays manual mods needed badge and warning alert when installedModpack has user_required_files', async () => {
+    const installed: InstalledModpack = {
+      name: 'Better MC [FORGE]',
+      version: 'v10',
+      summary: 'Modpack requiring manual mods',
+      format: 'modrinth',
+      minecraft_version: '1.20.1',
+      loader: 'forge',
+      loader_version: '47.3.0',
+      installed_at: '2026-09-14T10:00:00Z',
+      source: 'modrinth',
+      installed_files: ['mods/mod1.jar'],
+      user_required_files: ['twilightforest-1.20.1.jar', 'oculus-mc1.20.1.jar'],
+    };
+
+    vi.spyOn(api, 'getInstalledModpack').mockResolvedValue({
+      installed: true,
+      modpack: installed,
+    });
+
+    render(<ModpacksPanel server={mockServer} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 Manual Mods Needed/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Action Required: Manual Mods Missing \(2\)/i)).toBeInTheDocument();
+    expect(screen.getByText('twilightforest-1.20.1.jar')).toBeInTheDocument();
+    expect(screen.getByText('oculus-mc1.20.1.jar')).toBeInTheDocument();
+  });
+
   it('locks modpack when created_with_modpack is true, hides uninstall, and displays modpack updates', async () => {
     const lockedModpack: InstalledModpack = {
       name: 'Cobblemon Official',
@@ -275,6 +306,36 @@ describe('ModpackInstallDialog Component', () => {
 
     expect(screen.getByText(/Server Software Mismatch Detected/i)).toBeInTheDocument();
     expect(screen.getByText(/Automatically reconfigure server to/i)).toBeInTheDocument();
+  });
+
+  it('displays prominent alert and files list when manifest has user_required_files', () => {
+    const manifest: ModpackManifest = {
+      format: 'modrinth',
+      name: 'Restricted Pack',
+      version: '1.0.0',
+      minecraft_version: '1.20.1',
+      loader: 'fabric',
+      loader_version: '0.15.11',
+      total_files: 20,
+      server_files: 18,
+      client_only_files: 2,
+      user_required_files: ['twilightforest-4.3.2145.jar', 'custom-licensed-mod-1.0.jar'],
+    };
+
+    render(
+      <ModpackInstallDialog
+        server={mockServer}
+        manifest={manifest}
+        installOptions={{ source: 'modrinth', url: 'https://example.com/pack.mrpack' }}
+        onClose={() => {}}
+        onInstalled={() => {}}
+      />,
+    );
+
+    expect(screen.getByText(/Manual Mods Required \(2\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 manual required/i)).toBeInTheDocument();
+    expect(screen.getByText('twilightforest-4.3.2145.jar')).toBeInTheDocument();
+    expect(screen.getByText('custom-licensed-mod-1.0.jar')).toBeInTheDocument();
   });
 });
 
