@@ -34,17 +34,19 @@ var ErrUnsupportedMods = errors.New("server type does not support mods/plugins")
 
 // Mod describes a single installed artifact file.
 type Mod struct {
-	Name        string `json:"name"`                   // display name without extension
-	File        string `json:"file"`                   // on-disk filename (may carry .disabled)
-	Enabled     bool   `json:"enabled"`                // whether file is enabled
-	ModID       string `json:"mod_id,omitempty"`       // canonical mod/plugin id from jar manifest
-	Title       string `json:"title,omitempty"`        // human friendly name from jar manifest
-	Version     string `json:"version,omitempty"`      // version from jar manifest
-	SHA1        string `json:"sha1,omitempty"`         // SHA1 file hash
-	Description string `json:"description,omitempty"`  // description from jar manifest
-	ProjectID   string `json:"project_id,omitempty"`   // catalog project ID if known
-	ProjectSlug string `json:"project_slug,omitempty"` // catalog project slug if known
-	Provider    string `json:"provider,omitempty"`     // catalog provider (e.g. "modrinth")
+	Name             string `json:"name"`                   // display name without extension
+	File             string `json:"file"`                   // on-disk filename (may carry .disabled)
+	Enabled          bool   `json:"enabled"`                // whether file is enabled
+	ModID            string `json:"mod_id,omitempty"`       // canonical mod/plugin id from jar manifest
+	Title            string `json:"title,omitempty"`        // human friendly name from jar manifest
+	Version          string `json:"version,omitempty"`      // version from jar manifest
+	SHA1             string `json:"sha1,omitempty"`         // SHA1 file hash
+	Description      string `json:"description,omitempty"`  // description from jar manifest
+	ProjectID        string `json:"project_id,omitempty"`   // catalog project ID if known
+	ProjectSlug      string `json:"project_slug,omitempty"` // catalog project slug if known
+	Provider         string `json:"provider,omitempty"`     // catalog provider (e.g. "modrinth")
+	IsClientOnly     bool   `json:"is_client_only,omitempty"`
+	ClientOnlyReason string `json:"client_only_reason,omitempty"`
 }
 
 // ModDownloadMeta stores catalog metadata associated with an installed mod.
@@ -231,6 +233,8 @@ func (s *Store) ListMods(ctx context.Context, id string) (ModListResult, error) 
 			m.Version = manifest.Version
 			m.SHA1 = manifest.SHA1
 			m.Description = manifest.Description
+			m.IsClientOnly = manifest.IsClientOnly
+			m.ClientOnlyReason = manifest.ClientOnlyReason
 		}
 		if meta, ok := getModMeta(dir, m.File, m.ModID); ok {
 			m.ProjectID = meta.ProjectID
@@ -303,17 +307,19 @@ func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader,
 
 	s.InvalidateModUpdatesCache(id)
 	return Mod{
-		Name:        modDisplayBase(filename),
-		File:        filename,
-		Enabled:     true,
-		ModID:       manifest.ModID,
-		Title:       manifest.Title,
-		Version:     manifest.Version,
-		SHA1:        manifest.SHA1,
-		Description: manifest.Description,
-		ProjectID:   dMeta.ProjectID,
-		ProjectSlug: dMeta.ProjectSlug,
-		Provider:    dMeta.Provider,
+		Name:             modDisplayBase(filename),
+		File:             filename,
+		Enabled:          true,
+		ModID:            manifest.ModID,
+		Title:            manifest.Title,
+		Version:          manifest.Version,
+		SHA1:             manifest.SHA1,
+		Description:      manifest.Description,
+		ProjectID:        dMeta.ProjectID,
+		ProjectSlug:      dMeta.ProjectSlug,
+		Provider:         dMeta.Provider,
+		IsClientOnly:     manifest.IsClientOnly,
+		ClientOnlyReason: manifest.ClientOnlyReason,
 	}, nil
 }
 
@@ -365,14 +371,16 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 	targetPath := filepath.Join(dir, target)
 	manifest, _ := inspectModJar(targetPath)
 	m := Mod{
-		Name:        modDisplayBase(target),
-		File:        target,
-		Enabled:     enabled,
-		ModID:       manifest.ModID,
-		Title:       manifest.Title,
-		Version:     manifest.Version,
-		SHA1:        manifest.SHA1,
-		Description: manifest.Description,
+		Name:             modDisplayBase(target),
+		File:             target,
+		Enabled:          enabled,
+		ModID:            manifest.ModID,
+		Title:            manifest.Title,
+		Version:          manifest.Version,
+		SHA1:             manifest.SHA1,
+		Description:      manifest.Description,
+		IsClientOnly:     manifest.IsClientOnly,
+		ClientOnlyReason: manifest.ClientOnlyReason,
 	}
 	if meta, ok := getModMeta(dir, target, manifest.ModID); ok {
 		m.ProjectID = meta.ProjectID
@@ -514,18 +522,59 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 	}
 
 	result := Mod{
-		Name:        modDisplayBase(filename),
-		File:        filename,
-		Enabled:     true,
-		ModID:       manifest.ModID,
-		Title:       manifest.Title,
-		Version:     manifest.Version,
-		SHA1:        manifest.SHA1,
-		Description: manifest.Description,
-		ProjectID:   dMeta.ProjectID,
-		ProjectSlug: dMeta.ProjectSlug,
-		Provider:    dMeta.Provider,
+		Name:             modDisplayBase(filename),
+		File:             filename,
+		Enabled:          true,
+		ModID:            manifest.ModID,
+		Title:            manifest.Title,
+		Version:          manifest.Version,
+		SHA1:             manifest.SHA1,
+		Description:      manifest.Description,
+		ProjectID:        dMeta.ProjectID,
+		ProjectSlug:      dMeta.ProjectSlug,
+		Provider:         dMeta.Provider,
+		IsClientOnly:     manifest.IsClientOnly,
+		ClientOnlyReason: manifest.ClientOnlyReason,
 	}
 	s.InvalidateModUpdatesCache(id)
 	return result, nil
+}
+
+// SanitizeClientMods inspects all enabled jar files in a server's mods directory
+// and renames any identified as client-only to .jar.disabled.
+// Returns a slice of the modified filenames.
+func (s *Store) SanitizeClientMods(ctx context.Context, serverID string) ([]string, error) {
+	dataDir := s.dataPath(serverID)
+	modsDir := filepath.Join(dataDir, "mods")
+	entries, err := os.ReadDir(modsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var quarantined []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		fname := entry.Name()
+		if !strings.HasSuffix(strings.ToLower(fname), ".jar") {
+			continue
+		}
+		fullPath := filepath.Join(modsDir, fname)
+		manifest, err := inspectModJar(fullPath)
+		if err == nil && manifest.IsClientOnly {
+			disabledName := fname + ".disabled"
+			disabledPath := filepath.Join(modsDir, disabledName)
+			if err := os.Rename(fullPath, disabledPath); err == nil {
+				quarantined = append(quarantined, fname)
+			}
+		}
+	}
+	if len(quarantined) > 0 {
+		s.InvalidateModUpdatesCache(serverID)
+	}
+	return quarantined, nil
 }

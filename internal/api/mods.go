@@ -238,3 +238,17 @@ func (s *Server) writeModErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, "internal", "Something went wrong while handling your request.")
 	}
 }
+
+// handleSanitizeClientMods scans a server's mods directory and disables any client-only mods.
+func (s *Server) handleSanitizeClientMods(w http.ResponseWriter, r *http.Request) {
+	quarantined, err := s.servers.SanitizeClientMods(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"quarantined": quarantined,
+		"count":       len(quarantined),
+	})
+}
+

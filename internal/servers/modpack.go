@@ -234,8 +234,13 @@ func inspectModrinthIndex(idx *modrinthIndex) *ModpackManifest {
 	serverFiles := 0
 	clientOnly := 0
 	for _, f := range idx.Files {
-		// If explicitly marked as unsupported on server, exclude it
-		if strings.ToLower(f.Env.Server) == "unsupported" {
+		isClient := strings.ToLower(f.Env.Server) == "unsupported"
+		if !isClient {
+			if client, _ := IsClientOnlyFilename(f.Path); client {
+				isClient = true
+			}
+		}
+		if isClient {
 			clientOnly++
 		} else {
 			serverFiles++
@@ -605,8 +610,25 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 				continue
 			}
 
+			// If it's a jar in mods/, check if it is client-only (Tier 1)
+			if strings.HasPrefix(filepath.ToSlash(relPath), "mods/") && strings.HasSuffix(strings.ToLower(relPath), ".jar") {
+				if isClient, _ := IsClientOnlyFilename(relPath); isClient {
+					targetPath += ".disabled"
+					relPath += ".disabled"
+				}
+			}
+
 			if err := extractZipFile(zf, targetPath); err == nil {
 				recordFile(relPath)
+				// Deep inspection (Tier 2) on extracted mod jar
+				if strings.HasPrefix(filepath.ToSlash(relPath), "mods/") && !strings.HasSuffix(targetPath, ".disabled") {
+					if manifest, err := inspectModJar(targetPath); err == nil && manifest.IsClientOnly {
+						disabledTarget := targetPath + ".disabled"
+						if err := os.Rename(targetPath, disabledTarget); err == nil {
+							recordFile(relPath + ".disabled")
+						}
+					}
+				}
 			}
 			extractedOverrides++
 
@@ -635,6 +657,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		eligibleFiles := make([]modrinthIndexFile, 0, len(idx.Files))
 		for _, mf := range idx.Files {
 			if strings.ToLower(mf.Env.Server) == "unsupported" {
+				continue
+			}
+			if isClient, _ := IsClientOnlyFilename(mf.Path); isClient {
 				continue
 			}
 			eligibleFiles = append(eligibleFiles, mf)
@@ -900,14 +925,38 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 					if fileName == "" {
 						fileName = fmt.Sprintf("cf_%d_%d.jar", item.ProjectID, item.FileID)
 					}
+					// Tier 1 check on filename before downloading
+					if isClient, _ := IsClientOnlyFilename(fileName); isClient {
+						curr := downloadedCF.Add(1)
+						emitCFProgress(curr, fileName+" (skipped client-only)")
+						continue
+					}
+
 					targetAbs := filepath.Join(modsDir, fileName)
 					if err := downloadToFile(ctx, client, dlURL, targetAbs); err != nil {
 						continue
 					}
 					rel := filepath.Join("mods", fileName)
-					recordFile(rel)
 
 					manifest, _ := inspectModJar(targetAbs)
+					// Tier 2 check on downloaded jar
+					if manifest.IsClientOnly {
+						disabledTarget := targetAbs + ".disabled"
+						if err := os.Rename(targetAbs, disabledTarget); err == nil {
+							recordFile(rel + ".disabled")
+							writeModMeta(modsDir, fileName+".disabled", ModDownloadMeta{
+								ProjectID:        fmt.Sprint(item.ProjectID),
+								Provider:         "curseforge",
+								InstalledVersion: manifest.Version,
+								DownloadURL:      dlURL,
+							}, manifest.ModID)
+							curr := downloadedCF.Add(1)
+							emitCFProgress(curr, fileName+" (client-only disabled)")
+							continue
+						}
+					}
+
+					recordFile(rel)
 					writeModMeta(modsDir, fileName, ModDownloadMeta{
 						ProjectID:        fmt.Sprint(item.ProjectID),
 						Provider:         "curseforge",
@@ -967,6 +1016,13 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 				if strings.HasPrefix(filepath.ToSlash(relPath), "mods/") && strings.HasSuffix(strings.ToLower(relPath), ".jar") {
 					fname := filepath.Base(relPath)
 					manifest, _ := inspectModJar(targetPath)
+					if manifest.IsClientOnly {
+						disabledPath := targetPath + ".disabled"
+						if err := os.Rename(targetPath, disabledPath); err == nil {
+							fname += ".disabled"
+							recordFile(relPath + ".disabled")
+						}
+					}
 					writeModMeta(modsDir, fname, ModDownloadMeta{
 						InstalledVersion: manifest.Version,
 					}, manifest.ModID)
@@ -1032,6 +1088,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		Percent:    99,
 		Message:    "Saving modpack metadata...",
 	})
+
+	// Final safety sweep: ensure no client-only mods remain enabled in the mods directory
+	_, _ = s.SanitizeClientMods(ctx, serverID)
 
 	// Persist installed modpack record
 	if data, err := json.MarshalIndent(installed, "", "  "); err == nil {
