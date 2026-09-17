@@ -14,6 +14,7 @@ import {
   Trash2,
   UploadCloud,
   X,
+  Sparkles,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { InstalledModpack, Mod, Server } from '../api/types';
@@ -25,13 +26,14 @@ import { ProgressBar } from './ui/progress';
 import { useModal } from './ui/modal';
 import { CatalogBrowser } from './catalog-browser';
 import { ModpacksPanel } from './modpacks-panel';
+import { VersionUpdateHelper } from './version-update-helper';
 
 import { extractModId } from '../api/modrinth';
 import type { ModUpdateInfo } from '../api/mod-updates';
 import { ModJarPickerDialog } from './mod-jar-picker-dialog';
 
 export function ModsPanel({ server }: { server: Server }) {
-  const [activeTab, setActiveTab] = useState<'installed' | 'modpacks' | 'updates' | 'browse'>('installed');
+  const [activeTab, setActiveTab] = useState<'installed' | 'modpacks' | 'updates' | 'version-helper' | 'browse'>('installed');
   const [items, setItems] = useState<Mod[]>([]);
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
   const [installedModpack, setInstalledModpack] = useState<InstalledModpack | null>(null);
@@ -332,6 +334,25 @@ export function ModsPanel({ server }: { server: Server }) {
               ) : checkingUpdates ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground ml-1" />
               ) : null}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('version-helper')}
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                activeTab === 'version-helper'
+                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
+              }`}
+            >
+              <Sparkles className="h-4 w-4 text-amber-500 dark:text-amber-400" />
+              Version Update Helper
+              <Badge
+                variant="secondary"
+                className="ml-1 bg-primary/20 text-primary border border-primary/30 px-1.5 py-0 text-[10px] font-semibold"
+              >
+                SMP
+              </Badge>
             </button>
 
             <button
@@ -759,6 +780,17 @@ export function ModsPanel({ server }: { server: Server }) {
               )}
             </CardContent>
           </Card>
+        )}
+
+        {/* Tab 3: Version Update Helper */}
+        {activeTab === 'version-helper' && (
+          <VersionUpdateHelper
+            server={server}
+            installedMods={items}
+            onRefreshInstalled={() => {
+              void load(true);
+            }}
+          />
         )}
 
         {/* Tab 3: Mod & Plugin Catalogs */}

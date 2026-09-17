@@ -465,7 +465,7 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 	}
 	req.Header.Set("User-Agent", "mcm-panel/1.0 (https://github.com/mcm-panel/mcm)")
 
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := s.getProxy().Client()
 	resp, err := client.Do(req)
 	if err != nil {
 		return Mod{}, ErrDownloadFailed

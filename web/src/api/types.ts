@@ -354,6 +354,60 @@ export interface ServerModUpdatesResponse {
   update_count?: number;
 }
 
+export type ModCompatibilityStatus =
+  | 'update_available'
+  | 'already_compatible'
+  | 'not_available'
+  | 'untracked';
+
+export interface ModTargetCompatibility {
+  mod_name: string;
+  mod_file: string;
+  title: string;
+  provider?: ModProvider;
+  project_id?: string;
+  project_slug?: string;
+  current_version?: string;
+  status: ModCompatibilityStatus;
+  compatible_version?: string;
+  compatible_jar?: string;
+  download_url?: string;
+  release_type?: string;
+  release_date?: string;
+  changelog?: string;
+  notes?: string;
+}
+
+export interface VersionUpdateReport {
+  current_version: string;
+  target_version: string;
+  server_type: string;
+  total_mods: number;
+  compatible_count: number;
+  update_count: number;
+  not_available_count: number;
+  untracked_count: number;
+  ready_to_update: boolean;
+  mods: Record<string, ModTargetCompatibility>;
+  last_checked: string;
+}
+
+export interface BatchUpdateModItem {
+  mod_name: string;
+  original: string;
+  new_jar: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface BatchUpdateModsResult {
+  target_version: string;
+  total: number;
+  updated: number;
+  failed: number;
+  items: BatchUpdateModItem[];
+}
+
 export type { ModUpdateInfo } from './mod-updates';
 
 export interface ServerProperties {

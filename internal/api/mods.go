@@ -165,6 +165,41 @@ func (s *Server) handleCheckModUpdates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// handleCheckVersionUpgrade checks mod/plugin compatibility against a target Minecraft version.
+func (s *Server) handleCheckVersionUpgrade(w http.ResponseWriter, r *http.Request) {
+	r = contextWithCurseForgeKey(r)
+	targetVersion := r.URL.Query().Get("target_version")
+	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
+	report, err := s.servers.CheckTargetVersionCompatibility(r.Context(), r.PathValue("id"), targetVersion, force)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// handleApplyVersionUpgrade applies compatible mod updates for a target Minecraft version.
+func (s *Server) handleApplyVersionUpgrade(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TargetVersion string   `json:"target_version"`
+		Mods          []string `json:"mods"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if in.TargetVersion == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "target_version is required")
+		return
+	}
+	res, err := s.servers.BatchUpdateTargetMods(r.Context(), r.PathValue("id"), in.TargetVersion, in.Mods)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 // handleGetModVersions returns available releases/jars for a specific mod.
 func (s *Server) handleGetModVersions(w http.ResponseWriter, r *http.Request) {
 	r = contextWithCurseForgeKey(r)

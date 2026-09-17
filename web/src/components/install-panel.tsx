@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Sparkles } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { InstallInfo, ServerType, VersionInfo, VersionMeta } from '../api/types';
 import { Button } from './ui/button';
@@ -119,6 +119,17 @@ export function InstallPanel({
               <p className="mb-4 text-sm text-muted-foreground">
                 Installed: {info.version} (build {info.build})
               </p>
+            )}
+            {serverType !== 'vanilla' && info?.installed && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Sparkles className="h-4 w-4 text-primary shrink-0" />
+                  <span>
+                    Planning an SMP version upgrade? Check mod compatibility first in the{' '}
+                    <strong className="text-foreground">Version Update Helper</strong> under Mods &amp; Plugins.
+                  </span>
+                </div>
+              </div>
             )}
             <form onSubmit={onSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">

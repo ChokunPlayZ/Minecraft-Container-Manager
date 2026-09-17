@@ -334,6 +334,10 @@ type Store struct {
 	updatesFlightMu sync.Mutex
 	updatesInFlight map[string]*updatesFlightCall
 
+	targetUpdatesCache    map[string]*VersionUpdateReport
+	targetUpdatesFlightMu sync.Mutex
+	targetUpdatesInFlight map[string]*targetUpdatesFlightCall
+
 	tasksMu  sync.RWMutex
 	tasks    map[string]*TaskProgress
 	taskSubs map[string][]chan TaskProgress
@@ -353,19 +357,26 @@ type updatesFlightCall struct {
 	err  error
 }
 
+type targetUpdatesFlightCall struct {
+	wg   sync.WaitGroup
+	resp *VersionUpdateReport
+	err  error
+}
+
 // NewStore wires the server store together.
 func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, end int, dataDir, dataDirHost string) *Store {
 	return &Store{
-		db:              handle.DB,
-		docker:          dm,
-		jars:            jr,
-		ports:           ports.NewPool(handle.DB, start, end),
-		dataDir:         dataDir,
-		dataDirHost:     dataDirHost,
-		updatesInFlight: make(map[string]*updatesFlightCall),
-		tasks:           make(map[string]*TaskProgress),
-		taskSubs:        make(map[string][]chan TaskProgress),
-		diskCache:       make(map[string]diskCacheEntry),
+		db:                    handle.DB,
+		docker:                dm,
+		jars:                  jr,
+		ports:                 ports.NewPool(handle.DB, start, end),
+		dataDir:               dataDir,
+		dataDirHost:           dataDirHost,
+		updatesInFlight:       make(map[string]*updatesFlightCall),
+		targetUpdatesInFlight: make(map[string]*targetUpdatesFlightCall),
+		tasks:                 make(map[string]*TaskProgress),
+		taskSubs:              make(map[string][]chan TaskProgress),
+		diskCache:             make(map[string]diskCacheEntry),
 	}
 }
 

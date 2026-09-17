@@ -320,3 +320,189 @@ func TestModMetadataTrackingAndProviderUpdates(t *testing.T) {
 		t.Errorf("unexpected update info: %+v", u)
 	}
 }
+
+func TestCheckTargetVersionCompatibility(t *testing.T) {
+	st, serverID := newModTestStore(t, "fabric")
+	ctx := context.Background()
+
+	srvDir := filepath.Join(st.dataPath(serverID), "mods")
+	_ = os.MkdirAll(srvDir, 0o755)
+
+	// Mod 1: Lithium (will have update_available)
+	mod1 := filepath.Join(srvDir, "lithium-fabric-0.12.0.jar")
+	_ = os.WriteFile(mod1, []byte("lithium old content"), 0o644)
+	manifest1 := ModManifest{ModID: "lithium", Title: "Lithium", Version: "0.12.0", SHA1: "lithium_sha1"}
+	manifestCacheMu.Lock()
+	fi1, _ := os.Stat(mod1)
+	manifestCache[mod1] = manifestCacheEntry{modTime: fi1.ModTime(), size: fi1.Size(), manifest: manifest1}
+	manifestCacheMu.Unlock()
+	writeModMeta(srvDir, "lithium-fabric-0.12.0.jar", ModDownloadMeta{
+		ProjectID: "lithium_proj",
+		Provider:  "modrinth",
+	}, "lithium")
+
+	// Mod 2: Fabric API (already compatible)
+	mod2 := filepath.Join(srvDir, "fabric-api-0.90.0.jar")
+	_ = os.WriteFile(mod2, []byte("fapi content"), 0o644)
+	manifest2 := ModManifest{ModID: "fabric-api", Title: "Fabric API", Version: "0.90.0", SHA1: "fapi_sha1"}
+	manifestCacheMu.Lock()
+	fi2, _ := os.Stat(mod2)
+	manifestCache[mod2] = manifestCacheEntry{modTime: fi2.ModTime(), size: fi2.Size(), manifest: manifest2}
+	manifestCacheMu.Unlock()
+
+	// Mod 3: Incompatible Mod (Modrinth project exists, but 0 versions for 1.21.1)
+	mod3 := filepath.Join(srvDir, "old-mod-1.0.jar")
+	_ = os.WriteFile(mod3, []byte("old mod content"), 0o644)
+	manifest3 := ModManifest{ModID: "oldmod", Title: "Old Mod", Version: "1.0", SHA1: "old_sha1"}
+	manifestCacheMu.Lock()
+	fi3, _ := os.Stat(mod3)
+	manifestCache[mod3] = manifestCacheEntry{modTime: fi3.ModTime(), size: fi3.Size(), manifest: manifest3}
+	manifestCacheMu.Unlock()
+	writeModMeta(srvDir, "old-mod-1.0.jar", ModDownloadMeta{
+		ProjectSlug: "oldmod",
+		Provider:    "modrinth",
+	}, "oldmod")
+
+	// Mod 4: Custom / Private untracked mod
+	mod4 := filepath.Join(srvDir, "custom-private-mod.jar")
+	_ = os.WriteFile(mod4, []byte("private mod"), 0o644)
+	manifest4 := ModManifest{Title: "Private Mod", Version: "1.0"}
+	manifestCacheMu.Lock()
+	fi4, _ := os.Stat(mod4)
+	manifestCache[mod4] = manifestCacheEntry{modTime: fi4.ModTime(), size: fi4.Size(), manifest: manifest4}
+	manifestCacheMu.Unlock()
+
+	// Setup mock Modrinth API responses
+	modrinthHashResp := map[string]modrinthVersion{
+		"lithium_sha1": {
+			ID:            "v_lithium_new",
+			ProjectID:     "lithium_proj",
+			Name:          "Lithium 0.14.0",
+			VersionNumber: "0.14.0",
+			VersionType:   "release",
+			DatePublished: "2024-07-01T12:00:00Z",
+			Files: []modrinthVersionFile{
+				{
+					Filename: "lithium-fabric-0.14.0.jar",
+					URL:      "https://cdn.modrinth.com/data/lithium/lithium-fabric-0.14.0.jar",
+					Primary:  true,
+					Hashes:   map[string]string{"sha1": "lithium_new_sha1"},
+				},
+			},
+		},
+		"fapi_sha1": {
+			ID:            "v_fapi",
+			ProjectID:     "fapi_proj",
+			Name:          "Fabric API 0.90.0",
+			VersionNumber: "0.90.0",
+			VersionType:   "release",
+			DatePublished: "2024-06-01T12:00:00Z",
+			Files: []modrinthVersionFile{
+				{
+					Filename: "fabric-api-0.90.0.jar",
+					URL:      "https://cdn.modrinth.com/data/fapi/fabric-api-0.90.0.jar",
+					Primary:  true,
+					Hashes:   map[string]string{"sha1": "fapi_sha1"},
+				},
+			},
+		},
+	}
+	hashBytes, _ := json.Marshal(modrinthHashResp)
+
+	mockClient := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) *http.Response {
+			if strings.Contains(r.URL.Path, "/version_files/update") {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader(hashBytes)),
+				}
+			}
+			if strings.Contains(r.URL.Path, "/project/oldmod/version") {
+				// 0 versions found for 1.21.1
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader([]byte("[]"))),
+				}
+			}
+			if strings.Contains(r.URL.Path, "lithium-fabric-0.14.0.jar") {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(bytes.NewReader([]byte("new lithium content"))),
+				}
+			}
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewReader(nil))}
+		}),
+	}
+	px := proxy.NewService()
+	px.SetClient(mockClient)
+	st.SetProxy(px)
+
+	report, err := st.CheckTargetVersionCompatibility(ctx, serverID, "1.21.1", true)
+	if err != nil {
+		t.Fatalf("CheckTargetVersionCompatibility failed: %v", err)
+	}
+
+	if report.TotalMods != 4 {
+		t.Fatalf("expected 4 total mods, got %d", report.TotalMods)
+	}
+	if report.CompatibleCount != 2 {
+		t.Fatalf("expected 2 compatible mods, got %d", report.CompatibleCount)
+	}
+	if report.UpdateCount != 1 {
+		t.Fatalf("expected 1 update available, got %d", report.UpdateCount)
+	}
+	if report.NotAvailableCount != 1 {
+		t.Fatalf("expected 1 not available mod, got %d", report.NotAvailableCount)
+	}
+	if report.UntrackedCount != 1 {
+		t.Fatalf("expected 1 untracked mod, got %d", report.UntrackedCount)
+	}
+	if report.ReadyToUpdate {
+		t.Fatalf("expected ReadyToUpdate to be false due to old-mod being unavailable")
+	}
+
+	// Verify Lithium
+	m1 := report.Mods["lithium-fabric-0.12.0"]
+	if m1.Status != ModCompatUpdateAvailable || m1.CompatibleVersion != "0.14.0" || m1.CompatibleJar != "lithium-fabric-0.14.0.jar" {
+		t.Errorf("unexpected Lithium report: %+v", m1)
+	}
+
+	// Verify Fabric API
+	m2 := report.Mods["fabric-api-0.90.0"]
+	if m2.Status != ModCompatAlreadyCompatible {
+		t.Errorf("unexpected Fabric API report: %+v", m2)
+	}
+
+	// Verify Old Mod
+	m3 := report.Mods["old-mod-1.0"]
+	if m3.Status != ModCompatNotAvailable {
+		t.Errorf("unexpected Old Mod report: %+v", m3)
+	}
+
+	// Verify Private Mod
+	m4 := report.Mods["custom-private-mod"]
+	if m4.Status != ModCompatUntracked {
+		t.Errorf("unexpected Private Mod report: %+v", m4)
+	}
+
+	// Test BatchUpdateTargetMods
+	batchRes, err := st.BatchUpdateTargetMods(ctx, serverID, "1.21.1", []string{"lithium-fabric-0.12.0"})
+	if err != nil {
+		t.Fatalf("BatchUpdateTargetMods failed: %v", err)
+	}
+	if batchRes.Updated != 1 || batchRes.Failed != 0 {
+		t.Fatalf("expected 1 updated, 0 failed, got: %+v", batchRes)
+	}
+
+	// Check that old jar was deleted and new jar exists
+	if _, err := os.Stat(mod1); !os.IsNotExist(err) {
+		t.Errorf("expected old lithium jar to be removed")
+	}
+	newLithiumPath := filepath.Join(srvDir, "lithium-fabric-0.14.0.jar")
+	if _, err := os.Stat(newLithiumPath); err != nil {
+		t.Errorf("expected new lithium jar to exist, err: %v", err)
+	}
+}
+

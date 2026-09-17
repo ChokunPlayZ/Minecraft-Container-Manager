@@ -115,6 +115,14 @@ func (s *Service) SetClient(c *http.Client) {
 	s.client = c
 }
 
+// Client returns the HTTP client used for requests.
+func (s *Service) Client() *http.Client {
+	if s == nil || s.client == nil {
+		return &http.Client{Timeout: 90 * time.Second}
+	}
+	return s.client
+}
+
 // ClearCache clears all cached responses (useful in tests).
 func (s *Service) ClearCache() {
 	s.cacheMu.Lock()

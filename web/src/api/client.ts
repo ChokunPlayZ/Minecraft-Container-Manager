@@ -41,6 +41,8 @@ import type {
   PublishDNSInput,
   AvailableModJar,
   ServerModUpdatesResponse,
+  VersionUpdateReport,
+  BatchUpdateModsResult,
   AvailablePortsResponse,
   CopyServerInput,
 } from './types';
@@ -861,6 +863,31 @@ export const api = {
       { method: 'POST', headers: cfHeader },
     );
   },
+
+  checkVersionUpgradeCompatibility: (serverId: string, targetVersion: string, force = false) => {
+    const cfHeader = typeof window !== 'undefined' && localStorage.getItem('mcm_curseforge_api_key')
+      ? { 'x-curseforge-api-key': localStorage.getItem('mcm_curseforge_api_key')!.trim() }
+      : undefined;
+    const q = new URLSearchParams();
+    if (targetVersion) q.set('target_version', targetVersion);
+    if (force) q.set('force', 'true');
+    return request<VersionUpdateReport>(
+      `/api/servers/${serverId}/mods/upgrade-check?${q.toString()}`,
+      { headers: cfHeader },
+    );
+  },
+
+  applyVersionUpgradeMods: (serverId: string, targetVersion: string, modNames?: string[]) =>
+    request<BatchUpdateModsResult>(
+      `/api/servers/${serverId}/mods/upgrade-apply`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          target_version: targetVersion,
+          mods: modNames || [],
+        }),
+      },
+    ),
 
   getModAvailableVersions: (serverId: string, modName: string) => {
     const cfHeader = typeof window !== 'undefined' && localStorage.getItem('mcm_curseforge_api_key')
