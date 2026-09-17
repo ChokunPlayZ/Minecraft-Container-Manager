@@ -104,26 +104,41 @@ describe('VersionUpdateHelper', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders header, current version and fetches target versions', async () => {
+  it('renders header, current version and does not auto-scan until user initiates', async () => {
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
 
     expect(screen.getByText('Version Update Helper')).toBeInTheDocument();
+    expect(screen.queryByText('SMP Upgrade Tool')).not.toBeInTheDocument();
     expect(screen.getByText(/Current:/i)).toBeInTheDocument();
     expect(screen.getByText(/fabric 1.20.1/i)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(api.jarVersions).toHaveBeenCalledWith('fabric');
     });
+
+    // Should NOT have called compatibility check automatically
+    expect(api.checkVersionUpgradeCompatibility).not.toHaveBeenCalled();
+    expect(screen.getByText('Ready to check version compatibility?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Check Compatibility Now/i })).toBeInTheDocument();
   });
 
-  it('automatically scans and displays compatibility report', async () => {
+  it('scans on user request, shows progress bar, and displays compatibility report', async () => {
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
+
+    const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    await waitFor(() => {
+      expect(checkBtn).not.toBeDisabled();
+    });
+    fireEvent.click(checkBtn);
+
+    // Progress bar should be displayed while scanning
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(api.checkVersionUpgradeCompatibility).toHaveBeenCalledWith(
         'srv-1',
         '1.21.1',
-        false,
+        true,
       );
     });
 
@@ -147,8 +162,14 @@ describe('VersionUpdateHelper', () => {
     expect(screen.getByText(/No 1.21.1 Build/i)).toBeInTheDocument();
   });
 
-  it('filters mods by status tab', async () => {
+  it('filters mods by status tab after scanning', async () => {
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
+
+    const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    await waitFor(() => {
+      expect(checkBtn).not.toBeDisabled();
+    });
+    fireEvent.click(checkBtn);
 
     await waitFor(() => {
       expect(screen.getByText('Lithium')).toBeInTheDocument();
@@ -171,6 +192,12 @@ describe('VersionUpdateHelper', () => {
     });
 
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
+
+    const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    await waitFor(() => {
+      expect(checkBtn).not.toBeDisabled();
+    });
+    fireEvent.click(checkBtn);
 
     await waitFor(() => {
       expect(screen.getByText('Lithium')).toBeInTheDocument();
@@ -200,6 +227,12 @@ describe('VersionUpdateHelper', () => {
     });
 
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
+
+    const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    await waitFor(() => {
+      expect(checkBtn).not.toBeDisabled();
+    });
+    fireEvent.click(checkBtn);
 
     await waitFor(() => {
       expect(screen.getByText('Lithium')).toBeInTheDocument();

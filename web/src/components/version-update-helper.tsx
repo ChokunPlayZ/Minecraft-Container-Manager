@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Sparkles,
   CheckCircle2,
@@ -57,9 +57,19 @@ export function VersionUpdateHelper({
 
   // Scan & Report state
   const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [scanStage, setScanStage] = useState('');
   const [report, setReport] = useState<VersionUpdateReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastScannedVersion, setLastScannedVersion] = useState<string | null>(null);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Clear timers on unmount
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach((t) => clearTimeout(t));
+    };
+  }, []);
 
   // Filters & search
   const [filterStatus, setFilterStatus] = useState<
@@ -125,16 +135,45 @@ export function VersionUpdateHelper({
       const v = effectiveTargetVersion;
       if (!v) return;
 
+      timersRef.current.forEach((t) => clearTimeout(t));
+      timersRef.current = [];
+
       setScanning(true);
+      setScanProgress(15);
+      setScanStage(`Connecting to mod repositories for Minecraft ${v}...`);
       setError(null);
       setBackupSuccess(null);
       setServerUpgradeSuccess(null);
 
+      const t1 = setTimeout(() => {
+        setScanProgress(45);
+        setScanStage('Analyzing file hashes & target version constraints...');
+      }, 300);
+
+      const t2 = setTimeout(() => {
+        setScanProgress(75);
+        setScanStage('Checking Modrinth, CurseForge & catalog indexes...');
+      }, 700);
+
+      const t3 = setTimeout(() => {
+        setScanProgress(90);
+        setScanStage('Compiling compatibility report...');
+      }, 1100);
+
+      timersRef.current = [t1, t2, t3];
+
       try {
         const res = await api.checkVersionUpgradeCompatibility(server.id, v, force);
+        timersRef.current.forEach((t) => clearTimeout(t));
+        timersRef.current = [];
+        setScanProgress(100);
+        setScanStage('Compatibility check complete!');
+        await new Promise((resolve) => setTimeout(resolve, 150));
         setReport(res);
         setLastScannedVersion(v);
       } catch (err) {
+        timersRef.current.forEach((t) => clearTimeout(t));
+        timersRef.current = [];
         setError(err instanceof ApiError ? err.detail : 'Failed to check version compatibility.');
       } finally {
         setScanning(false);
@@ -142,13 +181,6 @@ export function VersionUpdateHelper({
     },
     [effectiveTargetVersion, server.id],
   );
-
-  // Auto-scan whenever target version changes for the first time
-  useEffect(() => {
-    if (effectiveTargetVersion && lastScannedVersion !== effectiveTargetVersion && !scanning) {
-      void scanCompatibility();
-    }
-  }, [effectiveTargetVersion, lastScannedVersion, scanCompatibility, scanning]);
 
   // Create pre-upgrade server backup
   async function handleCreateBackup() {
@@ -390,16 +422,10 @@ export function VersionUpdateHelper({
                 <h2 className="text-xl font-bold tracking-tight text-foreground">
                   Version Update Helper
                 </h2>
-                <Badge
-                  variant="secondary"
-                  className="border border-primary/30 bg-primary/10 text-primary font-mono text-xs px-2 py-0.5"
-                >
-                  SMP Upgrade Tool
-                </Badge>
               </div>
               <p className="text-sm text-muted-foreground max-w-2xl">
                 Check whether your installed mods &amp; plugins have compatible releases before
-                updating your SMP server to a newer Minecraft version. Avoid crashes and plan safe
+                updating your server to a newer Minecraft version. Avoid crashes and plan safe
                 upgrades with one click.
               </p>
             </div>
@@ -473,7 +499,13 @@ export function VersionUpdateHelper({
                 ) : (
                   <RefreshCw className="h-3.5 w-3.5" />
                 )}
-                <span>{scanning ? 'Checking...' : 'Check'}</span>
+                <span>
+                  {scanning
+                    ? 'Checking...'
+                    : report && report.target_version === effectiveTargetVersion
+                    ? 'Re-Check'
+                    : 'Check Compatibility'}
+                </span>
               </Button>
             </div>
           </div>
@@ -518,8 +550,80 @@ export function VersionUpdateHelper({
           </div>
         )}
 
+        {/* Scanning in-progress progress bar card */}
+        {scanning && (
+          <div className="rounded-2xl border border-primary/30 bg-gradient-to-br from-card via-card to-primary/5 p-5 sm:p-6 space-y-4 shadow-sm animate-fadeIn">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary shrink-0">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-foreground truncate">
+                    Checking Compatibility for Minecraft {effectiveTargetVersion}
+                  </h3>
+                  <p className="text-xs text-muted-foreground truncate">
+                    Scanning {installedMods.length} installed {server.server_type === 'paper' ? 'plugins' : 'mods'} against repository indexes
+                  </p>
+                </div>
+              </div>
+              <Badge variant="outline" className="font-mono text-xs px-2 py-0.5 border-primary/40 text-primary shrink-0">
+                {scanProgress}%
+              </Badge>
+            </div>
+
+            <ProgressBar
+              value={scanProgress}
+              max={100}
+              label={
+                <span className="text-xs font-medium text-muted-foreground truncate">
+                  {scanStage || 'Scanning repositories...'}
+                </span>
+              }
+              showPercent={true}
+              variant="default"
+              size="md"
+              animated
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-xs text-muted-foreground border-t border-border/50">
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="font-medium text-foreground">Current:</span>
+                <span className="font-mono">{server.server_type} {server.version || 'unknown'}</span>
+              </div>
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="font-medium text-foreground">Target:</span>
+                <span className="font-mono text-primary font-semibold">Minecraft {effectiveTargetVersion}</span>
+              </div>
+              <div className="flex items-center gap-1.5 truncate">
+                <span className="font-medium text-foreground">Mods/Plugins:</span>
+                <span>{installedMods.length} installed</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Target version changed notice if report exists for a different version */}
+        {!scanning && report && report.target_version !== effectiveTargetVersion && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-900 dark:text-amber-200 animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>
+                Target version changed to <strong>Minecraft {effectiveTargetVersion}</strong>. The results below are for <strong>Minecraft {report.target_version}</strong>.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => void scanCompatibility(true)}
+              className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+            >
+              Scan {effectiveTargetVersion}
+            </Button>
+          </div>
+        )}
+
         {/* Readiness Dashboard & Overview */}
-        {report && (
+        {!scanning && report && (
           <div className="space-y-4 animate-fadeIn">
             {/* Verdict Card */}
             <div
@@ -709,7 +813,7 @@ export function VersionUpdateHelper({
             <div className="rounded-xl border border-border/80 bg-card p-4 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold text-foreground">
-                  SMP Upgrade Readiness Score
+                  Version Upgrade Readiness Score
                 </span>
                 <span className="font-mono font-bold text-primary">
                   {readinessPercent}% ({report.compatible_count}/{report.total_mods} mods ready)
@@ -1058,24 +1162,27 @@ export function VersionUpdateHelper({
 
         {/* Empty state when no report has loaded yet */}
         {!report && !scanning && (
-          <div className="rounded-2xl border border-dashed border-border/80 bg-card/50 p-12 text-center space-y-3">
+          <div className="rounded-2xl border border-dashed border-border/80 bg-card/50 p-10 sm:p-12 text-center space-y-4">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
               <Sparkles className="h-6 w-6" />
             </div>
-            <h3 className="text-base font-semibold text-foreground">
-              Ready to check SMP compatibility?
-            </h3>
-            <p className="text-xs text-muted-foreground max-w-md mx-auto">
-              Select your target Minecraft version above and click &quot;Check&quot; to scan all {installedMods.length} installed{' '}
-              {server.server_type === 'paper' ? 'plugins' : 'mods'}.
-            </p>
+            <div className="space-y-1.5 max-w-md mx-auto">
+              <h3 className="text-base font-semibold text-foreground">
+                Ready to check version compatibility?
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Select your target Minecraft version above and click &quot;Check Compatibility&quot; to scan all {installedMods.length} installed{' '}
+                {server.server_type === 'paper' ? 'plugins' : 'mods'}.
+              </p>
+            </div>
             <Button
               size="sm"
               onClick={() => void scanCompatibility(true)}
-              className="gap-1.5 text-xs font-semibold"
+              disabled={!effectiveTargetVersion}
+              className="gap-1.5 text-xs font-semibold shadow-xs"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              <span>Scan Compatibility Now</span>
+              <span>Check Compatibility Now</span>
             </Button>
           </div>
         )}

@@ -125,7 +125,7 @@ export function InstallPanel({
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Sparkles className="h-4 w-4 text-primary shrink-0" />
                   <span>
-                    Planning an SMP version upgrade? Check mod compatibility first in the{' '}
+                    Planning a version upgrade? Check mod compatibility first in the{' '}
                     <strong className="text-foreground">Version Update Helper</strong> under Mods &amp; Plugins.
                   </span>
                 </div>

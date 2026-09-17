@@ -347,12 +347,6 @@ export function ModsPanel({ server }: { server: Server }) {
             >
               <Sparkles className="h-4 w-4 text-amber-500 dark:text-amber-400" />
               Version Update Helper
-              <Badge
-                variant="secondary"
-                className="ml-1 bg-primary/20 text-primary border border-primary/30 px-1.5 py-0 text-[10px] font-semibold"
-              >
-                SMP
-              </Badge>
             </button>
 
             <button
