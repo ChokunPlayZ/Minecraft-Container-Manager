@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -157,6 +158,9 @@ func (s *Server) handleJarBuilds(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't fetch builds from the upstream provider")
 		return
 	}
+	sort.SliceStable(builds, func(i, j int) bool {
+		return jars.CompareVersionTokens(builds[i], builds[j]) > 0
+	})
 	out := make([]buildItem, 0, len(builds))
 	for _, b := range builds {
 		out = append(out, buildItem{Version: version, Build: b, Display: b})

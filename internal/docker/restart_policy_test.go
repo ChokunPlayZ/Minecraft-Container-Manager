@@ -53,3 +53,30 @@ func TestEntryScriptForgeInstallerHandling(t *testing.T) {
 		t.Errorf("DefaultEntryScript missing user_jvm_args.txt headless/memory config")
 	}
 }
+
+func TestEntryScriptProxyAndVelocityHandling(t *testing.T) {
+	// Velocity must not receive --nogui and should specify -p with server port
+	if !strings.Contains(DefaultEntryScript, `velocity)`) {
+		t.Errorf("DefaultEntryScript missing case for velocity")
+	}
+	if !strings.Contains(DefaultEntryScript, `SERVER_ARGS="-p ${SERVER_PORT:-25577}"`) {
+		t.Errorf("DefaultEntryScript missing velocity port argument")
+	}
+	// Other proxies and lightweight servers should have empty args
+	if !strings.Contains(DefaultEntryScript, `waterfall|bungeecord|limbo|nanolimbo|geysermc)`) {
+		t.Errorf("DefaultEntryScript missing proxy and lightweight servers case")
+	}
+}
+
+func TestEntryScriptQuiltInstallerHandling(t *testing.T) {
+	if !strings.Contains(DefaultEntryScript, `*quilt*)`) {
+		t.Errorf("DefaultEntryScript missing quilt installer case")
+	}
+	if !strings.Contains(DefaultEntryScript, `install server`) {
+		t.Errorf("DefaultEntryScript missing quilt install server argument")
+	}
+	if !strings.Contains(DefaultEntryScript, `quilt-server-launch.jar`) {
+		t.Errorf("DefaultEntryScript missing quilt-server-launch.jar check")
+	}
+}
+

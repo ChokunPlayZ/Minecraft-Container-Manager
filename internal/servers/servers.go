@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -968,12 +969,24 @@ func (s *Store) Console(ctx context.Context, id string, follow bool) (io.ReadClo
 	return s.docker.Logs(ctx, srv.ContainerID, follow)
 }
 
+// InstallInput specifies optional version and build to apply when installing.
+type InstallInput struct {
+	Version string `json:"version,omitempty"`
+	Build   string `json:"build,omitempty"`
+}
+
 // Install resolves and (for POST) provisions the server's container. GET returns
 // the resolution without creating anything.
-func (s *Store) Install(ctx context.Context, id string, provision bool) (InstallResult, error) {
+func (s *Store) Install(ctx context.Context, id string, provision bool, inputs ...InstallInput) (InstallResult, error) {
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return InstallResult{}, err
+	}
+	if len(inputs) > 0 && inputs[0].Version != "" {
+		srv.Version = inputs[0].Version
+		if inputs[0].Build != "" {
+			srv.Build = inputs[0].Build
+		}
 	}
 	resolved, err := s.jars.Validate(ctx, jars.JarType(srv.ServerType), srv.Version, srv.Build)
 	if err != nil {
@@ -982,13 +995,28 @@ func (s *Store) Install(ctx context.Context, id string, provision bool) (Install
 		}
 		return InstallResult{}, fmt.Errorf("%w: validate jar: %v", ErrInvalidJar, err)
 	}
+	dataDir := s.dataPath(srv.ID)
 	if provision {
+		// When provisioning/installing, download the server jar
+		if s.jars != nil && srv.ServerType != "custom" {
+			jt, parseErr := jars.ParseJarType(srv.ServerType)
+			if parseErr == nil {
+				if dlErr := s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
+					log.Printf("[servers] failed to download jar for server %s (%s %s %s): %v", srv.ID, srv.ServerType, srv.Version, srv.Build, dlErr)
+					return InstallResult{}, fmt.Errorf("download server jar: %w", dlErr)
+				}
+			}
+		}
+		// Update DB with updated version and build if changed
+		now := time.Now().UTC().Format(time.RFC3339)
+		_, _ = s.db.ExecContext(ctx, `UPDATE servers SET version=?, build=?, updated_at=? WHERE id=?`, srv.Version, srv.Build, now, srv.ID)
+
 		srv, err = s.ensureContainer(ctx, srv)
 		if err != nil {
 			return InstallResult{}, err
 		}
 	}
-	return InstallResult{Server: srv, Resolved: resolved, DataDir: s.dataPath(srv.ID)}, nil
+	return InstallResult{Server: srv, Resolved: resolved, DataDir: dataDir}, nil
 }
 
 func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error) {
@@ -1020,7 +1048,9 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 				if s.jars != nil && srv.ServerType != "custom" {
 					jt, err := jars.ParseJarType(srv.ServerType)
 					if err == nil {
-						_ = s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir)
+						if dlErr := s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
+							log.Printf("[servers] failed to download jar for server %s (%s %s %s): %v", srv.ID, srv.ServerType, srv.Version, srv.Build, dlErr)
+						}
 					}
 				}
 			}

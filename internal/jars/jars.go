@@ -669,6 +669,195 @@ func (r *Resolver) getJSON(ctx context.Context, url string, out any) error {
 	return nil
 }
 
+// CompareVersionTokens compares two version or build strings.
+// Returns 1 if a > b, -1 if a < b, 0 if a == b.
+func CompareVersionTokens(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if a == "latest" {
+		return 1
+	}
+	if b == "latest" {
+		return -1
+	}
+	numA, errA := strconv.ParseInt(a, 10, 64)
+	numB, errB := strconv.ParseInt(b, 10, 64)
+	if errA == nil && errB == nil {
+		if numA > numB {
+			return 1
+		}
+		if numA < numB {
+			return -1
+		}
+		return 0
+	}
+
+	splitA := strings.FieldsFunc(a, func(r rune) bool { return r == '.' || r == '-' })
+	splitB := strings.FieldsFunc(b, func(r rune) bool { return r == '.' || r == '-' })
+
+	maxLen := len(splitA)
+	if len(splitB) > maxLen {
+		maxLen = len(splitB)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		if i >= len(splitA) {
+			return -1
+		}
+		if i >= len(splitB) {
+			return 1
+		}
+		segA := splitA[i]
+		segB := splitB[i]
+		if segA == segB {
+			continue
+		}
+		nA, eA := strconv.ParseInt(segA, 10, 64)
+		nB, eB := strconv.ParseInt(segB, 10, 64)
+		if eA == nil && eB == nil {
+			if nA > nB {
+				return 1
+			}
+			if nA < nB {
+				return -1
+			}
+			continue
+		}
+		if segA > segB {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+func (r *Resolver) paperDownloadURL(ctx context.Context, project, version, build string) (string, error) {
+	bEndpoint := build
+	if bEndpoint == "" || bEndpoint == "latest" {
+		bEndpoint = "latest"
+	}
+	metaURL := fmt.Sprintf("%s/projects/%s/versions/%s/builds/%s", r.PaperBase, project, version, bEndpoint)
+	var meta struct {
+		ID        int `json:"id"`
+		Downloads map[string]struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"downloads"`
+	}
+	if err := r.getJSON(ctx, metaURL, &meta); err == nil && len(meta.Downloads) > 0 {
+		if d, ok := meta.Downloads["server:default"]; ok && d.URL != "" {
+			return d.URL, nil
+		}
+		if d, ok := meta.Downloads["application"]; ok && d.URL != "" {
+			return d.URL, nil
+		}
+		for _, d := range meta.Downloads {
+			if d.URL != "" {
+				return d.URL, nil
+			}
+		}
+	}
+
+	// Fallback to legacy/direct path if getJSON fails or downloads map is empty
+	b := build
+	if b == "" || b == "latest" {
+		b = "latest"
+	}
+	return fmt.Sprintf("%s/projects/%s/versions/%s/builds/%s/downloads/%s-%s-%s.jar", r.PaperBase, project, version, b, project, version, b), nil
+}
+
+func (r *Resolver) resolveGitHubReleaseAsset(ctx context.Context, repo, tag, prefix string) (string, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	if tag != "" && tag != "latest" {
+		url = fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
+	}
+	var rel struct {
+		Assets []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := r.getJSON(ctx, url, &rel); err == nil && len(rel.Assets) > 0 {
+		for _, a := range rel.Assets {
+			name := strings.ToLower(a.Name)
+			if strings.HasSuffix(name, ".jar") && !strings.Contains(name, "sources") && !strings.Contains(name, "javadoc") {
+				if prefix == "" || strings.HasPrefix(strings.ToLower(a.Name), strings.ToLower(prefix)) {
+					return a.BrowserDownloadURL, nil
+				}
+			}
+		}
+		for _, a := range rel.Assets {
+			name := strings.ToLower(a.Name)
+			if strings.HasSuffix(name, ".jar") && !strings.Contains(name, "sources") && !strings.Contains(name, "javadoc") {
+				return a.BrowserDownloadURL, nil
+			}
+		}
+	}
+	// Fallback to latest release if specific tag was not found
+	if tag != "" && tag != "latest" {
+		return r.resolveGitHubReleaseAsset(ctx, repo, "latest", prefix)
+	}
+	return "", fmt.Errorf("no jar asset found for %s", repo)
+}
+
+func (r *Resolver) resolveLimboJar(ctx context.Context) (string, error) {
+	jenkinsURL := "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/api/json"
+	var data struct {
+		Artifacts []struct {
+			RelativePath string `json:"relativePath"`
+		} `json:"artifacts"`
+	}
+	if err := r.getJSON(ctx, jenkinsURL, &data); err == nil {
+		for _, a := range data.Artifacts {
+			if strings.HasSuffix(a.RelativePath, ".jar") {
+				return "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/artifact/" + a.RelativePath, nil
+			}
+		}
+	}
+	return "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/artifact/target/Limbo.jar", nil
+}
+
+func (r *Resolver) resolveSpongeTag(ctx context.Context, version string) string {
+	url := fmt.Sprintf("https://dl-api.spongepowered.org/v2/groups/org.spongepowered/artifacts/spongevanilla/versions?tags=minecraft:%s&limit=1", version)
+	var res struct {
+		Artifacts map[string]any `json:"artifacts"`
+	}
+	if err := r.getJSON(ctx, url, &res); err == nil {
+		for tag := range res.Artifacts {
+			return tag
+		}
+	}
+	return version
+}
+
+func (r *Resolver) resolveQuiltInstallerURL(ctx context.Context) string {
+	defaultURL := "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-installer/0.15.1/quilt-installer-0.15.1.jar"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-installer/maven-metadata.xml", nil)
+	if err != nil {
+		return defaultURL
+	}
+	resp, err := r.Client.Do(req)
+	if err != nil {
+		return defaultURL
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return defaultURL
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if err != nil {
+		return defaultURL
+	}
+	re := regexp.MustCompile(`<release>([^<]+)</release>`)
+	m := re.FindSubmatch(body)
+	if len(m) >= 2 {
+		rel := string(m[1])
+		return fmt.Sprintf("https://maven.quiltmc.org/repository/release/org/quiltmc/quilt-installer/%s/quilt-installer-%s.jar", rel, rel)
+	}
+	return defaultURL
+}
+
 // DownloadServerJar resolves and downloads the server executable jar to destDir/server.jar,
 // and ensures eula.txt is accepted.
 func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, build, destDir string) error {
@@ -682,14 +871,11 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 	var dlURL string
 	switch jt {
 	case TypePaper:
-		if build == "" || build == "latest" {
-			builds, err := r.PaperBuilds(ctx, version)
-			if err != nil || len(builds) == 0 {
-				return fmt.Errorf("resolve paper build: %w", err)
-			}
-			build = strconv.Itoa(builds[len(builds)-1].Number)
+		var err error
+		dlURL, err = r.paperDownloadURL(ctx, "paper", version, build)
+		if err != nil {
+			return fmt.Errorf("resolve paper download url: %w", err)
 		}
-		dlURL = fmt.Sprintf("%s/projects/paper/versions/%s/builds/%s/downloads/paper-%s-%s.jar", r.PaperBase, version, build, version, build)
 
 	case TypeFabric:
 		if build == "" || build == "latest" {
@@ -743,77 +929,101 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		dlURL = fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s/%s/download", version, build)
 
 	case TypeFolia:
-		if build == "" || build == "latest" {
-			builds, err := r.FoliaBuilds(ctx, version)
-			if err != nil || len(builds) == 0 {
-				return fmt.Errorf("resolve folia build: %w", err)
-			}
-			build = builds[len(builds)-1]
+		var err error
+		dlURL, err = r.paperDownloadURL(ctx, "folia", version, build)
+		if err != nil {
+			return fmt.Errorf("resolve folia download url: %w", err)
 		}
-		dlURL = fmt.Sprintf("%s/projects/folia/versions/%s/builds/%s/downloads/folia-%s-%s.jar", r.PaperBase, version, build, version, build)
 
 	case TypeWaterfall:
-		if build == "" || build == "latest" {
-			builds, err := r.WaterfallBuilds(ctx, version)
-			if err != nil || len(builds) == 0 {
-				return fmt.Errorf("resolve waterfall build: %w", err)
-			}
-			build = builds[len(builds)-1]
+		var err error
+		dlURL, err = r.paperDownloadURL(ctx, "waterfall", version, build)
+		if err != nil {
+			return fmt.Errorf("resolve waterfall download url: %w", err)
 		}
-		dlURL = fmt.Sprintf("%s/projects/waterfall/versions/%s/builds/%s/downloads/waterfall-%s-%s.jar", r.PaperBase, version, build, version, build)
 
 	case TypeVelocity:
-		if build == "" || build == "latest" {
-			builds, err := r.VelocityBuilds(ctx, version)
-			if err != nil || len(builds) == 0 {
-				return fmt.Errorf("resolve velocity build: %w", err)
-			}
-			build = builds[len(builds)-1]
+		var err error
+		dlURL, err = r.paperDownloadURL(ctx, "velocity", version, build)
+		if err != nil {
+			return fmt.Errorf("resolve velocity download url: %w", err)
 		}
-		dlURL = fmt.Sprintf("%s/projects/velocity/versions/%s/builds/%s/downloads/velocity-%s-%s.jar", r.PaperBase, version, build, version, build)
 
 	case TypeSpigot:
 		dlURL = fmt.Sprintf("https://cdn.getbukkit.org/spigot/spigot-%s.jar", version)
 
 	case TypeQuilt:
-		if build == "" || build == "latest" {
-			loaders, err := r.QuiltLoaders(ctx, version)
-			if err == nil && len(loaders) > 0 {
-				build = loaders[0]
-			} else {
-				build = "0.27.0"
-			}
+		installerURL := r.resolveQuiltInstallerURL(ctx)
+		installerPath := filepath.Join(destDir, "installer.jar")
+		if err := r.DownloadFile(ctx, installerURL, installerPath); err != nil {
+			return fmt.Errorf("download quilt installer: %w", err)
 		}
-		dlURL = fmt.Sprintf("https://meta.quiltmc.org/v3/versions/loader/%s/%s/0.9.3/server/jar", version, build)
+		return nil
 
 	case TypeMohist:
 		if build == "" || build == "latest" {
 			builds, err := r.MohistBuilds(ctx, version)
 			if err == nil && len(builds) > 0 {
 				build = builds[0]
-			} else {
-				build = "latest"
 			}
 		}
-		dlURL = fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds/%s/download", version, build)
+		if build != "" && build != "latest" {
+			dlURL = fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/Mohist-%s-%s.jar", version, version, build)
+		} else {
+			dlURL = fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds/latest/download", version)
+		}
 
 	case TypeKetting:
-		dlURL = "https://github.com/kettingpowered/kettinglauncher/releases/latest/download/kettinglauncher.jar"
+		var err error
+		dlURL, err = r.resolveGitHubReleaseAsset(ctx, "kettingpowered/kettinglauncher", "latest", "kettinglauncher-")
+		if err != nil {
+			dlURL = "https://github.com/kettingpowered/kettinglauncher/releases/latest/download/kettinglauncher.jar"
+		}
 
 	case TypeLimbo:
-		dlURL = "https://github.com/LOOHP/Limbo/releases/latest/download/Limbo.jar"
+		var err error
+		dlURL, err = r.resolveLimboJar(ctx)
+		if err != nil {
+			dlURL = "https://github.com/LOOHP/Limbo/releases/latest/download/Limbo.jar"
+		}
 
 	case TypeNanoLimbo:
-		dlURL = "https://github.com/BoomEaro/NanoLimbo/releases/latest/download/nanolimbo.jar"
+		var err error
+		dlURL, err = r.resolveGitHubReleaseAsset(ctx, "BoomEaro/NanoLimbo", "latest", "nanolimbo")
+		if err != nil {
+			dlURL = "https://github.com/BoomEaro/NanoLimbo/releases/latest/download/nanolimbo.jar"
+		}
 
 	case TypeCrucible:
-		dlURL = "https://github.com/CrucibleMC/Crucible/releases/latest/download/crucible.jar"
+		var err error
+		dlURL, err = r.resolveGitHubReleaseAsset(ctx, "CrucibleMC/Crucible", "latest", "Crucible-")
+		if err != nil {
+			dlURL = "https://github.com/CrucibleMC/Crucible/releases/latest/download/crucible.jar"
+		}
 
 	case TypePufferfish:
 		dlURL = "https://ci.pufferfish.host/job/Pufferfish-1.20/lastSuccessfulBuild/artifact/build/libs/pufferfish-paperclip-1.20.4-R0.1-SNAPSHOT-reobf.jar"
 
 	case TypeLeaf:
-		dlURL = fmt.Sprintf("https://github.com/Winds-Studio/Leaf/releases/latest/download/leaf-%s.jar", version)
+		tag := ""
+		if version != "" {
+			tag = "ver-" + version
+		}
+		var err error
+		dlURL, err = r.resolveGitHubReleaseAsset(ctx, "Winds-Studio/Leaf", tag, "leaf-")
+		if err != nil {
+			dlURL = fmt.Sprintf("https://github.com/Winds-Studio/Leaf/releases/latest/download/leaf-%s.jar", version)
+		}
+
+	case TypeSponge:
+		tag := build
+		if tag == "" || tag == "latest" {
+			tag = r.resolveSpongeTag(ctx, version)
+		}
+		if tag == "" {
+			tag = version
+		}
+		dlURL = fmt.Sprintf("https://repo.spongepowered.org/repository/maven-public/org/spongepowered/spongevanilla/%s/spongevanilla-%s.jar", tag, tag)
 
 	case TypeBungeeCord:
 		if build == "" || build == "latest" {

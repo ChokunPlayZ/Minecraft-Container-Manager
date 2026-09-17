@@ -55,6 +55,8 @@ export function getServerLoaders(serverType: ServerType): string[] {
     case 'waterfall':
     case 'bungeecord':
       return ['bungeecord', 'waterfall'];
+    case 'velocity':
+      return ['velocity'];
     case 'geysermc':
       return ['geyser'];
     default:

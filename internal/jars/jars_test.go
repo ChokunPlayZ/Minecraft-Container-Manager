@@ -396,3 +396,49 @@ func TestRecommendJavaVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestCompareVersionTokens(t *testing.T) {
+	if CompareVersionTokens("563", "470") <= 0 {
+		t.Errorf("expected 563 > 470")
+	}
+	if CompareVersionTokens("12", "120") >= 0 {
+		t.Errorf("expected 12 < 120")
+	}
+	if CompareVersionTokens("latest", "563") <= 0 {
+		t.Errorf("expected latest > 563")
+	}
+	if CompareVersionTokens("1.21.1", "1.20.4") <= 0 {
+		t.Errorf("expected 1.21.1 > 1.20.4")
+	}
+	if CompareVersionTokens("1.20.4", "1.20.4") != 0 {
+		t.Errorf("expected 1.20.4 == 1.20.4")
+	}
+}
+
+func TestPaperDownloadURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/projects/velocity/versions/3.4.0-SNAPSHOT/builds/latest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": 563,
+			"downloads": {
+				"server:default": {
+					"name": "velocity-3.4.0-SNAPSHOT-563.jar",
+					"url": "https://fill-data.papermc.io/v1/objects/test/velocity-3.4.0-SNAPSHOT-563.jar"
+				}
+			}
+		}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	r := NewResolverWithBases(nil, server.URL, "", "")
+	dlURL, err := r.paperDownloadURL(context.Background(), "velocity", "3.4.0-SNAPSHOT", "latest")
+	if err != nil {
+		t.Fatalf("paperDownloadURL: %v", err)
+	}
+	want := "https://fill-data.papermc.io/v1/objects/test/velocity-3.4.0-SNAPSHOT-563.jar"
+	if dlURL != want {
+		t.Errorf("paperDownloadURL = %q, want %q", dlURL, want)
+	}
+}

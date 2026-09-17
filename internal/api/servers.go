@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -271,7 +272,11 @@ func (s *Server) logConsoleCmdError(err error, r *http.Request) {
 
 func (s *Server) handleInstall(provision bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		res, err := s.servers.Install(r.Context(), r.PathValue("id"), provision)
+		var input servers.InstallInput
+		if provision && r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&input)
+		}
+		res, err := s.servers.Install(r.Context(), r.PathValue("id"), provision, input)
 		if err != nil {
 			s.writeServerErr(w, err)
 			return

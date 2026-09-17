@@ -140,7 +140,7 @@ type ModListResult struct {
 // modDirForType maps a server type to its artifact directory.
 func modDirForType(serverType string) (ModType, error) {
 	switch strings.ToLower(serverType) {
-	case "paper", "spigot", "purpur", "pufferfish", "leaf", "folia", "waterfall", "bungeecord", "limbo", "nanolimbo", "geysermc":
+	case "paper", "spigot", "purpur", "pufferfish", "leaf", "folia", "waterfall", "velocity", "bungeecord", "limbo", "nanolimbo", "geysermc":
 		return ModTypePlugins, nil
 	case "fabric", "forge", "neoforge", "quilt", "sponge", "crucible", "ketting", "mohist", "custom":
 		return ModTypeMods, nil

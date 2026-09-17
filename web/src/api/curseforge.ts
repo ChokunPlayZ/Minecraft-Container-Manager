@@ -41,6 +41,8 @@ export function getCurseForgeLoaderType(serverType: ServerType): number | undefi
       return 1;
     case 'fabric':
       return 4;
+    case 'quilt':
+      return 5;
     case 'neoforge':
       return 6;
     default:
@@ -61,6 +63,7 @@ export function isPluginServerType(serverType: ServerType): boolean {
     'leaf',
     'folia',
     'waterfall',
+    'velocity',
     'bungeecord',
     'limbo',
     'nanolimbo',

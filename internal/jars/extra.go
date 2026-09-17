@@ -436,22 +436,56 @@ func (r *Resolver) MohistVersions(ctx context.Context) ([]string, error) {
 
 // MohistBuilds returns builds for a Mohist version.
 func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, error) {
-	var res struct {
-		Builds []struct {
-			Number int `json:"number"`
-		} `json:"builds"`
+	// 1. Try directory listing from builds-raw
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/", version), nil)
+	if err == nil {
+		if resp, errDo := r.Client.Do(req); errDo == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*512))
+				re := regexp.MustCompile(fmt.Sprintf(`Mohist-%s-(\d+)\.jar`, regexp.QuoteMeta(version)))
+				matches := re.FindAllSubmatch(body, -1)
+				if len(matches) > 0 {
+					seen := make(map[string]bool)
+					var out []string
+					for _, m := range matches {
+						num := string(m[1])
+						if !seen[num] {
+							seen[num] = true
+							out = append(out, num)
+						}
+					}
+					if len(out) > 0 {
+						sort.SliceStable(out, func(i, j int) bool {
+							return CompareVersionTokens(out[i], out[j]) > 0
+						})
+						return out, nil
+					}
+				}
+			}
+		}
 	}
-	if err := r.getJSON(ctx, fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds", version), &res); err != nil {
-		return []string{"latest"}, nil
+
+	// 2. Fallback to API endpoint
+	var rawList []struct {
+		Number int    `json:"number"`
+		ID     string `json:"id"`
 	}
-	out := make([]string, 0, len(res.Builds))
-	for _, b := range res.Builds {
-		out = append(out, strconv.Itoa(b.Number))
+	if err := r.getJSON(ctx, fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds", version), &rawList); err == nil && len(rawList) > 0 {
+		out := make([]string, 0, len(rawList))
+		for _, b := range rawList {
+			if b.Number > 0 {
+				out = append(out, strconv.Itoa(b.Number))
+			} else if b.ID != "" {
+				out = append(out, b.ID)
+			}
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
 	}
-	if len(out) == 0 {
-		return []string{"latest"}, nil
-	}
-	return out, nil
+
+	return []string{"latest"}, nil
 }
 
 // SpongeVersions returns supported Sponge game versions.

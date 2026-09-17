@@ -69,7 +69,18 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
 
   if [ -n "$INSTALLER" ]; then
     echo "Running server installer ($INSTALLER)..."
-    java -Djava.awt.headless=true -jar "$INSTALLER" --installServer
+    case "$INSTALLER" in
+      *quilt*)
+        QUILT_ARGS="install server"
+        if [ -n "$SERVER_VERSION" ]; then
+          QUILT_ARGS="$QUILT_ARGS $SERVER_VERSION"
+        fi
+        java -Djava.awt.headless=true -jar "$INSTALLER" $QUILT_ARGS --download-server --install-dir=/data
+        ;;
+      *)
+        java -Djava.awt.headless=true -jar "$INSTALLER" --installServer
+        ;;
+    esac
     INSTALL_EXIT=$?
     if [ $INSTALL_EXIT -ne 0 ]; then
       echo "Server installer failed with exit code $INSTALL_EXIT"
@@ -92,7 +103,38 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
         esac
       done
     fi
+    if [ -f "/data/quilt-server-launch.jar" ] && [ ! -f "/data/server.jar" ]; then
+      ln -sf /data/quilt-server-launch.jar /data/server.jar
+    fi
   fi
+fi
+
+SERVER_ARGS="--nogui nogui"
+STYPE="${SERVER_TYPE:-}"
+if [ -z "$STYPE" ]; then
+  if [ -f "/data/velocity.toml" ]; then
+    STYPE="velocity"
+  elif [ -f "/data/waterfall.yml" ] || [ -f "/data/BungeeCord.jar" ]; then
+    STYPE="waterfall"
+  elif [ -f "/data/geysermc.jar" ] || [ -f "/data/Geyser.jar" ]; then
+    STYPE="geysermc"
+  fi
+fi
+
+case "$STYPE" in
+  velocity)
+    SERVER_ARGS="-p ${SERVER_PORT:-25577}"
+    ;;
+  waterfall|bungeecord|limbo|nanolimbo|geysermc)
+    SERVER_ARGS=""
+    ;;
+esac
+
+TARGET_JAR=""
+if [ -f "/data/server.jar" ]; then
+  TARGET_JAR="/data/server.jar"
+elif [ -f "/data/quilt-server-launch.jar" ]; then
+  TARGET_JAR="/data/quilt-server-launch.jar"
 fi
 
 if [ -f "/data/run.sh" ]; then
@@ -108,8 +150,8 @@ if [ -f "/data/run.sh" ]; then
   fi
   chmod +x /data/run.sh 2>/dev/null || true
   sh /data/run.sh --nogui nogui < "$FIFO" &
-elif [ -f "/data/server.jar" ]; then
-  java -Djava.awt.headless=true -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar /data/server.jar --nogui nogui < "$FIFO" &
+elif [ -n "$TARGET_JAR" ]; then
+  java -Djava.awt.headless=true -Xms512M -Xmx${RAM_MB:-2048}M ${JVM_OPTS} -jar "$TARGET_JAR" $SERVER_ARGS < "$FIFO" &
 else
   echo "No server.jar or run.sh found in /data"
   exit 1
@@ -278,6 +320,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	}
 
 	name := Name(opts.ID)
+	// If a container with this name already exists, reuse it instead of conflicting.
+	if insp, err := m.client.ContainerInspect(ctx, name); err == nil {
+		return insp.ID, nil
+	}
+
 	cPort, _ := primaryContainerPort(opts.ServerType)
 
 	cfg := &container.Config{
@@ -288,6 +335,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 			fmt.Sprintf("RAM_MB=%d", opts.RAMMB),
 			fmt.Sprintf("SERVER_PORT=%d", cPort),
 			"MCM_DATA_DIR=" + containerData,
+			"SERVER_TYPE=" + opts.ServerType,
+			"SERVER_VERSION=" + opts.Version,
+			"SERVER_BUILD=" + opts.Build,
 		},
 		ExposedPorts: exposedPortsFor(opts.ServerType, opts.ExtraPorts),
 		OpenStdin:    true,
@@ -319,6 +369,12 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
 	}
 	if err != nil {
+		errLower := strings.ToLower(err.Error())
+		if strings.Contains(errLower, "conflict") || strings.Contains(errLower, "already in use") {
+			if insp, errInsp := m.client.ContainerInspect(ctx, name); errInsp == nil {
+				return insp.ID, nil
+			}
+		}
 		// If the image vanished between the presence check and the create (or a
 		// concurrent pull is still converging), pull again and retry once.
 		if strings.Contains(err.Error(), errNoSuchImage) {
@@ -330,6 +386,12 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 				resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
 			}
 			if err != nil {
+				errLower := strings.ToLower(err.Error())
+				if strings.Contains(errLower, "conflict") || strings.Contains(errLower, "already in use") {
+					if insp, errInsp := m.client.ContainerInspect(ctx, name); errInsp == nil {
+						return insp.ID, nil
+					}
+				}
 				return "", fmt.Errorf("create container: %w", err)
 			}
 			return resp.ID, nil
