@@ -1,31 +1,70 @@
 # MCM - Minecraft Container Manager
 
-MCM is a modern, high-performance, self-hosted Minecraft server management panel. Built with a lightweight **Go** backend and a responsive **React / Vite** frontend, MCM orchestrates Minecraft servers as sibling Docker containers on the host using the community [`itzg/minecraft-server`](https://github.com/itzg/docker-minecraft-server) image.
+MCM is a modern, high-performance, self-hosted Minecraft server management panel. Built with a lightweight **Go** backend and a responsive **React / Vite** frontend, MCM orchestrates Minecraft servers as sibling Docker containers on the host using lightweight, security-hardened **Eclipse Temurin Alpine OpenJDK/JRE** images.
 
-Each Minecraft server owns and publishes its game port directly to the host network—delivering zero proxy overhead, native UDP/TCP support (e.g., Geyser/Bedrock), and maximum performance while giving server administrators full lifecycle control from a single web UI.
+Each Minecraft server container runs with MCM's custom native lifecycle entrypoint script (`DefaultEntryScript`), providing interactive console FIFO pipes, graceful shutdown traps (`SIGTERM`/`SIGINT`), headless Java configuration, and automated installer execution for Forge and NeoForge. MCM supports both direct host-port publication (for zero-proxy overhead, raw performance, and UDP/TCP support) and private container networking (`mcm-network`) with optional host ports for seamless multi-server proxy setups (e.g., Velocity or BungeeCord).
 
 ---
 
 ## Key Features
 
-### 🎮 Comprehensive Server Flavor Support
-- **Major Server Types**: Out-of-the-box support for **Paper**, **Fabric**, **Vanilla**, **Forge**, **NeoForge**, and **Spigot**.
-- **Automated Jar & Version Management**: Resolves and installs Minecraft versions and specific builds automatically on container launch.
+### 🎮 Comprehensive Server Platform Coverage (22 Flavors)
+- **Extensive Flavor Support**: Out-of-the-box support for 22 server platforms:
+  - **Bukkit / Paper Ecosystem**: Paper, Purpur, Folia, Pufferfish, Leaf, Spigot, and Vanilla.
+  - **Mod Loaders**: Fabric, Quilt, Forge, NeoForge, and SpongeVanilla/SpongeForge.
+  - **Hybrid Mod + Plugin Engines**: Mohist, Ketting, and Crucible.
+  - **High-Performance Proxies**: Velocity, Waterfall, and BungeeCord.
+  - **Limbo & Queue Servers**: Limbo and NanoLimbo.
+  - **Bridges & Custom**: GeyserMC Standalone and Custom Server JARs.
+- **Dynamic Java Runtime Selector**: Automatically select and run Java 8, 11, 17, or 21 (`eclipse-temurin:<version>-jre-alpine`) based on Minecraft version requirements, with built-in recommendations and automatic runtime image pulling.
 - **In-Place Version Switching**: Upgrade or switch server types and builds with built-in version metadata and confirmation safeguards.
 
-### ⚡ Live Console & Command Line
-- **Real-Time Streaming**: Live server logs streamed directly to the browser using Server-Sent Events (SSE).
-- **Interactive Command Input**: Send console commands directly to the running server via stdin pipe or RCON fallback.
-- **Smart Auto-Scroll**: Sticky bottom-scrolling that pauses automatically when inspecting previous logs.
+### 📦 Modpack Management Engine
+- **Modrinth & CurseForge Integration**: Browse, search, and 1-click install popular modpacks directly from Modrinth and CurseForge catalogs.
+- **Deep Modpack Inspection**: Automatically detects Minecraft version, mod loader, loader build, and recommended Java runtime before installation.
+- **Asynchronous Task Progress Tracking**: Live task progress monitoring (SSE stream and polling) for modpack downloads, extraction, and archiving.
+- **Client-Only Mod Sanitization**: Automatically scans and strips client-only mods (e.g. shaders, GUI optimizations, client audio mods) from server-side installations.
+- **Stale Binary Cleanup**: Automatically purges obsolete loaders, launch scripts, and stale jar files when switching modpack engines or loaders.
+- **User-Required File Notifications**: Flags mods or assets that require manual download due to licensing constraints and guides the administrator through the setup.
+- **Version Locking & Updates**: Lock modpacks to specific versions to prevent configuration drift, with support for seamless upgrades.
 
-### 🧩 Mod & Plugin Ecosystem Hub
-- **Multi-Provider Catalog**: Browse and search tens of thousands of mods and plugins directly within the panel across 4 major repositories:
-  - **Modrinth**: Mods, plugins, and datapacks with category filtering, loader detection, and infinite scroll.
+### 🛠️ SMP Version Update Helper & Mod Ecosystem Hub
+- **Version Update Helper**: Dedicated assistant to guide administrators through upgrading Minecraft versions, server loaders, and modpacks with compatibility checks and pre-update backup prompts.
+- **Automated Mod Updates**: Scans installed mods against Modrinth and CurseForge, checks for available updates with request coalescing, and offers 1-click batch updating.
+- **Mod Dependency Resolution**: Discovers missing required and optional dependencies before installation and installs them in one click via `ModDependenciesDialog`.
+- **Mod Jar Picker**: Select exact builds or releases when upgrading or installing specific mods.
+- **Multi-Provider Catalog**: Browse and search tens of thousands of mods and plugins across 4 major repositories:
+  - **Modrinth**: Mods, plugins, and datapacks with loader detection, server-side-only filtering (`onlyServerSide`), and infinite scroll.
   - **PaperMC Hangar**: Curated Paper, Purpur, and Folia plugins.
   - **SpigotMC (via Spiget)**: Over 100,000 Bukkit and Spigot plugins.
   - **CurseForge**: Expansive catalog of mods and server addons.
-- **One-Click Installation**: Download compatible jar files directly to the server's `mods` or `plugins` folder.
-- **Mod Management**: View installed items, detect installed catalog versions, toggle mods enabled/disabled, or delete files.
+- **Mod Management**: Enable/disable mods with `.disabled` toggling, view installed metadata, and delete mods.
+
+### 📊 Real-Time Metrics & Container Monitoring
+- **Live Container Resource Metrics**: Real-time stats polled directly from the Docker daemon:
+  - **CPU Utilization %**: Normalized across available host cores.
+  - **Memory Usage & Limits**: Real-time memory consumption, limits, and usage percentage.
+  - **Network I/O**: Live incoming (`rx`) and outgoing (`tx`) network throughput.
+  - **Block / Disk I/O**: Real-time disk read and write bytes.
+- **Server Uptime Tracking**: Tracks server start timestamps (`started_at`) and displays live, human-readable uptime (e.g., `3d 4h 12m`) on dashboard cards and server headers.
+- **ServerStatsGrid**: Clean, visual metrics dashboard available directly on the server overview and management pages.
+
+### 🌐 Proxy Networks & Multi-Server Architecture
+- **Dedicated Container Network (`mcm-network`)**: Sibling containers join an isolated Docker bridge network where each container is addressable by its internal hostname (`mcm-<server-id>`).
+- **Proxy Config Editor**: Built-in visual editor and configuration generator for Velocity (`velocity.toml`) and BungeeCord / Waterfall (`config.yml`).
+- **Optional Host Ports**: Run backend servers entirely private on the internal Docker network with zero exposed host ports, routing all player traffic securely through your proxy.
+
+### 🔄 Container Lifecycle, Rebuild Warnings & Server Cloning
+- **Lifecycle Controls**: Start, Graceful Stop (`SIGTERM` with `stop`/`end`/`shutdown` commands piped to console), Restart, and Force-Kill (`SIGKILL`).
+- **Rebuild Warning System**: Automatically detects when server configuration changes (Java runtime, memory limits, CPU quotas, port bindings) require container recreation and displays an actionable rebuild banner.
+- **1-Click Container Rebuild**: Recreate sibling containers on demand without data loss to apply updated environment variables or fresh base images.
+- **Instant Server Duplication / Cloning**: 1-click server cloning (`POST /api/servers/:id/copy`) that duplicates server data, configurations, mods, and plugins while automatically allocating fresh host ports.
+
+### ⚡ Live Console & Command Line
+- **Real-Time Streaming**: Live server logs streamed directly to the browser using Server-Sent Events (SSE).
+- **Last-Event-ID Resumption**: Seamlessly reconnects to log streams after network hiccups without duplicate messages or log gaps.
+- **Interactive Command Input**: Send console commands directly to the running server via native FIFO stdin pipe (`/tmp/console.in`) with RCON fallback.
+- **Smart Auto-Scroll**: Sticky bottom-scrolling that pauses automatically when scrolling up to inspect past logs.
 
 ### 👥 Player & Permissions Management
 - **Live Player Roster**: Real-time list of online players with 3D player head avatars (powered by Minotar).
@@ -40,35 +79,32 @@ Each Minecraft server owns and publishes its game port directly to the host netw
 
 ### 📁 Full-Featured File Manager
 - **Server File Explorer**: Navigate the server data volume directly from the browser.
-- **File Transfers**: Upload single or multiple files simultaneously, or download files directly to your machine.
+- **File Transfers**: Upload single or multiple files simultaneously with progress tracking, or download files directly.
 - **Inline Text Editor**: Edit configuration files (`yml`, `json`, `properties`, `toml`, `txt`) directly in the browser.
 - **Archive Operations**: Create zip archives and extract zip files in place.
 - **Remote Download**: Fetch remote files or datapacks directly from an external URL.
 
-### 🌐 Cloudflare SRV DNS Routing
+### 🌐 Cloudflare SRV DNS Routing & Port Management
 - **RFC 2782 DNS SRV Management**: Automatically registers, updates, and removes `_minecraft._tcp` SRV records via Cloudflare API v4.
 - **Custom Subdomains & Apex Routing**: Route players through custom subdomains (e.g., `survival.example.com`) or apex root domains (`@` -> `example.com`) without exposing non-standard port numbers.
 - **One-Click Direct Join Badge**: Displays active join addresses on the server overview with instant clipboard copying.
+- **Port Pool Management**: Configure and validate host port allocation ranges (`MCM_PORT_RANGE`), monitor available vs. allocated ports, and prevent port collision conflicts.
 - **Automatic Lifecycle Cleanup**: Removing a server automatically deregisters its DNS record on Cloudflare.
 
 ### 📦 S3-Compatible Backups & Scheduling
 - **Object Store Integration**: Archive server data directories to compressed `.tar.gz` archives stored in any S3-compatible object store (AWS S3, MinIO, Cloudflare R2, DigitalOcean Spaces).
-- **Automated Scheduling**: Configure background backup intervals per server.
-- **Automated Retention**: Enforce retention limits to automatically prune older snapshots.
+- **Automated Scheduling & Retention**: Configure automated backup intervals per server with automatic pruning of older snapshots.
 - **Instant Restore**: One-click in-place snapshot restoration.
+- **Live Backup Progress**: Real-time SSE progress events and progress bars during backup creation.
+- **Backup Downloads & Uploads**: Download backup snapshots directly from storage or upload external archives for restoration.
 
 ### 🔒 Enterprise Security & Authentication
 - **Multi-Factor Authentication (MFA)**:
   - **TOTP Two-Factor Authentication**: Authenticator app enrollment with QR code generation.
-  - **WebAuthn / Passkeys**: Support for hardware security keys (YubiKey), Apple Touch ID / Face ID, and Windows Hello.
+  - **WebAuthn / Passkeys**: Hardware security keys (YubiKey), Apple Touch ID / Face ID, and Windows Hello.
 - **Multi-User Administration**: Manage panel user accounts, user creation, password updates, and user deletion.
-- **Hardening**: Built-in CSRF protection, brute-force login lockout (5 failed attempts / 15 min), and sliding-window rate limiting.
+- **Hardening**: Built-in double-submit CSRF cookie protection, brute-force login lockout (5 failed attempts / 15 min), and sliding-window rate limiting.
 - **Native TLS Support**: Automatic HTTPS termination with configurable HTTP-to-HTTPS redirect.
-
-### 🔄 Container Lifecycle & Recovery
-- **Lifecycle Controls**: Start, Graceful Stop, and Restart.
-- **Force-Kill**: Terminate unresponsive or frozen server processes immediately via Docker `SIGKILL`.
-- **Container Rebuild**: Recreate sibling containers on demand to apply updated environment variables, port mappings, or fresh base images.
 
 ---
 
@@ -81,13 +117,13 @@ Each Minecraft server owns and publishes its game port directly to the host netw
    # Edit MCM_SESSION_SECRET in .env
    ```
 
-2. **Ensure the Minecraft server runtime image is available**:
+2. **Ensure the Minecraft server runtime base image is available**:
 
    ```sh
-   docker pull itzg/minecraft-server
+   docker pull eclipse-temurin:21-jre-alpine
    ```
 
-   The `itzg/minecraft-server` image is pulled automatically on first use; the image name is configurable via `MCM_SERVER_IMAGE`.
+   MCM automatically pulls `eclipse-temurin:<version>-jre-alpine` (for Java 8, 11, 17, or 21) on demand when servers using those versions are created. The default runtime image is configurable via `MCM_SERVER_IMAGE`.
 
 3. **Build and start the panel**:
 
@@ -100,18 +136,16 @@ Each Minecraft server owns and publishes its game port directly to the host netw
 
 ### Data Persistence & Host Permissions
 
-The panel container mounts `/var/run/docker.sock` so it can manage Minecraft server containers on the host. Minecraft servers bind the host port range configured by `MCM_PORT_RANGE` (default `25565-25665`).
+The panel container mounts `/var/run/docker.sock` so it can manage Minecraft server containers on the host. Minecraft servers bind host ports within `MCM_PORT_RANGE` (default `25565-25665`).
 
 - `MCM_DATA_DIR_HOST`: Host directory (default `${PWD}/data` next to `docker-compose.yml`) mounted into the panel container at `/data` for the SQLite database and server data. This is also the host-side path MCM binds into each Minecraft server container.
 - `PUID` / `PGID`: Set to match your host user (e.g. `1000:1000` or `501:20` on macOS) so all files written to the data volume remain owned by your user. The image entrypoint adjusts data-directory permissions before the panel starts.
 
-### Port Exposure & Firewall
+### Port Exposure & Multi-Server Networking
 
-MCM is a control panel: each server container owns and publishes its own game port directly to the host network.
-
-- **Host Firewall**: Open the configured `MCM_PORT_RANGE` (default `25565-25665`) on your firewall so players can connect directly.
-- **Extra Ports**: Additional ports (TCP/UDP) can be allocated per-server from the Server Settings tab (e.g., Bedrock/Geyser UDP ports, Voice Chat UDP, or Dynmap/BlueMap WebUI ports).
-- **Direct Connection**: Because MCM does not proxy game traffic, there is zero protocol lag or proxy overhead.
+- **Direct Connections**: Each server container can publish its game port directly to the host network within `MCM_PORT_RANGE` (default `25565-25665`).
+- **Extra Ports**: Additional ports (TCP/UDP) can be allocated per server from the Server Settings tab (e.g., Bedrock/Geyser UDP ports, Voice Chat UDP, or Dynmap/BlueMap WebUI ports).
+- **Internal Proxy Networking**: When running behind a reverse proxy (e.g. Velocity or BungeeCord), backend servers can disable host port binding. Sibling containers on the `mcm-network` bridge communicate directly using the `mcm-<server-id>` hostname, eliminating unnecessary port exposure on the host firewall.
 
 ---
 
@@ -164,7 +198,7 @@ The unit runs the binary as the `mcm` user with `WorkingDirectory=/var/lib/mcm` 
 | `MCM_RATE_LIMIT_WINDOW` | `1m` | Sliding window duration for rate limiting. |
 | `MCM_DEFAULT_CPU_LIMIT` | `0` | Default CPU cores limit for new servers (0 = unlimited). |
 | `MCM_DEFAULT_MEMORY_MB` | `0` | Default memory limit in MB for new servers (0 = configured server RAM + 2 GiB). |
-| `MCM_SERVER_IMAGE` | `itzg/minecraft-server` | Docker image used to run Minecraft server containers. |
+| `MCM_SERVER_IMAGE` | `eclipse-temurin:21-jre-alpine` | Base Docker image used for server containers (Java 8, 11, 17, 21 pulled dynamically). |
 | `MCM_WEB_AUTHN_RPID` | `localhost` | WebAuthn Relying Party ID (effective domain). |
 | `MCM_WEB_AUTHN_RP_ORIGIN` | Derived | Allowed WebAuthn origins (comma-separated, e.g. `https://mc.example.com`). |
 | `MCM_WEB_AUTHN_RP_NAME` | `Minecraft Container Manager` | Display name presented during Passkey registration. |
@@ -175,9 +209,9 @@ The unit runs the binary as the `mcm` user with `WorkingDirectory=/var/lib/mcm` 
 | `MCM_S3_REGION` | `us-east-1` | S3 region for signing requests. |
 | `TZ` | `UTC` | Container and server timezone. |
 
-### Dynamic Panel Settings (Cloudflare SRV DNS)
+### Dynamic Panel Settings
 
-Configurable via the panel Settings UI (`/settings?tab=dns`) or `PUT /api/settings`:
+Configurable via the panel Settings UI or `PUT /api/settings`:
 
 | Setting Key | Default | Description |
 | --- | --- | --- |
@@ -189,12 +223,14 @@ Configurable via the panel Settings UI (`/settings?tab=dns`) or `PUT /api/settin
 | `dns_service` | `_minecraft` | Service name according to RFC 2782. |
 | `dns_proto` | `_tcp` | Protocol name according to RFC 2782. |
 | `dns_ttl` | `1` | DNS record TTL in seconds (`1` = Auto). |
+| `port_range_start` | `25565` | Start of the port allocation pool range. |
+| `port_range_end` | `25665` | End of the port allocation pool range. |
 
 ---
 
 ## API Reference
 
-MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for console streaming.
+MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for console and task progress streaming.
 
 ### Authentication, Onboarding & MFA
 | Method | Path | Description |
@@ -219,32 +255,62 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 ### Server Lifecycle & Management
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/servers` | List all managed Minecraft servers. |
-| `POST` | `/api/servers` | Create a new server (flavor, version, build, RAM, CPU, ports). |
-| `GET` | `/api/servers/:id` | Get server configuration and container status. |
-| `PATCH` | `/api/servers/:id` | Update server configuration (RAM, CPU, ports). |
-| `DELETE` | `/api/servers/:id` | Delete server and remove container/data. |
+| `GET` | `/api/servers` | List all managed Minecraft servers with status and uptime. |
+| `POST` | `/api/servers` | Create a new server (flavor, version, build, RAM, CPU, ports, java_version). |
+| `GET` | `/api/servers/:id` | Get server configuration, container state, and rebuild warning status. |
+| `PATCH` | `/api/servers/:id` | Update server configuration (RAM, CPU, ports, java_version). |
+| `DELETE` | `/api/servers/:id` | Delete server and remove container/data volume. |
 | `POST` | `/api/servers/:id/start` | Start server container. |
 | `POST` | `/api/servers/:id/stop` | Gracefully stop server container. |
 | `POST` | `/api/servers/:id/restart` | Restart server container. |
-| `POST` | `/api/servers/:id/kill` | Force-kill unresponsive server (`SIGKILL`). |
-| `POST` | `/api/servers/:id/recreate` | Recreate container from image and sync settings. |
-| `GET` | `/api/servers/:id/status` | Lightweight polling status endpoint. |
-| `GET` | `/api/servers/:id/console` | Stream real-time console logs via Server-Sent Events (SSE). |
-| `POST` | `/api/servers/:id/console/command` | Send command to server stdin/RCON. |
+| `POST` | `/api/servers/:id/kill` | Force-kill unresponsive server process (`SIGKILL`). |
+| `POST` | `/api/servers/:id/recreate` | Recreate container from runtime image and sync configuration changes. |
+| `POST` | `/api/servers/:id/copy` | Duplicate/clone server data, configuration, and plugins to a new server. |
+| `GET` | `/api/servers/:id/export` | Download full server data archive (`.tar.gz`). |
+| `GET` | `/api/servers/:id/status` | Lightweight status polling endpoint. |
+| `GET` | `/api/servers/:id/stats` | Real-time container resource metrics (CPU %, memory, net I/O, disk I/O). |
+| `GET` | `/api/servers/:id/console` | Stream real-time console logs via Server-Sent Events (SSE) with `Last-Event-ID`. |
+| `POST` | `/api/servers/:id/console/command` | Send command to server stdin FIFO pipe (with RCON fallback). |
 | `GET` | `/api/servers/:id/install` | Get installed version and available upgrade builds. |
 | `POST` | `/api/servers/:id/install` | Trigger server version or build upgrade. |
 | `GET` | `/api/jars/:kind/versions` | Fetch upstream Minecraft versions for a given server type. |
 | `GET` | `/api/jars/:kind/versions/:v/builds` | Fetch builds for a specific version. |
+| `GET` | `/api/system/java-versions` | List available Java runtime versions supported by the system. |
+
+### Modpack Management
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/api/modpack/inspect` | Inspect an external modpack to detect loader, version, and requirements. |
+| `GET` | `/api/servers/:id/modpack` | Get currently installed modpack metadata and version lock state. |
+| `POST` | `/api/servers/:id/modpack/inspect` | Inspect modpack compatibility against a specific server. |
+| `POST` | `/api/servers/:id/modpack/install` | Trigger asynchronous modpack installation or version change. |
+| `DELETE` | `/api/servers/:id/modpack` | Uninstall modpack configuration from server. |
+
+### Mod Updates & Version Upgrade Helper
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/servers/:id/mods/updates` | Fetch cached or detected updates for installed mods. |
+| `POST` | `/api/servers/:id/mods/updates/check` | Check for updates across Modrinth and CurseForge catalogs. |
+| `GET` | `/api/servers/:id/mods/upgrade-check` | Check mod compatibility for upgrading the server's Minecraft version. |
+| `POST` | `/api/servers/:id/mods/upgrade-apply` | Apply version upgrade across mods and server platform. |
+| `GET` | `/api/servers/:id/mods/:name/versions` | Fetch all available versions and jar files for a specific mod. |
+| `POST` | `/api/servers/:id/mods/:name/update` | Update a specific mod jar to a target version. |
+| `POST` | `/api/servers/:id/mods/sanitize-client-only` | Scan and remove client-only mods from the server. |
+
+### Background Tasks & Progress Tracking
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/servers/:id/tasks/progress` | Poll active background task progress (modpack install, zip, etc.). |
+| `GET` | `/api/servers/:id/tasks/events` | Stream live task progress events via Server-Sent Events (SSE). |
 
 ### Players, Whitelist & Operators
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/servers/:id/players` | List online players. |
-| `POST` | `/api/servers/:id/players/:name/command` | Run player command (kick, ban, pardon, op, give item, etc.). |
-| `GET` | `/api/servers/:id/ops` | List operator accounts. |
-| `POST` | `/api/servers/:id/ops` | Add an operator with permission level. |
-| `DELETE` | `/api/servers/:id/ops/:name` | Remove an operator. |
+| `GET` | `/api/servers/:id/players` | List online players with player head avatars. |
+| `POST` | `/api/servers/:id/players/:name/command` | Run player command (kick, ban, pardon, op, give item). |
+| `GET` | `/api/servers/:id/ops` | List operator accounts and permission levels. |
+| `POST` | `/api/servers/:id/ops` | Add an operator with permission level (1–4). |
+| `DELETE` | `/api/servers/:id/ops/:name` | Remove operator status. |
 | `GET` | `/api/servers/:id/whitelist` | List whitelisted players. |
 | `POST` | `/api/servers/:id/whitelist` | Add player to whitelist. |
 | `DELETE` | `/api/servers/:id/whitelist/:name` | Remove player from whitelist. |
@@ -252,29 +318,29 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 ### Mods & Plugins
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/servers/:id/mods` | List installed mods or plugins. |
+| `GET` | `/api/servers/:id/mods` | List installed mods or plugins with enablement status. |
 | `POST` | `/api/servers/:id/mods` | Upload mod/plugin jar file. |
 | `POST` | `/api/servers/:id/mods/download` | Download mod/plugin directly from catalog URL. |
-| `PATCH` | `/api/servers/:id/mods/:name` | Toggle mod/plugin enabled or disabled. |
-| `DELETE` | `/api/servers/:id/mods/:name` | Delete mod/plugin jar. |
+| `PATCH` | `/api/servers/:id/mods/:name` | Toggle mod/plugin enabled or disabled (`.disabled`). |
+| `DELETE` | `/api/servers/:id/mods/:name` | Delete mod/plugin jar file. |
 
 ### Server Properties
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/servers/:id/properties` | Fetch current `server.properties`. |
+| `GET` | `/api/servers/:id/properties` | Fetch current parsed `server.properties`. |
 | `PUT` | `/api/servers/:id/properties` | Update `server.properties` content. |
 
 ### File Manager
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/servers/:id/files` | List files and directories in server path. |
-| `GET` | `/api/servers/:id/files/download` | Download a file. |
-| `GET` | `/api/servers/:id/files/content` | Read text file content for editing. |
+| `GET` | `/api/servers/:id/files` | List files and directories in server volume. |
+| `GET` | `/api/servers/:id/files/download` | Download file from server. |
+| `GET` | `/api/servers/:id/files/content` | Read text file content for inline editing. |
 | `PUT` | `/api/servers/:id/files/content` | Save edited text file content. |
 | `POST` | `/api/servers/:id/files/upload` | Upload one or more files. |
 | `POST` | `/api/servers/:id/files/archive` | Create a zip archive of selected files/folders. |
 | `POST` | `/api/servers/:id/files/unzip` | Extract a zip archive in place. |
-| `POST` | `/api/servers/:id/files/from_url` | Download a file from a remote URL to server directory. |
+| `POST` | `/api/servers/:id/files/from_url` | Download a remote file directly to the server data directory. |
 | `DELETE` | `/api/servers/:id/files` | Delete file or directory. |
 | `POST` | `/api/servers/:id/files/mkdir` | Create a new directory. |
 | `POST` | `/api/servers/:id/files/rename` | Rename a file or directory. |
@@ -284,19 +350,23 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | --- | --- | --- |
 | `GET` | `/api/servers/:id/backups` | List backups for a server. |
 | `POST` | `/api/servers/:id/backup` | Trigger an immediate manual backup snapshot. |
-| `POST` | `/api/servers/:id/restore/:backupId` | Restore a backup snapshot. |
-| `DELETE` | `/api/backups/:backupId` | Delete a backup archive from S3. |
+| `GET` | `/api/servers/:id/backups/progress` | Poll active backup operation progress. |
+| `GET` | `/api/servers/:id/backups/events` | Stream live backup progress events via SSE. |
+| `POST` | `/api/servers/:id/backups/upload` | Upload an existing backup archive (.tar.gz). |
+| `POST` | `/api/servers/:id/restore/:backupId` | Restore a backup snapshot in place. |
+| `GET` | `/api/backups/:backupId/download` | Download backup archive file from storage. |
+| `DELETE` | `/api/backups/:backupId` | Delete a backup archive from storage. |
 
 ### Cloudflare SRV DNS
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/dns` | List all active DNS records and Cloudflare status. |
+| `GET` | `/api/dns` | List all active DNS records and Cloudflare connection status. |
 | `POST` | `/api/dns/test` | Test Cloudflare credentials and zone connectivity. |
 | `GET` | `/api/servers/:id/dns` | Get DNS record status and join address for a server. |
 | `POST` | `/api/servers/:id/dns` | Publish or update an SRV record for a server. |
 | `DELETE` | `/api/servers/:id/dns` | Remove an SRV record for a server. |
 
-### User Management & System Health
+### User Management, Ports, Settings & Health
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/users` | List all registered user accounts. |
@@ -304,9 +374,11 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `PATCH` | `/api/users/:id` | Update user email or password. |
 | `DELETE` | `/api/users/:id` | Delete user account and associated passkeys/sessions. |
 | `GET` | `/api/ports/available` | Check available host ports in allocation range. |
-| `GET` | `/api/settings` | Fetch global panel settings. |
+| `GET` | `/api/settings` | Fetch global panel settings (DNS, port range). |
 | `PUT` | `/api/settings` | Update global panel settings. |
-| `GET` | `/api/docker/status` | Get Docker daemon connection and version info. |
+| `GET` | `/api/docker/status` | Get Docker daemon connection and runtime image status. |
+| `GET` | `/api/proxy` | Cached and rate-limited reverse proxy for catalog APIs. |
+| `POST` | `/api/proxy` | POST requests through external catalog proxy. |
 | `GET` | `/healthz` | Liveness health check probe (`200 OK`). |
 | `GET` | `/readyz` | Readiness probe checking database and Docker connectivity. |
 
@@ -316,27 +388,28 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 
 ```text
 .
-├── cmd/mcm/                # Main Go entrypoint
+├── cmd/mcm/                # Main Go application entrypoint
 ├── internal/
-│   ├── api/                # HTTP routes, middlewares, SSE console, and handlers
+│   ├── api/                # HTTP routes, middlewares, SSE console/task streams, and handlers
 │   ├── auth/               # Password hashing, sessions, TOTP, and WebAuthn passkeys
 │   ├── backups/            # S3 client, archive engine, and background backup scheduler
 │   ├── config/             # Environment variable parsing and defaults
-│   ├── db/                 # SQLite connection and migrations runner
+│   ├── db/                 # SQLite connection and migration runner
 │   ├── dns/                # Cloudflare API v4 integration for RFC 2782 SRV records
-│   ├── docker/             # Docker engine client and container provisioning
-│   ├── jars/               # Paper, Fabric, Vanilla, Forge, NeoForge, Spigot version resolution
-│   ├── ports/              # Host port allocation pool manager
+│   ├── docker/             # Docker engine client, container provisioning, and resource metrics
+│   ├── jars/               # Version and build metadata resolution for 22 server platforms
+│   ├── ports/              # Host port allocation pool manager and validator
+│   ├── proxy/              # Cached, rate-limited reverse proxy for catalog APIs
 │   ├── rcon/               # Minecraft RCON client implementation
-│   ├── servers/            # Server entity store and state transitions
+│   ├── servers/            # Server entity store, modpacks, mod updates, tasks, and state transitions
 │   └── web/                # Embedded production frontend assets
 ├── migrations/             # SQL schema migrations (SQLite)
 ├── web/                    # React / Vite frontend application
 │   ├── src/
-│   │   ├── api/            # API client and TypeScript interfaces
-│   │   ├── components/     # UI components (Console, File Manager, Mod Catalog, MOTD, etc.)
-│   │   ├── routes/         # TanStack Router page routes
-│   │   └── styles/         # CSS and theme tokens
+│   │   ├── api/            # Typed API client, rate-limited fetchers, and upstream catalog adapters
+│   │   ├── components/     # UI components (Console, Modpacks, Mod Updates, Stats Grid, Proxy Editor, etc.)
+│   │   ├── routes/         # TanStack Router page routes (Dashboard, Server Detail, Settings, Users)
+│   │   └── styles/         # CSS design system and theme tokens
 │   └── tests/              # Vitest test suite for web components and utilities
 ├── deploy/                 # Systemd service unit for bare metal / LXC installs
 ├── Dockerfile              # Multi-stage production build (Node -> Go -> Final Alpine)
@@ -384,6 +457,6 @@ During the multi-stage Docker build, `web/dist` is compiled and embedded directl
 
 ## License & Credits
 
-- Server containers are powered by the incredible [`itzg/docker-minecraft-server`](https://github.com/itzg/docker-minecraft-server).
+- Java runtimes provided by [Eclipse Temurin](https://adoptium.net/) Alpine OpenJDK images.
 - Mod & plugin catalog integrations powered by [Modrinth](https://modrinth.com/), [PaperMC Hangar](https://hangar.papermc.io/), [SpigotMC / Spiget](https://spiget.org/), and [CurseForge](https://curseforge.com/).
 - Player head avatars provided by [Minotar](https://minotar.net/).
