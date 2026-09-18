@@ -1079,23 +1079,30 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		return nil
 
 	case TypeMohist:
-		builds, err := r.MohistBuilds(ctx, version)
-		if err != nil || len(builds) == 0 {
-			if err != nil {
-				return fmt.Errorf("no mohist builds available for version %q: %w", version, err)
-			}
-			return fmt.Errorf("no mohist builds available for version %q", version)
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		if build == "" || build == "latest" {
+			builds, err := r.MohistBuilds(ctx, version)
+			if err != nil || len(builds) == 0 {
+				if err != nil {
+					return fmt.Errorf("no mohist builds available for version %q: %w", version, err)
+				}
+				return fmt.Errorf("no mohist builds available for version %q", version)
+			}
 			build = builds[0]
 		}
 		dlURL = fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds/%s/download", version, build)
-		if err := r.DownloadFile(ctx, dlURL, targetJar); err == nil {
+		dlErr := r.DownloadFile(ctx, dlURL, targetJar)
+		if dlErr == nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("download mohist %s build %s: %w", version, build, ctx.Err())
+		}
 		dlURL = fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/Mohist-%s-%s.jar", version, version, build)
-		if err := r.DownloadFile(ctx, dlURL, targetJar); err != nil {
-			return fmt.Errorf("download mohist %s build %s: %w", version, build, err)
+		if fbErr := r.DownloadFile(ctx, dlURL, targetJar); fbErr != nil {
+			return fmt.Errorf("download mohist %s build %s: %w (fallback failed: %v)", version, build, dlErr, fbErr)
 		}
 		return nil
 
@@ -1153,10 +1160,18 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			tag = version
 		}
 		dlURL = fmt.Sprintf("https://repo.spongepowered.org/repository/maven-public/org/spongepowered/spongevanilla/%s/spongevanilla-%s-universal.jar", tag, tag)
-		if err := r.DownloadFile(ctx, dlURL, targetJar); err == nil {
+		err := r.DownloadFile(ctx, dlURL, targetJar)
+		if err == nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("download sponge: %w", ctx.Err())
+		}
 		dlURL = fmt.Sprintf("https://repo.spongepowered.org/repository/maven-public/org/spongepowered/spongevanilla/%s/spongevanilla-%s.jar", tag, tag)
+		if fbErr := r.DownloadFile(ctx, dlURL, targetJar); fbErr != nil {
+			return fmt.Errorf("download sponge: %w (fallback failed: %v)", err, fbErr)
+		}
+		return nil
 
 	case TypeBungeeCord:
 		if build == "" || build == "latest" {

@@ -861,25 +861,30 @@ func (s *Store) pendingInitialState(id string, srv Server) string {
 
 // Start ensures a container exists then starts it.
 func (s *Store) Start(ctx context.Context, id string) (Server, error) {
-	srv, err := s.Get(ctx, id)
+	// Use an operation context that survives client disconnection so that in-flight
+	// container provisioning and startup complete even if the browser reloads or disconnects.
+	opCtx, opCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
+	defer opCancel()
+
+	srv, err := s.Get(opCtx, id)
 	if err != nil {
 		return Server{}, err
 	}
-	srv, err = s.ensureContainer(ctx, srv)
+	srv, err = s.ensureContainer(opCtx, srv)
 	if err != nil {
 		return Server{}, err
 	}
 	// Pre-check whether ports are already occupied by another container or server
 	if srv.HostPort > 0 {
-		if err := s.ensurePortFree(ctx, id, srv.HostPort); err != nil {
-			_ = s.setState(ctx, id, StateError)
+		if err := s.ensurePortFree(opCtx, id, srv.HostPort); err != nil {
+			_ = s.setState(opCtx, id, StateError)
 			return Server{}, err
 		}
 	}
 	for _, ep := range srv.ExtraPorts {
 		if ep.HostPort > 0 {
-			if err := s.ensurePortFree(ctx, id, ep.HostPort); err != nil {
-				_ = s.setState(ctx, id, StateError)
+			if err := s.ensurePortFree(opCtx, id, ep.HostPort); err != nil {
+				_ = s.setState(opCtx, id, StateError)
 				return Server{}, err
 			}
 		}
@@ -889,11 +894,11 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	if pending := s.pendingInitialState(id, srv); pending != "" {
 		initialState = pending
 	}
-	if err := s.setState(ctx, id, initialState); err != nil {
+	if err := s.setState(opCtx, id, initialState); err != nil {
 		return Server{}, err
 	}
-	if err := s.docker.Start(ctx, srv.ContainerID); err != nil {
-		_ = s.setState(ctx, id, StateError)
+	if err := s.docker.Start(opCtx, srv.ContainerID); err != nil {
+		_ = s.setState(opCtx, id, StateError)
 		if conflictPort, _, ok := docker.ParsePortConflictError(err); ok {
 			if conflictPort > 0 {
 				return Server{}, fmt.Errorf("%w: port %d is already in use by another container on the host", ErrPortInUse, conflictPort)
@@ -908,18 +913,18 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 		activeState = pending
 	}
 	if activeState == StateRunning {
-		if err := s.setStateWithStartedAt(ctx, id, StateRunning, &now); err != nil {
+		if err := s.setStateWithStartedAt(opCtx, id, StateRunning, &now); err != nil {
 			return Server{}, err
 		}
 		if s.dns != nil && srv.HostPort > 0 {
-			_ = s.dns.Upsert(ctx, id, "", srv.HostPort)
+			_ = s.dns.Upsert(opCtx, id, "", srv.HostPort)
 		}
 	} else {
-		if err := s.setState(ctx, id, activeState); err != nil {
+		if err := s.setState(opCtx, id, activeState); err != nil {
 			return Server{}, err
 		}
 	}
-	return s.Get(ctx, id)
+	return s.Get(opCtx, id)
 }
 
 // stopCommandFor returns the graceful console stop command for a given server type.
@@ -1269,10 +1274,16 @@ func (s *Store) Install(ctx context.Context, id string, provision bool, inputs .
 		if s.jars != nil && srv.ServerType != "custom" {
 			jt, parseErr := jars.ParseJarType(srv.ServerType)
 			if parseErr == nil {
-				if dlErr := s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
+				_ = s.setState(ctx, srv.ID, StateInstalling)
+				log.Printf("[servers] downloading jar for server %s (%s %s %s)...", srv.ID, srv.ServerType, srv.Version, srv.Build)
+				dlCtx, dlCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
+				defer dlCancel()
+				if dlErr := s.jars.DownloadServerJar(dlCtx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
+					_ = s.setState(context.Background(), srv.ID, StateError)
 					log.Printf("[servers] failed to download jar for server %s (%s %s %s): %v", srv.ID, srv.ServerType, srv.Version, srv.Build, dlErr)
 					return InstallResult{}, fmt.Errorf("download server jar: %w", dlErr)
 				}
+				log.Printf("[servers] successfully downloaded jar for server %s (%s %s %s)", srv.ID, srv.ServerType, srv.Version, srv.Build)
 			}
 		}
 		// Update DB with updated version and build if changed
@@ -1282,6 +1293,10 @@ func (s *Store) Install(ctx context.Context, id string, provision bool, inputs .
 		srv, err = s.ensureContainer(ctx, srv)
 		if err != nil {
 			return InstallResult{}, err
+		}
+		if srv.State == StateInstalling {
+			_ = s.setState(context.Background(), srv.ID, StateStopped)
+			srv.State = StateStopped
 		}
 	}
 
@@ -1354,10 +1369,18 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 				if s.jars != nil && srv.ServerType != "custom" {
 					jt, err := jars.ParseJarType(srv.ServerType)
 					if err == nil {
-						if dlErr := s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
+						_ = s.setState(ctx, srv.ID, StateInstalling)
+						srv.State = StateInstalling
+						log.Printf("[servers] downloading jar for server %s (%s %s %s)...", srv.ID, srv.ServerType, srv.Version, srv.Build)
+						dlCtx, dlCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
+						defer dlCancel()
+						if dlErr := s.jars.DownloadServerJar(dlCtx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
+							_ = s.setState(context.Background(), srv.ID, StateError)
+							srv.State = StateError
 							log.Printf("[servers] failed to download jar for server %s (%s %s %s): %v", srv.ID, srv.ServerType, srv.Version, srv.Build, dlErr)
 							return Server{}, fmt.Errorf("download server jar: %w", dlErr)
 						}
+						log.Printf("[servers] successfully downloaded jar for server %s (%s %s %s)", srv.ID, srv.ServerType, srv.Version, srv.Build)
 					}
 				}
 			}
@@ -1388,6 +1411,10 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 	srv.ContainerID = cid
 	srv.NeedsRebuild = false
 	srv.RebuildReasons = nil
+	if srv.State == StateInstalling {
+		_ = s.setState(ctx, srv.ID, StateStopped)
+		srv.State = StateStopped
+	}
 	return srv, nil
 }
 

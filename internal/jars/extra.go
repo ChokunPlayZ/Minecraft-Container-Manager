@@ -531,7 +531,9 @@ func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, 
 	}
 
 	// 2. Try directory listing from builds-raw
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/", version), nil)
+	rawCtx, rawCancel := context.WithTimeout(ctx, 4*time.Second)
+	defer rawCancel()
+	req, err := http.NewRequestWithContext(rawCtx, http.MethodGet, fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/", version), nil)
 	if err == nil {
 		if resp, errDo := r.Client.Do(req); errDo == nil {
 			defer resp.Body.Close()
@@ -560,6 +562,9 @@ func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, 
 		}
 	}
 
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	return nil, fmt.Errorf("no mohist builds available for version %q", version)
 }
 

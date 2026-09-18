@@ -2,10 +2,12 @@ package jars
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -430,6 +432,25 @@ func TestMohistVersionsExcludesUnreleased(t *testing.T) {
 	// The highest released version is 1.20.2
 	if versions[0] != "1.20.2" {
 		t.Errorf("expected highest Mohist version to be 1.20.2, got %s", versions[0])
+	}
+}
+
+func TestMohistDownloadContextCanceled(t *testing.T) {
+	r := NewResolver()
+	dir := t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel context
+
+	err := r.DownloadServerJar(ctx, TypeMohist, "1.20.2", "174", dir)
+	if err == nil {
+		t.Fatalf("expected error on canceled context")
+	}
+	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("expected context canceled error, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "builds-raw") {
+		t.Fatalf("should not attempt or report builds-raw fallback when context is canceled, got: %v", err)
 	}
 }
 

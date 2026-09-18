@@ -534,7 +534,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			currSrv, err := s.Get(ctx, serverID)
 			if err == nil && currSrv.ServerType != "custom" {
 				if jt, err := jars.ParseJarType(currSrv.ServerType); err == nil {
-					_ = s.jars.DownloadServerJar(ctx, jt, currSrv.Version, currSrv.Build, dataDir)
+					dlCtx, dlCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
+					_ = s.jars.DownloadServerJar(dlCtx, jt, currSrv.Version, currSrv.Build, dataDir)
+					dlCancel()
 				}
 			}
 		}

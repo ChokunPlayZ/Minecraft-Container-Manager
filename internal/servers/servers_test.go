@@ -6,9 +6,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1007,4 +1010,99 @@ func TestStartDetectsInstallerAndSetsState(t *testing.T) {
 		t.Errorf("expected state %q for spigot server with installer.jar, got %q", StateBuilding, srvSpigot.State)
 	}
 }
+
+func TestStartJarDownloadStateAndContextResilience(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer dbHandle.Close()
+
+	var canceledDuringDownload atomic.Bool
+	var stateDuringDownload string
+	var cancelFunc context.CancelFunc
+
+	downloadStarted := make(chan struct{})
+	srvMock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(downloadStarted)
+		if cancelFunc != nil {
+			cancelFunc()
+			canceledDuringDownload.Store(true)
+		}
+		w.Header().Set("Content-Type", "application/java-archive")
+		_, _ = w.Write([]byte("fake-server-jar-content"))
+	}))
+	defer srvMock.Close()
+
+	resolver := jars.NewResolver()
+	resolver.BuildToolsURL = srvMock.URL
+
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: resolver}
+
+	sid := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = dbHandle.DB.ExecContext(context.Background(),
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sid, "test-resilience", "spigot", "1.20.4", "latest", 2048, 0, 0, 25568, "[]", "", StateStopped, now, now)
+	if err != nil {
+		t.Fatalf("insert server: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancelFunc = cancel
+
+	go func() {
+		<-downloadStarted
+		// Query database state to verify server state is StateInstalling while downloading
+		var st string
+		_ = dbHandle.DB.QueryRow("SELECT state FROM servers WHERE id = ?", sid).Scan(&st)
+		stateDuringDownload = st
+	}()
+
+	srv, err := store.Start(ctx, sid)
+	if err != nil {
+		t.Fatalf("Start should succeed despite client disconnect: %v", err)
+	}
+
+	if !canceledDuringDownload.Load() {
+		t.Error("expected client context to have been canceled during download")
+	}
+	if stateDuringDownload != StateInstalling {
+		t.Errorf("expected state during download to be %q, got %q", StateInstalling, stateDuringDownload)
+	}
+	if srv.State != StateBuilding {
+		t.Errorf("expected server to be in StateBuilding after spigot install, got %q", srv.State)
+	}
+
+	// Test download failure setting StateError
+	srvFail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	defer srvFail.Close()
+
+	resolver.BuildToolsURL = srvFail.URL
+	failID := uuid.NewString()
+	_, err = dbHandle.DB.ExecContext(context.Background(),
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		failID, "test-fail", "spigot", "1.20.4", "latest", 2048, 0, 0, 25569, "[]", "", StateStopped, now, now)
+	if err != nil {
+		t.Fatalf("insert fail server: %v", err)
+	}
+
+	_, err = store.Start(context.Background(), failID)
+	if err == nil {
+		t.Fatal("expected Start to fail when download fails")
+	}
+
+	var failState string
+	_ = dbHandle.DB.QueryRow("SELECT state FROM servers WHERE id = ?", failID).Scan(&failState)
+	if failState != StateError {
+		t.Errorf("expected server state to be %q on download failure, got %q", StateError, failState)
+	}
+}
+
 

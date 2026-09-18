@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -337,6 +338,10 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
 		s.logUpstream(err, nil)
 		writeError(w, http.StatusBadGateway, "upstream_error", "Couldn't reach the upstream provider right now.")
+		return
+	}
+	if errors.Is(err, context.Canceled) {
+		s.logger.Printf("server action canceled (client disconnected): %v", err)
 		return
 	}
 	// The error is intentionally hidden from the client, but it must reach the
