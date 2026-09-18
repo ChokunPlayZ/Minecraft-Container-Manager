@@ -264,10 +264,16 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
       .jarBuilds(serverType, version)
       .then((b) => {
         if (cancelled) return;
-        setBuilds(b);
-        if (!build || !b.some((x) => x.build === build)) {
-          setBuild(b[0]?.build ?? '');
-        }
+        const sorted = [...b].sort((x, y) => {
+          const nx = parseInt(x.build, 10);
+          const ny = parseInt(y.build, 10);
+          if (!isNaN(nx) && !isNaN(ny) && String(nx) === x.build && String(ny) === y.build) {
+            return ny - nx;
+          }
+          return (y.build || '').localeCompare(x.build || '', undefined, { numeric: true });
+        });
+        setBuilds(sorted);
+        setBuild(sorted[0]?.build ?? '');
       })
       .catch((err) => !cancelled && setError(err instanceof ApiError ? err.detail : 'Failed to load builds'))
       .finally(() => !cancelled && setLoadingBuilds(false));
@@ -1149,6 +1155,9 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                       onChange={(e) => {
                         const nextType = e.target.value as ServerType;
                         setServerType(nextType);
+                        setVersion('');
+                        setBuild('');
+                        setBuilds([]);
                         if (nextType === 'velocity' || nextType === 'waterfall' || nextType === 'bungeecord') {
                           if (!port || port === '25565') setPort('25577');
                         } else if (nextType === 'geysermc') {
@@ -1253,6 +1262,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                             onChange={(e) => {
                               const nextVer = e.target.value;
                               setVersion(nextVer);
+                              setBuild('');
+                              setBuilds([]);
                               setJavaVersion(recommendJava(nextVer, serverType));
                             }}
                             disabled={versions.length === 0}

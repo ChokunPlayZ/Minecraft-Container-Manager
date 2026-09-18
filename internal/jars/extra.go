@@ -100,7 +100,12 @@ func (r *Resolver) ForgeBuilds(ctx context.Context, version string) ([]string, e
 		return nil, fmt.Errorf("no forge builds for version %q", version)
 	}
 	// builds are e.g. ["1.21.1-52.0.14", ...]
-	return builds, nil
+	out := make([]string, len(builds))
+	copy(out, builds)
+	sort.Slice(out, func(i, j int) bool {
+		return CompareVersionTokens(out[i], out[j]) > 0
+	})
+	return out, nil
 }
 
 // NeoForgeGameVersions returns the Minecraft versions supported by NeoForge.
@@ -240,6 +245,9 @@ func (r *Resolver) NeoForgeBuilds(ctx context.Context, version string) ([]string
 	if len(out) == 0 {
 		return []string{"latest"}, nil
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return CompareVersionTokens(out[i], out[j]) > 0
+	})
 	return out, nil
 }
 
@@ -357,6 +365,9 @@ func (r *Resolver) FoliaBuilds(ctx context.Context, version string) ([]string, e
 	for _, b := range raw {
 		out = append(out, strconv.Itoa(b.ID))
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return CompareVersionTokens(out[i], out[j]) > 0
+	})
 	return out, nil
 }
 
@@ -452,7 +463,26 @@ func (r *Resolver) MohistVersions(ctx context.Context) ([]string, error) {
 
 // MohistBuilds returns builds for a Mohist version.
 func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, error) {
-	// 1. Try directory listing from builds-raw
+	// 1. Try official active API endpoint
+	var apiList []struct {
+		ID int `json:"id"`
+	}
+	if err := r.getJSON(ctx, fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds", version), &apiList); err == nil && len(apiList) > 0 {
+		out := make([]string, 0, len(apiList))
+		for _, b := range apiList {
+			if b.ID > 0 {
+				out = append(out, strconv.Itoa(b.ID))
+			}
+		}
+		if len(out) > 0 {
+			sort.SliceStable(out, func(i, j int) bool {
+				return CompareVersionTokens(out[i], out[j]) > 0
+			})
+			return out, nil
+		}
+	}
+
+	// 2. Try directory listing from builds-raw
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/", version), nil)
 	if err == nil {
 		if resp, errDo := r.Client.Do(req); errDo == nil {
@@ -479,25 +509,6 @@ func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, 
 					}
 				}
 			}
-		}
-	}
-
-	// 2. Fallback to API endpoint
-	var rawList []struct {
-		Number int    `json:"number"`
-		ID     string `json:"id"`
-	}
-	if err := r.getJSON(ctx, fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds", version), &rawList); err == nil && len(rawList) > 0 {
-		out := make([]string, 0, len(rawList))
-		for _, b := range rawList {
-			if b.Number > 0 {
-				out = append(out, strconv.Itoa(b.Number))
-			} else if b.ID != "" {
-				out = append(out, b.ID)
-			}
-		}
-		if len(out) > 0 {
-			return out, nil
 		}
 	}
 
@@ -625,7 +636,7 @@ func (r *Resolver) DownloadFile(ctx context.Context, url, targetPath string) err
 		return fmt.Errorf("download %s returned status %s", url, resp.Status)
 	}
 
-	tmpFile := targetPath + ".tmp"
+	tmpFile := fmt.Sprintf("%s.%d.tmp", targetPath, time.Now().UnixNano())
 	f, err := os.Create(tmpFile)
 	if err != nil {
 		return err

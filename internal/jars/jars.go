@@ -441,7 +441,7 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 		}
 		b, err := selectString(builds, build)
 		if err != nil {
-			b = builds[len(builds)-1]
+			b = builds[0]
 		}
 		return Resolved{Type: TypeFolia, Version: version, Build: b}, nil
 	case TypeWaterfall:
@@ -1066,10 +1066,14 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			}
 		}
 		if build != "" && build != "latest" {
-			dlURL = fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/Mohist-%s-%s.jar", version, version, build)
+			dlURL = fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds/%s/download", version, build)
 		} else {
-			dlURL = fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds/latest/download", version)
+			dlURL = fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds/latest/download", version)
 		}
+		if err := r.DownloadFile(ctx, dlURL, targetJar); err == nil {
+			return nil
+		}
+		dlURL = fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/Mohist-%s-%s.jar", version, version, build)
 
 	case TypeKetting:
 		var err error
@@ -1123,6 +1127,10 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		}
 		if tag == "" {
 			tag = version
+		}
+		dlURL = fmt.Sprintf("https://repo.spongepowered.org/repository/maven-public/org/spongepowered/spongevanilla/%s/spongevanilla-%s-universal.jar", tag, tag)
+		if err := r.DownloadFile(ctx, dlURL, targetJar); err == nil {
+			return nil
 		}
 		dlURL = fmt.Sprintf("https://repo.spongepowered.org/repository/maven-public/org/spongepowered/spongevanilla/%s/spongevanilla-%s.jar", tag, tag)
 

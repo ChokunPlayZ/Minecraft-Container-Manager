@@ -70,18 +70,20 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
 
   if [ -n "$INSTALLER" ]; then
     echo "Running server installer ($INSTALLER)..."
-    case "$INSTALLER" in
-      *quilt*)
-        QUILT_ARGS="install server"
-        if [ -n "$SERVER_VERSION" ]; then
-          QUILT_ARGS="$QUILT_ARGS $SERVER_VERSION"
+    IS_QUILT=0
+    case "$INSTALLER" in *quilt*) IS_QUILT=1;; esac
+    if [ "$SERVER_TYPE" = "quilt" ] || [ $IS_QUILT -eq 1 ]; then
+      QUILT_ARGS="install server"
+      if [ -n "$SERVER_VERSION" ]; then
+        QUILT_ARGS="$QUILT_ARGS $SERVER_VERSION"
+        if [ -n "$SERVER_BUILD" ] && [ "$SERVER_BUILD" != "latest" ]; then
+          QUILT_ARGS="$QUILT_ARGS $SERVER_BUILD"
         fi
-        java -Djava.awt.headless=true -jar "$INSTALLER" $QUILT_ARGS --download-server --install-dir=/data
-        ;;
-      *)
-        java -Djava.awt.headless=true -jar "$INSTALLER" --installServer
-        ;;
-    esac
+      fi
+      java -Djava.awt.headless=true -jar "$INSTALLER" $QUILT_ARGS --download-server --install-dir=/data
+    else
+      java -Djava.awt.headless=true -jar "$INSTALLER" --installServer
+    fi
     INSTALL_EXIT=$?
     if [ $INSTALL_EXIT -ne 0 ]; then
       echo "Server installer failed with exit code $INSTALL_EXIT"
@@ -128,6 +130,9 @@ case "$STYPE" in
     ;;
   waterfall|bungeecord|limbo|nanolimbo|geysermc)
     SERVER_ARGS=""
+    ;;
+  ketting)
+    SERVER_ARGS="-minecraftVersion ${SERVER_VERSION:-1.20.1} -accepteula -noui nogui"
     ;;
 esac
 
@@ -328,18 +333,27 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 
 	cPort, _ := primaryContainerPort(opts.ServerType)
 
+	env := []string{
+		fmt.Sprintf("RAM_MB=%d", opts.RAMMB),
+		fmt.Sprintf("SERVER_PORT=%d", cPort),
+		"MCM_DATA_DIR=" + containerData,
+		"SERVER_TYPE=" + opts.ServerType,
+		"SERVER_VERSION=" + opts.Version,
+		"SERVER_BUILD=" + opts.Build,
+	}
+	if opts.ServerType == "ketting" {
+		env = append(env,
+			fmt.Sprintf("kettinglauncher_minecraftVersion=%s", opts.Version),
+			"kettinglauncher_accepteula=true",
+			"kettinglauncher_noui=true",
+		)
+	}
+
 	cfg := &container.Config{
 		Image:        img,
 		WorkingDir:   containerData,
 		Entrypoint:   []string{"sh", "-c", DefaultEntryScript},
-		Env: []string{
-			fmt.Sprintf("RAM_MB=%d", opts.RAMMB),
-			fmt.Sprintf("SERVER_PORT=%d", cPort),
-			"MCM_DATA_DIR=" + containerData,
-			"SERVER_TYPE=" + opts.ServerType,
-			"SERVER_VERSION=" + opts.Version,
-			"SERVER_BUILD=" + opts.Build,
-		},
+		Env:          env,
 		ExposedPorts: exposedPortsFor(opts.ServerType, opts.ExtraPorts),
 		OpenStdin:    true,
 		Tty:          false,
@@ -375,6 +389,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 			if insp, errInsp := m.client.ContainerInspect(ctx, name); errInsp == nil {
 				return insp.ID, nil
 			}
+			if insp, errInsp := m.client.ContainerInspect(ctx, "/"+name); errInsp == nil {
+				return insp.ID, nil
+			}
+			_ = m.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+			if err == nil {
+				return resp.ID, nil
+			}
 		}
 		// If the image vanished between the presence check and the create (or a
 		// concurrent pull is still converging), pull again and retry once.
@@ -391,6 +413,14 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 				if strings.Contains(errLower, "conflict") || strings.Contains(errLower, "already in use") {
 					if insp, errInsp := m.client.ContainerInspect(ctx, name); errInsp == nil {
 						return insp.ID, nil
+					}
+					if insp, errInsp := m.client.ContainerInspect(ctx, "/"+name); errInsp == nil {
+						return insp.ID, nil
+					}
+					_ = m.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+					resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+					if err == nil {
+						return resp.ID, nil
 					}
 				}
 				return "", fmt.Errorf("create container: %w", err)

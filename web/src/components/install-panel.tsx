@@ -36,8 +36,10 @@ export function InstallPanel({
       const [i, v] = await Promise.all([api.installInfo(serverId), api.jarVersions(serverType)]);
       setInfo(i);
       setVersions(v);
-      setVersion(i.version ?? v[0]?.name ?? '');
-      setBuild(i.build ?? '');
+      const curVer = i.version ?? (i as any)?.server?.version ?? v[0]?.name ?? '';
+      const curBuild = i.build ?? (i as any)?.server?.build ?? '';
+      setVersion(curVer);
+      setBuild(curBuild);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to load install info');
     } finally {
@@ -57,9 +59,18 @@ export function InstallPanel({
       .jarBuilds(serverType, version)
       .then((b) => {
         if (cancelled) return;
-        setBuilds(b);
-        if (!info?.build || !b.some((x) => x.build === info?.build)) {
-          setBuild(b[0]?.build ?? '');
+        const sorted = [...b].sort((x, y) => {
+          const nx = parseInt(x.build, 10);
+          const ny = parseInt(y.build, 10);
+          if (!isNaN(nx) && !isNaN(ny) && String(nx) === x.build && String(ny) === y.build) {
+            return ny - nx;
+          }
+          return (y.build || '').localeCompare(x.build || '', undefined, { numeric: true });
+        });
+        setBuilds(sorted);
+        const curBuild = info?.build ?? (info as any)?.server?.build;
+        if (!curBuild || !sorted.some((x) => x.build === curBuild)) {
+          setBuild(sorted[0]?.build ?? '');
         }
       })
       .catch((err) => !cancelled && setError(err instanceof ApiError ? err.detail : 'Failed to load builds'))
@@ -69,14 +80,18 @@ export function InstallPanel({
     };
   }, [version, serverType, info]);
 
+  const isInstalled = Boolean(info?.installed || (info as any)?.server?.container_id);
+  const installedVer = info?.version ?? (info as any)?.server?.version;
+  const installedBuild = info?.build ?? (info as any)?.server?.build;
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!version || !build) return;
 
-    const action = info?.installed ? 'upgrade' : 'install';
+    const action = isInstalled ? 'upgrade' : 'install';
     const confirmed = await confirm(
       `Are you sure you want to ${action} the server jar ${version} (build ${build})? ` +
-        (info?.installed
+        (isInstalled
           ? 'This will replace the currently installed jar and may restart the server.'
           : 'This will create the server container and download the jar.'),
       { title: `${action === 'upgrade' ? 'Upgrade' : 'Install'} server jar`, confirmLabel: action === 'upgrade' ? 'Upgrade' : 'Install', destructive: action === 'upgrade' },
@@ -110,17 +125,17 @@ export function InstallPanel({
           </div>
         ) : (
           <>
-            {info && !info.installed && (
+            {!isInstalled && (
               <p className="mb-4 text-sm text-muted-foreground">
                 No jar installed yet for this server.
               </p>
             )}
-            {info?.installed && (
+            {isInstalled && (
               <p className="mb-4 text-sm text-muted-foreground">
-                Installed: {info.version} (build {info.build})
+                Installed: {installedVer} {installedBuild ? `(build ${installedBuild})` : ''}
               </p>
             )}
-            {serverType !== 'vanilla' && info?.installed && (
+            {serverType !== 'vanilla' && isInstalled && (
               <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs">
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Sparkles className="h-4 w-4 text-primary shrink-0" />
@@ -177,7 +192,7 @@ export function InstallPanel({
                     label={
                       <span className="flex items-center gap-2 font-medium">
                         <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
-                        <span>{info?.installed ? 'Upgrading server jar...' : 'Downloading jar & setting up server...'}</span>
+                        <span>{isInstalled ? 'Upgrading server jar...' : 'Downloading jar & setting up server...'}</span>
                       </span>
                     }
                     subtext="Fetching binaries and configuring container"
@@ -191,7 +206,7 @@ export function InstallPanel({
                 variant="destructive"
                 disabled={busy || loadingBuilds || !version || !build}
               >
-                {busy ? 'Installing...' : info?.installed ? 'Upgrade' : 'Install'}
+                {busy ? 'Installing...' : isInstalled ? 'Upgrade' : 'Install'}
               </Button>
             </form>
           </>

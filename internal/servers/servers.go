@@ -310,9 +310,13 @@ func checkRebuildNeeded(srv *Server, rawConfig string) (bool, []string) {
 
 // InstallResult describes a server's resolved install configuration.
 type InstallResult struct {
-	Server   Server        `json:"server"`
-	Resolved jars.Resolved `json:"resolved"`
-	DataDir  string        `json:"data_dir"`
+	Server    Server        `json:"server"`
+	Resolved  jars.Resolved `json:"resolved"`
+	DataDir   string        `json:"data_dir"`
+	ServerID  string        `json:"server_id"`
+	Installed bool          `json:"installed"`
+	Version   string        `json:"version"`
+	Build     string        `json:"build"`
 }
 
 // Store coordinates the database, docker, jar resolution, and port allocation.
@@ -328,6 +332,9 @@ type Store struct {
 	dataDirHost string
 	// dns optionally publishes/removes SRV records as servers start and stop.
 	dns dns.Publisher
+
+	serverLocksMu sync.Mutex
+	serverLocks   map[string]*sync.Mutex
 
 	proxyMu         sync.Mutex
 	proxy           *proxy.Service
@@ -365,21 +372,53 @@ type targetUpdatesFlightCall struct {
 	err  error
 }
 
+// isDockerNil checks if the dockerRuntime interface is nil or contains a nil concrete pointer.
+func isDockerNil(rt dockerRuntime) bool {
+	if rt == nil {
+		return true
+	}
+	if dm, ok := rt.(*docker.Manager); ok && dm == nil {
+		return true
+	}
+	return false
+}
+
 // NewStore wires the server store together.
 func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, end int, dataDir, dataDirHost string) *Store {
+	var rt dockerRuntime
+	if dm != nil {
+		rt = dm
+	}
 	return &Store{
 		db:                    handle.DB,
-		docker:                dm,
+		docker:                rt,
 		jars:                  jr,
 		ports:                 ports.NewPool(handle.DB, start, end),
 		dataDir:               dataDir,
 		dataDirHost:           dataDirHost,
+		serverLocks:           make(map[string]*sync.Mutex),
 		updatesInFlight:       make(map[string]*updatesFlightCall),
 		targetUpdatesInFlight: make(map[string]*targetUpdatesFlightCall),
 		tasks:                 make(map[string]*TaskProgress),
 		taskSubs:              make(map[string][]chan TaskProgress),
 		diskCache:             make(map[string]diskCacheEntry),
 	}
+}
+
+func (s *Store) lockServer(id string) func() {
+	s.serverLocksMu.Lock()
+	if s.serverLocks == nil {
+		s.serverLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := s.serverLocks[id]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.serverLocks[id] = mu
+	}
+	s.serverLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
 }
 
 // SetDNS wires a DNS publisher so Start/Stop publish and remove SRV records.
@@ -390,12 +429,18 @@ func (s *Store) SetDNS(d dns.Publisher) {
 // Reachable reports whether the underlying Docker daemon is responsive. It is
 // used by the readiness probe.
 func (s *Store) Reachable(ctx context.Context) error {
+	if isDockerNil(s.docker) {
+		return nil
+	}
 	return s.docker.Ping(ctx)
 }
 
 // DockerStatus returns the runtime health of the Docker host (daemon reachability
 // and runtime-image presence) for diagnostics.
 func (s *Store) DockerStatus(ctx context.Context) docker.RuntimeStatus {
+	if isDockerNil(s.docker) {
+		return docker.RuntimeStatus{}
+	}
 	return s.docker.RuntimeStatus(ctx)
 }
 
@@ -540,7 +585,25 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 	if err != nil {
 		return Server{}, fmt.Errorf("insert server: %w", err)
 	}
-	return s.Get(ctx, id)
+	created, err := s.Get(ctx, id)
+	if err != nil {
+		return Server{}, err
+	}
+
+	// Ensure server data directory is created
+	_ = os.MkdirAll(s.dataPath(id), 0755)
+
+	// For standard server types, eagerly provision container and download jar upfront
+	// so files (server.jar/installer.jar) are immediately ready and startup race conditions are eliminated.
+	if in.ServerType != jars.TypeCustom && !isDockerNil(s.docker) {
+		if prov, provErr := s.ensureContainer(ctx, created); provErr == nil {
+			created = prov
+		} else {
+			log.Printf("[servers] warning: eager provisioning for server %s failed: %v", id, provErr)
+		}
+	}
+
+	return created, nil
 }
 
 // Update applies non-nil fields from the input to a server record.
@@ -1092,6 +1155,11 @@ type InstallInput struct {
 // Install resolves and (for POST) provisions the server's container. GET returns
 // the resolution without creating anything.
 func (s *Store) Install(ctx context.Context, id string, provision bool, inputs ...InstallInput) (InstallResult, error) {
+	if provision {
+		unlock := s.lockServer(id)
+		defer unlock()
+	}
+
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return InstallResult{}, err
@@ -1111,6 +1179,7 @@ func (s *Store) Install(ctx context.Context, id string, provision bool, inputs .
 	}
 	dataDir := s.dataPath(srv.ID)
 	if provision {
+		_ = os.MkdirAll(dataDir, 0755)
 		// When provisioning/installing, download the server jar
 		if s.jars != nil && srv.ServerType != "custom" {
 			jt, parseErr := jars.ParseJarType(srv.ServerType)
@@ -1130,10 +1199,45 @@ func (s *Store) Install(ctx context.Context, id string, provision bool, inputs .
 			return InstallResult{}, err
 		}
 	}
-	return InstallResult{Server: srv, Resolved: resolved, DataDir: dataDir}, nil
+
+	installed := srv.ContainerID != ""
+	if !installed {
+		if _, err := os.Stat(filepath.Join(dataDir, "server.jar")); err == nil {
+			installed = true
+		} else if _, err := os.Stat(filepath.Join(dataDir, "installer.jar")); err == nil {
+			installed = true
+		} else if _, err := os.Stat(filepath.Join(dataDir, "run.sh")); err == nil {
+			installed = true
+		} else if hasForgeJar(dataDir) {
+			installed = true
+		}
+	}
+
+	return InstallResult{
+		Server:    srv,
+		Resolved:  resolved,
+		DataDir:   dataDir,
+		ServerID:  srv.ID,
+		Installed: installed,
+		Version:   srv.Version,
+		Build:     srv.Build,
+	}, nil
 }
 
 func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error) {
+	unlock := s.lockServer(srv.ID)
+	defer unlock()
+
+	// Re-fetch current server record from DB to verify if another goroutine has already
+	// provisioned the container while we were waiting for the lock.
+	if current, err := s.Get(ctx, srv.ID); err == nil {
+		srv = current
+	}
+
+	if isDockerNil(s.docker) {
+		return srv, nil
+	}
+
 	if srv.ContainerID != "" {
 		// Verify the recorded container still exists. It may have been removed
 		// outside MCM (e.g. `docker rm`); if so, drop the stale id and create a
@@ -1153,6 +1257,9 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 
 	// Ensure server executable/installer exists in data directory (download if missing)
 	dataDir := s.dataPath(srv.ID)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return Server{}, fmt.Errorf("create data dir: %w", err)
+	}
 	serverJar := filepath.Join(dataDir, "server.jar")
 	runSh := filepath.Join(dataDir, "run.sh")
 	installerJar := filepath.Join(dataDir, "installer.jar")
