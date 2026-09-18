@@ -172,13 +172,14 @@ func RecommendJavaVersionForType(serverType, version string) int {
 
 
 const (
-	defaultPaperBase    = "https://fill.papermc.io/v3"
-	defaultFabricBase   = "https://meta.fabricmc.net/v2"
-	defaultMojangManf   = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-	defaultForgeBase    = "https://files.minecraftforge.net/net/minecraftforge/forge"
-	defaultNeoForgeBase = "https://maven.neoforged.net"
-	defaultSpigotBase   = "https://hub.spigotmc.org/versions"
-	requestTimeout      = 20 * time.Second
+	defaultPaperBase      = "https://fill.papermc.io/v3"
+	defaultFabricBase     = "https://meta.fabricmc.net/v2"
+	defaultMojangManf     = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+	defaultForgeBase      = "https://files.minecraftforge.net/net/minecraftforge/forge"
+	defaultNeoForgeBase   = "https://maven.neoforged.net"
+	defaultSpigotBase     = "https://hub.spigotmc.org/versions"
+	defaultBuildToolsURL  = "https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar"
+	requestTimeout        = 20 * time.Second
 )
 
 // Resolver queries upstream metadata APIs. The base URLs are overridable so unit
@@ -191,6 +192,7 @@ type Resolver struct {
 	ForgeBase      string
 	NeoForgeBase   string
 	SpigotBase     string
+	BuildToolsURL  string
 }
 
 // NewResolver returns a Resolver using production endpoints.
@@ -212,7 +214,15 @@ func NewResolverWithBases(client *http.Client, paperBase, fabricBase, mojangMani
 		ForgeBase:      defaultForgeBase,
 		NeoForgeBase:   defaultNeoForgeBase,
 		SpigotBase:     defaultSpigotBase,
+		BuildToolsURL:  defaultBuildToolsURL,
 	}
+}
+
+func (r *Resolver) buildToolsURL() string {
+	if r.BuildToolsURL != "" {
+		return r.BuildToolsURL
+	}
+	return defaultBuildToolsURL
 }
 
 // Resolved describes a validated server image configuration.
@@ -477,7 +487,10 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 	case TypeMohist:
 		builds, err := r.MohistBuilds(ctx, version)
 		if err != nil || len(builds) == 0 {
-			return Resolved{Type: TypeMohist, Version: version, Build: "latest"}, nil
+			if err != nil {
+				return Resolved{}, fmt.Errorf("no mohist builds found for version %q: %w", version, err)
+			}
+			return Resolved{}, fmt.Errorf("no mohist builds found for version %q", version)
 		}
 		b, err := selectString(builds, build)
 		if err != nil {
@@ -1048,7 +1061,14 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		}
 
 	case TypeSpigot:
-		dlURL = fmt.Sprintf("https://cdn.getbukkit.org/spigot/spigot-%s.jar", version)
+		if _, err := os.Stat(targetJar); err == nil {
+			return nil
+		}
+		installerPath := filepath.Join(destDir, "installer.jar")
+		if err := r.DownloadFile(ctx, r.buildToolsURL(), installerPath); err != nil {
+			return fmt.Errorf("download spigot buildtools: %w", err)
+		}
+		return nil
 
 	case TypeQuilt:
 		installerURL := r.resolveQuiltInstallerURL(ctx)
@@ -1059,21 +1079,25 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		return nil
 
 	case TypeMohist:
-		if build == "" || build == "latest" {
-			builds, err := r.MohistBuilds(ctx, version)
-			if err == nil && len(builds) > 0 {
-				build = builds[0]
+		builds, err := r.MohistBuilds(ctx, version)
+		if err != nil || len(builds) == 0 {
+			if err != nil {
+				return fmt.Errorf("no mohist builds available for version %q: %w", version, err)
 			}
+			return fmt.Errorf("no mohist builds available for version %q", version)
 		}
-		if build != "" && build != "latest" {
-			dlURL = fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds/%s/download", version, build)
-		} else {
-			dlURL = fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds/latest/download", version)
+		if build == "" || build == "latest" {
+			build = builds[0]
 		}
+		dlURL = fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds/%s/download", version, build)
 		if err := r.DownloadFile(ctx, dlURL, targetJar); err == nil {
 			return nil
 		}
 		dlURL = fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/Mohist-%s-%s.jar", version, version, build)
+		if err := r.DownloadFile(ctx, dlURL, targetJar); err != nil {
+			return fmt.Errorf("download mohist %s build %s: %w", version, build, err)
+		}
+		return nil
 
 	case TypeKetting:
 		var err error

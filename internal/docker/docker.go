@@ -72,6 +72,8 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
     echo "Running server installer ($INSTALLER)..."
     IS_QUILT=0
     case "$INSTALLER" in *quilt*) IS_QUILT=1;; esac
+    IS_BUILDTOOLS=0
+    case "$INSTALLER" in *BuildTools*|*buildtools*) IS_BUILDTOOLS=1;; esac
     if [ "$SERVER_TYPE" = "quilt" ] || [ $IS_QUILT -eq 1 ]; then
       QUILT_ARGS="install server"
       if [ -n "$SERVER_VERSION" ]; then
@@ -81,6 +83,38 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
         fi
       fi
       java -Djava.awt.headless=true -jar "$INSTALLER" $QUILT_ARGS --download-server --install-dir=/data
+    elif [ "$SERVER_TYPE" = "spigot" ] || [ "$SERVER_TYPE" = "bukkit" ] || [ "$SERVER_TYPE" = "craftbukkit" ] || [ $IS_BUILDTOOLS -eq 1 ]; then
+      echo "Running Spigot BuildTools ($INSTALLER)..."
+      if ! command -v git >/dev/null 2>&1; then
+        echo "Installing git for BuildTools..."
+        if command -v apk >/dev/null 2>&1; then
+          apk add --no-cache git
+        elif command -v apt-get >/dev/null 2>&1; then
+          apt-get update && apt-get install -y git
+        fi
+      fi
+      BUILD_REV="${SERVER_VERSION:-latest}"
+      mkdir -p /tmp/buildtools
+      cd /tmp/buildtools
+      java -Xmx${RAM_MB:-2048}M -Djava.awt.headless=true -jar "$INSTALLER" --rev "$BUILD_REV" --output-dir /data
+      BUILD_EXIT=$?
+      cd /data
+      rm -rf /tmp/buildtools
+      if [ $BUILD_EXIT -ne 0 ]; then
+        echo "Spigot BuildTools failed with exit code $BUILD_EXIT"
+        exit $BUILD_EXIT
+      fi
+      echo "Spigot BuildTools completed successfully."
+      if [ ! -f "/data/server.jar" ]; then
+        for f in /data/spigot-*.jar /data/craftbukkit-*.jar; do
+          if [ -f "$f" ]; then
+            echo "Found Spigot jar $f, linking to /data/server.jar"
+            ln -sf "$f" /data/server.jar
+            break
+          fi
+        done
+      fi
+      rm -f /data/installer.jar /data/BuildTools.jar
     else
       java -Djava.awt.headless=true -jar "$INSTALLER" --installServer
     fi

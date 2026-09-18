@@ -450,15 +450,63 @@ func (r *Resolver) QuiltLoaders(ctx context.Context, version string) ([]string, 
 	return out, nil
 }
 
-// MohistVersions returns supported Mohist game versions.
+// MohistVersions returns supported Mohist game versions that have available builds.
 func (r *Resolver) MohistVersions(ctx context.Context) ([]string, error) {
+	fallbackVersions := []string{"1.20.2", "1.20.1", "1.19.4", "1.19.2", "1.18.2", "1.16.5", "1.12.2", "1.7.10"}
 	var res struct {
 		Versions []string `json:"versions"`
 	}
-	if err := r.getJSON(ctx, "https://mohistmc.com/api/v2/projects/mohist", &res); err != nil {
-		return []string{"1.20.1", "1.19.4", "1.18.2", "1.16.5", "1.12.2", "1.7.10"}, nil
+	if err := r.getJSON(ctx, "https://mohistmc.com/api/v2/projects/mohist", &res); err != nil || len(res.Versions) == 0 {
+		return fallbackVersions, nil
 	}
-	return res.Versions, nil
+
+	// Filter versions to only include those with actual released builds
+	type verCheck struct {
+		version string
+		has     bool
+	}
+	ch := make(chan verCheck, len(res.Versions))
+	for _, v := range res.Versions {
+		go func(ver string) {
+			checkCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+			defer cancel()
+			// Fast check via API endpoint
+			var apiList []struct {
+				ID int `json:"id"`
+			}
+			hasBuilds := false
+			if err := r.getJSON(checkCtx, fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds", ver), &apiList); err == nil && len(apiList) > 0 {
+				hasBuilds = true
+			} else {
+				var v2Res struct {
+					Builds []struct {
+						Number int `json:"number"`
+					} `json:"builds"`
+				}
+				if err2 := r.getJSON(checkCtx, fmt.Sprintf("https://mohistmc.com/api/v2/projects/mohist/%s/builds", ver), &v2Res); err2 == nil && len(v2Res.Builds) > 0 {
+					hasBuilds = true
+				}
+			}
+			ch <- verCheck{version: ver, has: hasBuilds}
+		}(v)
+	}
+
+	valid := make([]string, 0, len(res.Versions))
+	for range res.Versions {
+		resItem := <-ch
+		if resItem.has {
+			valid = append(valid, resItem.version)
+		}
+	}
+
+	if len(valid) == 0 {
+		return fallbackVersions, nil
+	}
+
+	sort.SliceStable(valid, func(i, j int) bool {
+		return CompareVersionTokens(valid[i], valid[j]) > 0
+	})
+	return valid, nil
 }
 
 // MohistBuilds returns builds for a Mohist version.
@@ -512,7 +560,7 @@ func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, 
 		}
 	}
 
-	return []string{"latest"}, nil
+	return nil, fmt.Errorf("no mohist builds available for version %q", version)
 }
 
 // SpongeVersions returns supported Sponge game versions.

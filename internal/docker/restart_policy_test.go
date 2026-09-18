@@ -80,3 +80,19 @@ func TestEntryScriptQuiltInstallerHandling(t *testing.T) {
 	}
 }
 
+func TestEntryScriptSpigotBuildToolsHandling(t *testing.T) {
+	if !strings.Contains(DefaultEntryScript, `*BuildTools*`) {
+		t.Errorf("DefaultEntryScript missing BuildTools pattern check")
+	}
+	if !strings.Contains(DefaultEntryScript, `--rev "$BUILD_REV" --output-dir /data`) {
+		t.Errorf("DefaultEntryScript missing BuildTools invocation with --rev and --output-dir")
+	}
+	if !strings.Contains(DefaultEntryScript, `spigot-*.jar`) {
+		t.Errorf("DefaultEntryScript missing spigot-*.jar search and symlink")
+	}
+	if !strings.Contains(DefaultEntryScript, `apk add --no-cache git`) {
+		t.Errorf("DefaultEntryScript missing git installation fallback")
+	}
+}
+
+

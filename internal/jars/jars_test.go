@@ -365,6 +365,75 @@ func TestSpigotResolve(t *testing.T) {
 	}
 }
 
+func TestSpigotDownloadBuildTools(t *testing.T) {
+	btSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/java-archive")
+		_, _ = w.Write([]byte("fake-buildtools-content"))
+	}))
+	defer btSrv.Close()
+
+	r := NewResolver()
+	r.BuildToolsURL = btSrv.URL
+
+	dir := t.TempDir()
+	err := r.DownloadServerJar(context.Background(), TypeSpigot, "26.3", "", dir)
+	if err != nil {
+		t.Fatalf("DownloadServerJar spigot failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "installer.jar"))
+	if err != nil {
+		t.Fatalf("installer.jar not found: %v", err)
+	}
+	if string(content) != "fake-buildtools-content" {
+		t.Fatalf("expected fake-buildtools-content, got %q", string(content))
+	}
+
+	// Verify eula.txt was created
+	eula, err := os.ReadFile(filepath.Join(dir, "eula.txt"))
+	if err != nil || string(eula) != "eula=true\n" {
+		t.Fatalf("eula.txt missing or invalid: %v", err)
+	}
+}
+
+func TestMohistBuildsErrorOnUnreleased(t *testing.T) {
+	r := NewResolver()
+	dir := t.TempDir()
+
+	// 1.21.4 currently has no builds released upstream
+	err := r.DownloadServerJar(context.Background(), TypeMohist, "1.21.4", "latest", dir)
+	if err == nil {
+		t.Fatalf("expected DownloadServerJar to fail for unreleased mohist version 1.21.4")
+	}
+
+	// Validating unreleased version should also fail
+	_, err = r.Validate(context.Background(), TypeMohist, "1.21.4", "latest")
+	if err == nil {
+		t.Fatalf("expected Validate to fail for unreleased mohist version 1.21.4")
+	}
+}
+
+func TestMohistVersionsExcludesUnreleased(t *testing.T) {
+	r := NewResolver()
+	versions, err := r.MohistVersions(context.Background())
+	if err != nil {
+		t.Fatalf("MohistVersions failed: %v", err)
+	}
+	if len(versions) == 0 {
+		t.Fatal("expected at least one valid mohist version")
+	}
+	for _, v := range versions {
+		if v == "1.21.4" || v == "1.20.6" {
+			t.Errorf("MohistVersions returned unreleased version with 0 builds: %s", v)
+		}
+	}
+	// The highest released version is 1.20.2
+	if versions[0] != "1.20.2" {
+		t.Errorf("expected highest Mohist version to be 1.20.2, got %s", versions[0])
+	}
+}
+
+
 func TestRecommendJavaVersion(t *testing.T) {
 	tests := []struct {
 		mcVersion string
