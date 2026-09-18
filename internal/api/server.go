@@ -217,6 +217,7 @@ func (s *Server) routes() {
 
 	// Ports and settings.
 	s.mux.HandleFunc("GET /api/ports/available", s.requireAuth(s.wrapJSON(s.handleAvailablePorts)))
+	s.mux.HandleFunc("GET /api/ports/check", s.requireAuth(s.wrapJSON(s.handleCheckPort)))
 	s.mux.HandleFunc("GET /api/settings", s.requireAuth(s.wrapJSON(s.handleGetSettings)))
 	s.mux.HandleFunc("PUT /api/settings", s.requireAuth(s.wrapJSON(s.handlePutSettings)))
 	s.mux.HandleFunc("GET /api/docker/status", s.requireAuth(s.wrapJSON(s.handleDockerStatus)))

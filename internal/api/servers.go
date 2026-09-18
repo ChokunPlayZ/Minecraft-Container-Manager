@@ -154,7 +154,35 @@ func (s *Server) handleAvailablePorts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		configured = free
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": free, "pool": configured})
+	used, _ := s.servers.Pool().UsedDetails(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{"available": free, "pool": configured, "used": used})
+}
+
+func (s *Server) handleCheckPort(w http.ResponseWriter, r *http.Request) {
+	portStr := r.URL.Query().Get("port")
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		writeError(w, http.StatusBadRequest, "invalid_port", "Invalid port number")
+		return
+	}
+	serverID := r.URL.Query().Get("server_id")
+	if checkErr := s.servers.CheckPortFree(r.Context(), serverID, port); checkErr != nil {
+		msg := checkErr.Error()
+		if idx := strings.Index(msg, "port already in use: "); idx >= 0 {
+			msg = msg[idx+len("port already in use: "):]
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"port":    port,
+			"in_use":  true,
+			"message": msg,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"port":    port,
+		"in_use":  false,
+		"message": "Port is available",
+	})
 }
 
 func (s *Server) handleExportServer(w http.ResponseWriter, r *http.Request) {
@@ -295,7 +323,11 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, servers.ErrPortInUse) {
-		writeError(w, http.StatusConflict, "port_in_use", "The selected port is already in use by another server.")
+		msg := err.Error()
+		if idx := strings.Index(msg, "port already in use: "); idx >= 0 {
+			msg = msg[idx+len("port already in use: "):]
+		}
+		writeError(w, http.StatusConflict, "port_in_use", msg)
 		return
 	}
 	if errors.Is(err, ports.ErrPortPoolFull) {
@@ -318,7 +350,11 @@ func (s *Server) writeServerErr(w http.ResponseWriter, err error) {
 // as 400; port conflicts as 409; everything else as 500.
 func friendlyCreateErr(err error) (int, string, string) {
 	if errors.Is(err, servers.ErrPortInUse) {
-		return http.StatusConflict, "port_in_use", "The selected port is already in use by another server."
+		msg := err.Error()
+		if idx := strings.Index(msg, "port already in use: "); idx >= 0 {
+			msg = msg[idx+len("port already in use: "):]
+		}
+		return http.StatusConflict, "port_in_use", msg
 	}
 	if errors.Is(err, jars.ErrUpstream) || errors.Is(err, servers.ErrUpstream) {
 		return http.StatusBadGateway, "upstream_error", "Couldn't reach the upstream provider right now."

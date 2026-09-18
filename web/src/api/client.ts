@@ -44,6 +44,7 @@ import type {
   VersionUpdateReport,
   BatchUpdateModsResult,
   AvailablePortsResponse,
+  PortCheckResponse,
   CopyServerInput,
 } from './types';
 
@@ -716,6 +717,13 @@ export const api = {
   javaVersions: () => request<JavaRelease[]>('/api/system/java-versions'),
 
   availablePorts: () => request<AvailablePortsResponse>('/api/ports/available'),
+
+  checkPort: (port: number, serverId?: string, protocol?: string) => {
+    const params = new URLSearchParams({ port: String(port) });
+    if (serverId) params.set('server_id', serverId);
+    if (protocol) params.set('protocol', protocol);
+    return request<PortCheckResponse>(`/api/ports/check?${params.toString()}`);
+  },
 
   getSettings: () => request<{ settings: Record<string, string> }>('/api/settings'),
 

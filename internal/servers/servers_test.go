@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,54 @@ func TestCreateWithHostPortAndConflict(t *testing.T) {
 	}
 	if srv3.HostPort != 25565 {
 		t.Errorf("expected srv3 to allocate 25565, got %d", srv3.HostPort)
+	}
+
+	// Create fourth server with an extra port (e.g. 19132 for GeyserMC)
+	_, err = s.Create(context.Background(), CreateInput{
+		Name:       "server-with-geyser",
+		ServerType: jars.TypePaper,
+		Version:    "1.21.1",
+		RAMMB:      2048,
+		HostPort:   25585,
+		ExtraPorts: []ExtraPort{
+			{ID: "geyser-1", Description: "Geyser Bedrock", HostPort: 19132, ContainerPort: 19132, Protocol: "udp"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create server-with-geyser failed: %v", err)
+	}
+
+	// Attempting to create standalone server on 19132 should fail with ErrPortInUse
+	_, err = s.Create(context.Background(), CreateInput{
+		Name:       "geyser-standalone",
+		ServerType: jars.TypeGeyser,
+		Version:    "2.11.3",
+		RAMMB:      1024,
+		HostPort:   19132,
+	})
+	if err == nil {
+		t.Fatal("expected Create geyser-standalone on port 19132 to fail, got nil")
+	}
+	if !errors.Is(err, ErrPortInUse) {
+		t.Errorf("expected ErrPortInUse, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "19132") || !strings.Contains(err.Error(), "server-with-geyser") {
+		t.Errorf("expected error message to mention port 19132 and server-with-geyser, got: %v", err)
+	}
+
+	// Attempting to create server with duplicate extra ports should fail
+	_, err = s.Create(context.Background(), CreateInput{
+		Name:       "dup-ports",
+		ServerType: jars.TypePaper,
+		Version:    "1.21.1",
+		RAMMB:      1024,
+		HostPort:   25590,
+		ExtraPorts: []ExtraPort{
+			{ID: "p1", HostPort: 25590}, // conflicts with HostPort
+		},
+	})
+	if err == nil || !errors.Is(err, ErrPortInUse) {
+		t.Errorf("expected duplicate port error, got: %v", err)
 	}
 }
 
@@ -529,7 +578,7 @@ func TestStopCommandFor(t *testing.T) {
 		{"bungeecord", "end"},
 		{"waterfall", "end"},
 		{"velocity", "shutdown"},
-		{"geysermc", "stop"},
+		{"geysermc", "geyser stop"},
 		{"unknown", "stop"},
 	}
 	for _, tc := range cases {

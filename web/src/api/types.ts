@@ -249,9 +249,25 @@ export interface TaskProgressResponse {
   progress?: TaskProgress;
 }
 
+export interface UsedPortDetail {
+  port: number;
+  server_id: string;
+  server_name: string;
+  type: 'host_port' | 'extra_port';
+  description?: string;
+  protocol?: string;
+}
+
 export interface AvailablePortsResponse {
   available: number[];
   pool?: number[];
+  used?: UsedPortDetail[];
+}
+
+export interface PortCheckResponse {
+  port: number;
+  in_use: boolean;
+  message: string;
 }
 
 export interface Player {

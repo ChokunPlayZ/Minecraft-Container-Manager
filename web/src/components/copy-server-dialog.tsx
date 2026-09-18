@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   AlertCircle,
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
@@ -51,6 +52,9 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
 
   // State
   const [availablePorts, setAvailablePorts] = useState<number[]>([]);
+  const [usedPortDetails, setUsedPortDetails] = useState<
+    Record<number, { serverName: string; description: string }>
+  >({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,12 +76,42 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
       setError(null);
       setBusy(false);
 
-      // Fetch available ports for suggestions
-      api.availablePorts()
-        .then((res) => {
+      // Fetch available ports and used ports across all servers and docker containers
+      Promise.all([api.listServers(), api.availablePorts()])
+        .then(([allServers, res]) => {
           if (res?.available && res.available.length > 0) {
             setAvailablePorts(res.available);
           }
+          const detailsMap: Record<number, { serverName: string; description: string }> = {};
+          for (const s of allServers) {
+            if (s.host_port && s.host_port > 0) {
+              detailsMap[s.host_port] = {
+                serverName: s.name,
+                description: 'Primary game port',
+              };
+            }
+            if (Array.isArray(s.extra_ports)) {
+              for (const ep of s.extra_ports) {
+                if (ep.host_port && ep.host_port > 0 && !detailsMap[ep.host_port]) {
+                  detailsMap[ep.host_port] = {
+                    serverName: s.name,
+                    description: ep.description ? `Additional port (${ep.description})` : 'Additional port',
+                  };
+                }
+              }
+            }
+          }
+          if (res?.used) {
+            for (const u of res.used) {
+              if (u.port > 0 && !detailsMap[u.port]) {
+                detailsMap[u.port] = {
+                  serverName: u.server_name,
+                  description: u.description || (u.type === 'extra_port' ? 'Additional port' : 'Primary game port'),
+                };
+              }
+            }
+          }
+          setUsedPortDetails(detailsMap);
         })
         .catch(() => {
           // ignore port pool query errors
@@ -130,6 +164,11 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
         setError('Please enter a valid port between 1 and 65535.');
         return;
       }
+      const conflict = usedPortDetails[p];
+      if (conflict) {
+        setError(`Port ${p} is already in use by server "${conflict.serverName}" (${conflict.description}).`);
+        return;
+      }
       parsedPort = p;
     }
 
@@ -170,6 +209,12 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
       setBusy(false);
     }
   }
+
+  const parsedCustomPort = parseInt(customPort, 10);
+  const customPortConflict =
+    portMode === 'custom' && !isNaN(parsedCustomPort) && parsedCustomPort > 0
+      ? usedPortDetails[parsedCustomPort]
+      : null;
 
   return (
     <div
@@ -300,7 +345,7 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
             </div>
 
             {portMode === 'custom' && (
-              <div className="pt-1.5">
+              <div className="space-y-1.5 pt-1.5">
                 <Input
                   type="number"
                   min="1"
@@ -311,6 +356,17 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
                   onChange={(e) => setCustomPort(e.target.value)}
                   className="h-9"
                 />
+                {customPortConflict && (
+                  <div
+                    data-testid="copy-port-conflict-alert"
+                    className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>
+                      Port {parsedCustomPort} is already in use by server &quot;{customPortConflict.serverName}&quot; ({customPortConflict.description}).
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

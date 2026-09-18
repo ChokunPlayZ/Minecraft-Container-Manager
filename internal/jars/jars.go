@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -138,20 +139,35 @@ func RecommendJavaVersion(mcVersion string) int {
 		if len(m) >= 4 && m[3] != "" {
 			patch, _ = strconv.Atoi(m[3])
 		}
-		if major >= 25 || minor >= 22 {
+		if major >= 25 {
 			return 25
 		}
-		if minor >= 21 || (minor == 20 && patch >= 5) {
-			return 21
-		}
-		if minor >= 17 {
-			return 17
-		}
-		if minor > 0 && minor <= 16 {
-			return 8
+		if major == 1 {
+			if minor >= 22 {
+				return 25
+			}
+			if minor >= 21 || (minor == 20 && patch >= 5) {
+				return 21
+			}
+			if minor >= 17 {
+				return 17
+			}
+			if minor > 0 && minor <= 16 {
+				return 8
+			}
 		}
 	}
 	return 21
+}
+
+// RecommendJavaVersionForType returns the recommended Java version considering both server type and version.
+func RecommendJavaVersionForType(serverType, version string) int {
+	switch strings.ToLower(serverType) {
+	case "geysermc", "velocity", "waterfall", "bungeecord", "limbo", "nanolimbo":
+		return 21
+	default:
+		return RecommendJavaVersion(version)
+	}
 }
 
 
@@ -392,15 +408,32 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 		}
 		return Resolved{Type: TypeSpigot, Version: version}, nil
 	case TypePurpur:
-		builds, err := r.PurpurBuilds(ctx, version)
+		targetVer := version
+		if targetVer == "" || targetVer == "latest" {
+			vers, err := r.PurpurVersions(ctx)
+			if err == nil && len(vers) > 0 {
+				targetVer = vers[len(vers)-1]
+			} else {
+				targetVer = "1.21.4"
+			}
+		}
+		builds, err := r.PurpurBuilds(ctx, targetVer)
+		if err != nil && strings.HasSuffix(targetVer, ".0") {
+			trimmed := strings.TrimSuffix(targetVer, ".0")
+			if b2, err2 := r.PurpurBuilds(ctx, trimmed); err2 == nil {
+				targetVer = trimmed
+				builds = b2
+				err = nil
+			}
+		}
 		if err != nil || len(builds) == 0 {
-			return Resolved{Type: TypePurpur, Version: version, Build: "latest"}, nil
+			return Resolved{Type: TypePurpur, Version: targetVer, Build: "latest"}, nil
 		}
 		b, err := selectString(builds, build)
 		if err != nil {
 			b = builds[len(builds)-1]
 		}
-		return Resolved{Type: TypePurpur, Version: version, Build: b}, nil
+		return Resolved{Type: TypePurpur, Version: targetVer, Build: b}, nil
 	case TypeFolia:
 		builds, err := r.FoliaBuilds(ctx, version)
 		if err != nil || len(builds) == 0 {
@@ -653,6 +686,7 @@ func (r *Resolver) getJSON(ctx context.Context, url string, out any) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "MCM-Panel/1.0 (Minecraft Container Manager; +https://github.com/mcm-panel/mcm)")
 
 	resp, err := r.Client.Do(req)
 	if err != nil {
@@ -801,21 +835,57 @@ func (r *Resolver) resolveGitHubReleaseAsset(ctx context.Context, repo, tag, pre
 	return "", fmt.Errorf("no jar asset found for %s", repo)
 }
 
-func (r *Resolver) resolveLimboJar(ctx context.Context) (string, error) {
+func (r *Resolver) resolveLimboJar(ctx context.Context, version string) (string, error) {
+	// 1. Try Modrinth official LOOHP limbo-server distribution
+	mrURL := "https://api.modrinth.com/v2/project/limbo-server/version"
+	if version != "" && version != "latest" {
+		mrURL = fmt.Sprintf("https://api.modrinth.com/v2/project/limbo-server/version?game_versions=%%5B%%22%s%%22%%5D", url.QueryEscape(version))
+	}
+	var mrData []struct {
+		Files []struct {
+			URL     string `json:"url"`
+			Primary bool   `json:"primary"`
+		} `json:"files"`
+	}
+	if err := r.getJSON(ctx, mrURL, &mrData); err == nil && len(mrData) > 0 {
+		for _, v := range mrData {
+			for _, f := range v.Files {
+				if f.Primary && f.URL != "" {
+					return f.URL, nil
+				}
+			}
+			if len(v.Files) > 0 && v.Files[0].URL != "" {
+				return v.Files[0].URL, nil
+			}
+		}
+	}
+
+	// 2. If filtered version query on Modrinth yielded no results, try Modrinth latest
+	if version != "" && version != "latest" {
+		if err := r.getJSON(ctx, "https://api.modrinth.com/v2/project/limbo-server/version", &mrData); err == nil && len(mrData) > 0 {
+			if len(mrData[0].Files) > 0 && mrData[0].Files[0].URL != "" {
+				return mrData[0].Files[0].URL, nil
+			}
+		}
+	}
+
+	// 3. Try Jenkins build artifacts
 	jenkinsURL := "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/api/json"
-	var data struct {
+	var jkData struct {
 		Artifacts []struct {
 			RelativePath string `json:"relativePath"`
 		} `json:"artifacts"`
 	}
-	if err := r.getJSON(ctx, jenkinsURL, &data); err == nil {
-		for _, a := range data.Artifacts {
+	if err := r.getJSON(ctx, jenkinsURL, &jkData); err == nil && len(jkData.Artifacts) > 0 {
+		for _, a := range jkData.Artifacts {
 			if strings.HasSuffix(a.RelativePath, ".jar") {
 				return "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/artifact/" + a.RelativePath, nil
 			}
 		}
 	}
-	return "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/artifact/target/Limbo.jar", nil
+
+	// 4. Reliable pinned CDN fallback (LOOHP Limbo on Modrinth CDN)
+	return "https://cdn.modrinth.com/data/gIDqs3gn/versions/t4FmKS67/Limbo-2026.0.3-ALPHA-26.3.jar", nil
 }
 
 func (r *Resolver) resolveSpongeTag(ctx context.Context, version string) string {
@@ -918,15 +988,43 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		dlURL = pkg.Downloads.Server.URL
 
 	case TypePurpur:
+		targetVer := version
+		if targetVer == "" || targetVer == "latest" {
+			vers, err := r.PurpurVersions(ctx)
+			if err == nil && len(vers) > 0 {
+				targetVer = vers[len(vers)-1]
+			} else {
+				targetVer = "1.21.4"
+			}
+		}
+		builds, err := r.PurpurBuilds(ctx, targetVer)
+		if err != nil && strings.HasSuffix(targetVer, ".0") {
+			trimmed := strings.TrimSuffix(targetVer, ".0")
+			if b2, err2 := r.PurpurBuilds(ctx, trimmed); err2 == nil {
+				targetVer = trimmed
+				builds = b2
+				err = nil
+			}
+		}
+		if err != nil {
+			if vers, errVers := r.PurpurVersions(ctx); errVers == nil {
+				for _, v := range vers {
+					if strings.HasPrefix(v, targetVer) || strings.HasPrefix(targetVer, v) {
+						targetVer = v
+						builds, _ = r.PurpurBuilds(ctx, targetVer)
+						break
+					}
+				}
+			}
+		}
 		if build == "" || build == "latest" {
-			builds, err := r.PurpurBuilds(ctx, version)
-			if err == nil && len(builds) > 0 {
+			if len(builds) > 0 {
 				build = builds[len(builds)-1]
 			} else {
 				build = "latest"
 			}
 		}
-		dlURL = fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s/%s/download", version, build)
+		dlURL = fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s/%s/download", targetVer, build)
 
 	case TypeFolia:
 		var err error
@@ -982,16 +1080,19 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 
 	case TypeLimbo:
 		var err error
-		dlURL, err = r.resolveLimboJar(ctx)
+		dlURL, err = r.resolveLimboJar(ctx, version)
 		if err != nil {
-			dlURL = "https://github.com/LOOHP/Limbo/releases/latest/download/Limbo.jar"
+			dlURL = "https://cdn.modrinth.com/data/gIDqs3gn/versions/t4FmKS67/Limbo-2026.0.3-ALPHA-26.3.jar"
 		}
 
 	case TypeNanoLimbo:
 		var err error
-		dlURL, err = r.resolveGitHubReleaseAsset(ctx, "BoomEaro/NanoLimbo", "latest", "nanolimbo")
+		dlURL, err = r.resolveGitHubReleaseAsset(ctx, "Nan1t/NanoLimbo", "latest", "NanoLimbo")
 		if err != nil {
-			dlURL = "https://github.com/BoomEaro/NanoLimbo/releases/latest/download/nanolimbo.jar"
+			dlURL, err = r.resolveGitHubReleaseAsset(ctx, "BoomEaro/NanoLimbo", "latest", "nanolimbo")
+		}
+		if err != nil {
+			dlURL = "https://github.com/Nan1t/NanoLimbo/releases/latest/download/NanoLimbo.jar"
 		}
 
 	case TypeCrucible:

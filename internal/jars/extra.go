@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ForgeMetadata is the JSON shape returned by GET {base}/maven-metadata.json,
@@ -311,12 +312,27 @@ func (r *Resolver) PurpurVersions(ctx context.Context) ([]string, error) {
 
 // PurpurBuilds returns build numbers for a Purpur version.
 func (r *Resolver) PurpurBuilds(ctx context.Context, version string) ([]string, error) {
+	targetVer := version
+	if targetVer == "" || targetVer == "latest" {
+		vers, err := r.PurpurVersions(ctx)
+		if err != nil || len(vers) == 0 {
+			targetVer = "1.21.4"
+		} else {
+			targetVer = vers[len(vers)-1]
+		}
+	}
 	var res struct {
 		Builds struct {
 			All []string `json:"all"`
 		} `json:"builds"`
 	}
-	if err := r.getJSON(ctx, fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s", version), &res); err != nil {
+	if err := r.getJSON(ctx, fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s", targetVer), &res); err != nil {
+		if strings.HasSuffix(targetVer, ".0") {
+			trimmed := strings.TrimSuffix(targetVer, ".0")
+			if err2 := r.getJSON(ctx, fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s", trimmed), &res); err2 == nil {
+				return res.Builds.All, nil
+			}
+		}
 		return nil, err
 	}
 	return res.Builds.All, nil
@@ -590,7 +606,16 @@ func (r *Resolver) DownloadFile(ctx context.Context, url, targetPath string) err
 	if err != nil {
 		return err
 	}
-	resp, err := r.Client.Do(req)
+	req.Header.Set("User-Agent", "MCM-Panel/1.0 (Minecraft Container Manager; +https://github.com/mcm-panel/mcm)")
+
+	dlClient := &http.Client{
+		Timeout: 15 * time.Minute,
+	}
+	if r.Client != nil && r.Client.Transport != nil {
+		dlClient.Transport = r.Client.Transport
+	}
+
+	resp, err := dlClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", url, err)
 	}

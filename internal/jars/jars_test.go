@@ -387,6 +387,9 @@ func TestRecommendJavaVersion(t *testing.T) {
 		{"v1.20.1", 17},
 		{"1.21.1-fabric", 21},
 		{" 1.16.5 ", 8},
+		{"2.11.3", 21}, // Geyser standalone
+		{"2.4.2", 21},  // Geyser older
+		{"3.4.0-SNAPSHOT", 21}, // Velocity
 	}
 
 	for _, tt := range tests {
@@ -394,6 +397,13 @@ func TestRecommendJavaVersion(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("RecommendJavaVersion(%q) = %d, want %d", tt.mcVersion, got, tt.want)
 		}
+	}
+
+	if got := RecommendJavaVersionForType("geysermc", "2.11.3"); got != 21 {
+		t.Errorf("RecommendJavaVersionForType(geysermc) = %d, want 21", got)
+	}
+	if got := RecommendJavaVersionForType("velocity", "3.4.0"); got != 21 {
+		t.Errorf("RecommendJavaVersionForType(velocity) = %d, want 21", got)
 	}
 }
 
@@ -442,3 +452,65 @@ func TestPaperDownloadURL(t *testing.T) {
 		t.Errorf("paperDownloadURL = %q, want %q", dlURL, want)
 	}
 }
+
+func TestLiveLimbo(t *testing.T) {
+	r := NewResolver()
+	urlLatest, err := r.resolveLimboJar(context.Background(), "latest")
+	if err != nil {
+		t.Fatalf("resolveLimboJar(latest) failed: %v", err)
+	}
+	t.Logf("resolveLimboJar(latest) returned: %s", urlLatest)
+
+	url121, err := r.resolveLimboJar(context.Background(), "1.21")
+	if err != nil {
+		t.Fatalf("resolveLimboJar(1.21) failed: %v", err)
+	}
+	t.Logf("resolveLimboJar(1.21) returned: %s", url121)
+
+	dir := t.TempDir()
+	err = r.DownloadServerJar(context.Background(), TypeLimbo, "latest", "latest", dir)
+	if err != nil {
+		t.Fatalf("DownloadServerJar failed: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, "server.jar"))
+	if err != nil {
+		t.Fatalf("server.jar not found: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("downloaded server.jar is empty")
+	}
+	t.Logf("downloaded Limbo server.jar size: %d bytes", info.Size())
+}
+
+func TestLivePurpur(t *testing.T) {
+	r := NewResolver()
+	for _, v := range []string{"latest", "1.21.1", "1.20.4"} {
+		dir := t.TempDir()
+		err := r.DownloadServerJar(context.Background(), TypePurpur, v, "latest", dir)
+		if err != nil {
+			t.Fatalf("DownloadServerJar(%s, latest) failed: %v", v, err)
+		}
+		info, err := os.Stat(filepath.Join(dir, "server.jar"))
+		if err != nil || info.Size() == 0 {
+			t.Fatalf("server.jar not found or empty for %s: %v", v, err)
+		}
+		t.Logf("Purpur %s downloaded successfully (%d bytes)", v, info.Size())
+	}
+}
+
+func TestPurpurBuilds(t *testing.T) {
+	r := NewResolver()
+	for _, v := range []string{"", "latest", "1.21.0", "1.21.4"} {
+		builds, err := r.PurpurBuilds(context.Background(), v)
+		if err != nil {
+			t.Fatalf("PurpurBuilds(%q) failed: %v", v, err)
+		}
+		if len(builds) == 0 {
+			t.Fatalf("PurpurBuilds(%q) returned no builds", v)
+		}
+		t.Logf("PurpurBuilds(%q) returned %d builds (latest: %s)", v, len(builds), builds[len(builds)-1])
+	}
+}
+
+

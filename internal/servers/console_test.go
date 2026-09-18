@@ -70,6 +70,9 @@ func (f *fakeRuntime) Stats(_ context.Context, _ string) (docker.ContainerStats,
 	return f.statsResult, nil
 }
 func (f *fakeRuntime) HostAddress() string { return "127.0.0.1" }
+func (f *fakeRuntime) RunningContainerPorts(_ context.Context) ([]docker.ContainerPortUsage, error) {
+	return nil, nil
+}
 func (f *fakeRuntime) Create(_ context.Context, opts docker.CreateOpts) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -53,6 +53,10 @@ export function ServerSettings({
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [usedPortDetails, setUsedPortDetails] = useState<
+    Record<number, { serverName: string; description: string }>
+  >({});
+
   useEffect(() => {
     let cancelled = false;
     api.javaVersions()
@@ -66,6 +70,72 @@ export function ServerSettings({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.listServers(), api.availablePorts()])
+      .then(([allServers, portsRes]) => {
+        if (cancelled) return;
+        const detailsMap: Record<number, { serverName: string; description: string }> = {};
+
+        for (const s of allServers) {
+          if (s.id === server.id) continue;
+          if (s.host_port && s.host_port > 0) {
+            detailsMap[s.host_port] = {
+              serverName: s.name,
+              description: 'Primary game port',
+            };
+          }
+          if (Array.isArray(s.extra_ports)) {
+            for (const ep of s.extra_ports) {
+              if (ep.host_port && ep.host_port > 0 && !detailsMap[ep.host_port]) {
+                detailsMap[ep.host_port] = {
+                  serverName: s.name,
+                  description: ep.description ? `Additional port (${ep.description})` : 'Additional port',
+                };
+              }
+            }
+          }
+        }
+
+        if (portsRes?.used) {
+          for (const u of portsRes.used) {
+            if (u.server_id === server.id) continue;
+            if (u.port > 0 && !detailsMap[u.port]) {
+              detailsMap[u.port] = {
+                serverName: u.server_name,
+                description: u.description || (u.type === 'extra_port' ? 'Additional port' : 'Primary game port'),
+              };
+            }
+          }
+        }
+
+        setUsedPortDetails(detailsMap);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [server.id]);
+
+  function getExtraPortConflict(p: ExtraPort): string | null {
+    if (!p.host_port || p.host_port <= 0) return null;
+    if (hostPort > 0 && p.host_port === hostPort) {
+      return `Conflicts with this server's primary game port (${hostPort})`;
+    }
+    const dup = extraPorts.filter((x) => x.id !== p.id && x.host_port === p.host_port);
+    if (dup.length > 0) {
+      return `Duplicate additional host port (${p.host_port})`;
+    }
+    const detail = usedPortDetails[p.host_port];
+    if (detail) {
+      return `Port ${p.host_port} is already in use by server "${detail.serverName}" (${detail.description})`;
+    }
+    return null;
+  }
+
+  const hostPortConflict = hostPort > 0 ? usedPortDetails[hostPort] : null;
+  const hostPortInternalConflict = hostPort > 0 && extraPorts.some((p) => p.host_port === hostPort);
 
   function newPort(): ExtraPort {
     return {
@@ -87,6 +157,21 @@ export function ServerSettings({
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (hostPortConflict) {
+      setError(`Port ${hostPort} is already in use by server "${hostPortConflict.serverName}" (${hostPortConflict.description})`);
+      return;
+    }
+    if (hostPortInternalConflict) {
+      setError(`Port ${hostPort} conflicts with one of this server's additional ports`);
+      return;
+    }
+    for (const ep of extraPorts) {
+      const epConflict = getExtraPortConflict(ep);
+      if (epConflict) {
+        setError(epConflict);
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     setSavedNotice(null);
@@ -293,6 +378,28 @@ export function ServerSettings({
                     Copy Docker addr
                   </button>
                 </div>
+                {hostPortConflict && (
+                  <div
+                    data-testid="host-port-conflict-alert"
+                    className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>
+                      Port {hostPort} is already in use by server &quot;{hostPortConflict.serverName}&quot; ({hostPortConflict.description}).
+                    </span>
+                  </div>
+                )}
+                {hostPortInternalConflict && (
+                  <div
+                    data-testid="host-port-internal-conflict-alert"
+                    className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>
+                      Port {hostPort} conflicts with one of this server&apos;s additional ports.
+                    </span>
+                  </div>
+                )}
               </div>
               <fieldset className="space-y-3">
                 <legend className="text-sm font-medium">Additional ports</legend>
@@ -303,66 +410,78 @@ export function ServerSettings({
                 {extraPorts.length === 0 && (
                   <p className="text-sm text-muted-foreground">No additional ports configured.</p>
                 )}
-                {extraPorts.map((p) => (
-                  <div key={p.id} className="space-y-3 rounded-md border p-3">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1 space-y-1">
-                        <Label className="text-xs" htmlFor={`ep-desc-${p.id}`}>Description</Label>
-                        <Input
-                          id={`ep-desc-${p.id}`}
-                          placeholder="e.g. WebUI"
-                          value={p.description}
-                          onChange={(e) => updatePort(p.id, { description: e.target.value })}
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="mt-6 shrink-0"
-                        aria-label={`Remove ${p.description || 'extra port'}`}
-                        onClick={() => removePort(p.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs" htmlFor={`ep-host-${p.id}`}>Host port</Label>
-                        <Input
-                          id={`ep-host-${p.id}`}
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={p.host_port || ''}
-                          onChange={(e) => updatePort(p.id, { host_port: Number(e.target.value) })}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs" htmlFor={`ep-cont-${p.id}`}>Container port</Label>
-                        <Input
-                          id={`ep-cont-${p.id}`}
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={p.container_port || ''}
-                          onChange={(e) => updatePort(p.id, { container_port: Number(e.target.value) })}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs" htmlFor={`ep-proto-${p.id}`}>Protocol</Label>
-                        <Select
-                          id={`ep-proto-${p.id}`}
-                          value={p.protocol}
-                          onChange={(e) => updatePort(p.id, { protocol: e.target.value as 'tcp' | 'udp' })}
+                {extraPorts.map((p) => {
+                  const conflict = getExtraPortConflict(p);
+                  return (
+                    <div key={p.id} className="space-y-3 rounded-md border p-3">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 space-y-1">
+                          <Label className="text-xs" htmlFor={`ep-desc-${p.id}`}>Description</Label>
+                          <Input
+                            id={`ep-desc-${p.id}`}
+                            placeholder="e.g. WebUI"
+                            value={p.description}
+                            onChange={(e) => updatePort(p.id, { description: e.target.value })}
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="mt-6 shrink-0"
+                          aria-label={`Remove ${p.description || 'extra port'}`}
+                          onClick={() => removePort(p.id)}
                         >
-                          <option value="tcp">TCP</option>
-                          <option value="udp">UDP</option>
-                        </Select>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs" htmlFor={`ep-host-${p.id}`}>Host port</Label>
+                          <Input
+                            id={`ep-host-${p.id}`}
+                            type="number"
+                            min={1}
+                            max={65535}
+                            value={p.host_port || ''}
+                            onChange={(e) => updatePort(p.id, { host_port: Number(e.target.value) })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs" htmlFor={`ep-cont-${p.id}`}>Container port</Label>
+                          <Input
+                            id={`ep-cont-${p.id}`}
+                            type="number"
+                            min={1}
+                            max={65535}
+                            value={p.container_port || ''}
+                            onChange={(e) => updatePort(p.id, { container_port: Number(e.target.value) })}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs" htmlFor={`ep-proto-${p.id}`}>Protocol</Label>
+                          <Select
+                            id={`ep-proto-${p.id}`}
+                            value={p.protocol}
+                            onChange={(e) => updatePort(p.id, { protocol: e.target.value as 'tcp' | 'udp' })}
+                          >
+                            <option value="tcp">TCP</option>
+                            <option value="udp">UDP</option>
+                          </Select>
+                        </div>
+                      </div>
+                      {conflict && (
+                        <div
+                          data-testid={`ep-conflict-${p.id}`}
+                          className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200"
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                          <span>{conflict}</span>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <Button type="button" variant="outline" onClick={() => setExtraPorts((cur) => [...cur, newPort()])}>
                   <Plus className="h-4 w-4" />
                   Add port

@@ -154,6 +154,75 @@ type extraPortEntry struct {
 	HostPort int `json:"host_port"`
 }
 
+// UsedPortDetail represents a port used by a server.
+type UsedPortDetail struct {
+	Port        int    `json:"port"`
+	ServerID    string `json:"server_id"`
+	ServerName  string `json:"server_name"`
+	Type        string `json:"type"` // "host_port" or "extra_port"
+	Description string `json:"description,omitempty"`
+	Protocol    string `json:"protocol,omitempty"`
+}
+
+type extraPortDetailEntry struct {
+	HostPort    int    `json:"host_port"`
+	Description string `json:"description"`
+	Protocol    string `json:"protocol"`
+}
+
+// UsedDetails returns rich details of all ports in use by servers.
+func (p *Pool) UsedDetails(ctx context.Context) ([]UsedPortDetail, error) {
+	if p.db == nil {
+		return nil, nil
+	}
+	rows, err := p.db.QueryContext(ctx, `SELECT id, name, host_port, COALESCE(extra_ports, '[]') FROM servers`)
+	if err != nil {
+		return nil, fmt.Errorf("query used ports details: %w", err)
+	}
+	defer rows.Close()
+
+	var details []UsedPortDetail
+	for rows.Next() {
+		var id, name, extraRaw string
+		var primaryPort int
+		if err := rows.Scan(&id, &name, &primaryPort, &extraRaw); err != nil {
+			return nil, err
+		}
+		if primaryPort > 0 {
+			details = append(details, UsedPortDetail{
+				Port:       primaryPort,
+				ServerID:   id,
+				ServerName: name,
+				Type:       "host_port",
+				Protocol:   "tcp",
+			})
+		}
+		var extras []extraPortDetailEntry
+		if err := json.Unmarshal([]byte(extraRaw), &extras); err == nil {
+			for _, ep := range extras {
+				if ep.HostPort > 0 {
+					proto := ep.Protocol
+					if proto == "" {
+						proto = "tcp"
+					}
+					details = append(details, UsedPortDetail{
+						Port:        ep.HostPort,
+						ServerID:    id,
+						ServerName:  name,
+						Type:        "extra_port",
+						Description: ep.Description,
+						Protocol:    proto,
+					})
+				}
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return details, nil
+}
+
 func (p *Pool) used(ctx context.Context) ([]int, error) {
 	rows, err := p.db.QueryContext(ctx, `SELECT host_port, COALESCE(extra_ports, '[]') FROM servers`)
 	if err != nil {

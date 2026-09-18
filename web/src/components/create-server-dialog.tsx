@@ -24,17 +24,30 @@ import type {
 } from '../api/types';
 import { formatCount, getProjectVersions, searchModrinth } from '../api/modrinth';
 
-function recommendJava(ver: string): number {
+function recommendJava(ver: string, serverType?: ServerType): number {
+  if (
+    serverType === 'geysermc' ||
+    serverType === 'velocity' ||
+    serverType === 'waterfall' ||
+    serverType === 'bungeecord' ||
+    serverType === 'limbo' ||
+    serverType === 'nanolimbo'
+  ) {
+    return 21;
+  }
   const clean = ver.trim().replace(/^v/i, '');
-  const match = clean.match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+  const match = clean.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
   if (match) {
     const major = parseInt(match[1], 10);
     const minor = parseInt(match[2], 10);
     const patch = match[3] ? parseInt(match[3], 10) : 0;
-    if (major >= 25 || minor >= 22) return 25;
-    if (minor >= 21 || (minor === 20 && patch >= 5)) return 21;
-    if (minor >= 17) return 17;
-    if (minor > 0 && minor <= 16) return 8;
+    if (major >= 25) return 25;
+    if (major === 1) {
+      if (minor >= 22) return 25;
+      if (minor >= 21 || (minor === 20 && patch >= 5)) return 21;
+      if (minor >= 17) return 17;
+      if (minor > 0 && minor <= 16) return 8;
+    }
   }
   if (clean.startsWith('25w') || clean.startsWith('26w')) return 25;
   return 21;
@@ -106,6 +119,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   const [behindProxy, setBehindProxy] = useState<boolean>(false);
   const [availablePorts, setAvailablePorts] = useState<number[]>([]);
   const [usedPorts, setUsedPorts] = useState<number[]>([]);
+  const [usedPortDetails, setUsedPortDetails] = useState<Record<number, { serverName: string; description?: string }>>({});
   const [loadingPorts, setLoadingPorts] = useState(false);
 
   // Modpack file upload state
@@ -132,8 +146,9 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
   const [selectedPack, setSelectedPack] = useState<SelectedModpackState | null>(null);
 
   const parsedPort = parseInt(port, 10);
-  const isPortUsed = !isNaN(parsedPort) && usedPorts.includes(parsedPort);
-  const isPortInvalid = isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535;
+  const isPortUsed = !behindProxy && !isNaN(parsedPort) && usedPorts.includes(parsedPort);
+  const isPortInvalid = !behindProxy && (isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535);
+  const portConflict = !isNaN(parsedPort) ? usedPortDetails[parsedPort] : undefined;
 
   useEffect(() => {
     if (!open) return;
@@ -151,8 +166,39 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         if (cancelled) return;
         const free = portsRes.available ?? [];
         setAvailablePorts(free);
-        const used = (serversRes ?? []).map((s) => s.host_port);
-        setUsedPorts(used);
+        const detailsMap: Record<number, { serverName: string; description?: string }> = {};
+        const usedList: number[] = [];
+
+        for (const s of serversRes ?? []) {
+          if (s.host_port > 0) {
+            if (!usedList.includes(s.host_port)) usedList.push(s.host_port);
+            detailsMap[s.host_port] = { serverName: s.name, description: 'Primary game port' };
+          }
+          for (const ep of s.extra_ports ?? []) {
+            if (ep.host_port > 0) {
+              if (!usedList.includes(ep.host_port)) usedList.push(ep.host_port);
+              detailsMap[ep.host_port] = {
+                serverName: s.name,
+                description: ep.description || `Additional port (${ep.protocol?.toUpperCase() || 'TCP'})`,
+              };
+            }
+          }
+        }
+
+        for (const u of portsRes.used ?? []) {
+          if (u.port > 0) {
+            if (!usedList.includes(u.port)) usedList.push(u.port);
+            if (!detailsMap[u.port]) {
+              detailsMap[u.port] = {
+                serverName: u.server_name,
+                description: u.description || (u.type === 'extra_port' ? 'Additional port' : 'Primary game port'),
+              };
+            }
+          }
+        }
+
+        setUsedPorts(usedList);
+        setUsedPortDetails(detailsMap);
         if (!port && free.length > 0) {
           setPort(String(free[0]));
         }
@@ -200,7 +246,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
         const nextVer = (!version || !sorted.some((x) => x.name === version)) ? (sorted[0]?.name ?? '') : version;
         setVersion(nextVer);
         if (nextVer) {
-          setJavaVersion(recommendJava(nextVer));
+          setJavaVersion(recommendJava(nextVer, serverType));
         }
       })
       .catch((err) => !cancelled && setError(err instanceof ApiError ? err.detail : 'Failed to load versions'))
@@ -1070,9 +1116,20 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                     </label>
                   </div>
                   {!behindProxy && isPortUsed && (
-                    <p className="text-[11px] text-destructive font-medium">
-                      Port {port} is already used by an existing server.
-                    </p>
+                    <div
+                      data-testid="port-conflict-alert"
+                      className="rounded-md border border-destructive/50 bg-destructive/10 p-2.5 text-xs text-destructive space-y-1"
+                    >
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
+                        <span>Port {port} is already in use</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Occupied by <strong>{portConflict?.serverName || 'another server or container'}</strong>
+                        {portConflict?.description ? ` (${portConflict.description})` : ''}.
+                        Please choose an available port to avoid startup failure.
+                      </p>
+                    </div>
                   )}
                   {!behindProxy && !isPortUsed && !isPortInvalid && availablePorts.length > 0 && (
                     <p className="text-[11px] text-muted-foreground">
@@ -1196,7 +1253,7 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                             onChange={(e) => {
                               const nextVer = e.target.value;
                               setVersion(nextVer);
-                              setJavaVersion(recommendJava(nextVer));
+                              setJavaVersion(recommendJava(nextVer, serverType));
                             }}
                             disabled={versions.length === 0}
                           >

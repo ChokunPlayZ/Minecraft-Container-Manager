@@ -44,6 +44,7 @@ type dockerRuntime interface {
 	Create(ctx context.Context, opts docker.CreateOpts) (string, error)
 	HostAddress() string
 	Stats(ctx context.Context, containerID string) (docker.ContainerStats, error)
+	RunningContainerPorts(ctx context.Context) ([]docker.ContainerPortUsage, error)
 }
 
 var _ dockerRuntime = (*docker.Manager)(nil)
@@ -504,9 +505,28 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 		}
 	}
 
+	seenPorts := make(map[int]bool)
+	if port > 0 {
+		seenPorts[port] = true
+	}
+	for _, ep := range in.ExtraPorts {
+		if ep.HostPort > 0 {
+			if ep.HostPort < 1 || ep.HostPort > 65535 {
+				return Server{}, fmt.Errorf("extra host port %d must be between 1 and 65535", ep.HostPort)
+			}
+			if seenPorts[ep.HostPort] {
+				return Server{}, fmt.Errorf("%w: duplicate host port %d specified in additional ports", ErrPortInUse, ep.HostPort)
+			}
+			seenPorts[ep.HostPort] = true
+			if err := s.ensurePortFree(ctx, "", ep.HostPort); err != nil {
+				return Server{}, err
+			}
+		}
+	}
+
 	javaVer := in.JavaVersion
 	if javaVer <= 0 {
-		javaVer = jars.RecommendJavaVersion(resolved.Version)
+		javaVer = jars.RecommendJavaVersionForType(string(in.ServerType), resolved.Version)
 		if javaVer <= 0 {
 			javaVer = 21
 		}
@@ -597,6 +617,24 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 		srv.BackupIntervalMinutes = *in.BackupIntervalMinutes
 	}
 	if in.ExtraPorts != nil {
+		seenPorts := make(map[int]bool)
+		if srv.HostPort > 0 {
+			seenPorts[srv.HostPort] = true
+		}
+		for _, ep := range *in.ExtraPorts {
+			if ep.HostPort > 0 {
+				if ep.HostPort < 1 || ep.HostPort > 65535 {
+					return Server{}, fmt.Errorf("extra host port %d must be between 1 and 65535", ep.HostPort)
+				}
+				if seenPorts[ep.HostPort] {
+					return Server{}, fmt.Errorf("%w: duplicate host port %d specified in additional ports", ErrPortInUse, ep.HostPort)
+				}
+				seenPorts[ep.HostPort] = true
+				if err := s.ensurePortFree(ctx, id, ep.HostPort); err != nil {
+					return Server{}, err
+				}
+			}
+		}
 		srv.ExtraPorts = *in.ExtraPorts
 	}
 	if in.JavaVersion != nil && *in.JavaVersion > 0 {
@@ -613,23 +651,75 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 	return s.Get(ctx, id)
 }
 
-// ensurePortFree verifies that port is not already assigned to another server.
-// In the context of the port pool, a port that was previously allocated to this
-// server is freed when the old host_port is overwritten below.
+// ensurePortFree verifies that port is not already assigned to another server
+// or occupied by another running Docker container.
 func (s *Store) ensurePortFree(ctx context.Context, id string, port int) error {
 	if port <= 0 {
 		return nil
 	}
-	var other string
+
+	// 1. Check primary host_port of other servers
+	var otherID, otherName string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM servers WHERE host_port = ? AND id != ?`, port, id).Scan(&other)
+		`SELECT id, name FROM servers WHERE host_port = ? AND id != ?`, port, id).Scan(&otherID, &otherName)
 	if err == nil {
-		return fmt.Errorf("%w: host_port %d is already in use by another server", ErrPortInUse, port)
+		return fmt.Errorf("%w: port %d is already in use by server %q", ErrPortInUse, port, otherName)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check host_port: %w", err)
 	}
+
+	// 2. Check additional ports (extra_ports) of other servers
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(extra_ports, '[]') FROM servers WHERE id != ?`, id)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var sID, sName, rawExtras string
+			if errScan := rows.Scan(&sID, &sName, &rawExtras); errScan == nil {
+				var extras []ExtraPort
+				if json.Unmarshal([]byte(rawExtras), &extras) == nil {
+					for _, ep := range extras {
+						if ep.HostPort == port {
+							desc := ep.Description
+							if desc == "" {
+								desc = "additional port"
+							}
+							return fmt.Errorf("%w: port %d is already in use as %s by server %q", ErrPortInUse, port, desc, sName)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Check running Docker containers
+	if s.docker != nil {
+		if usages, errUsages := s.docker.RunningContainerPorts(ctx); errUsages == nil {
+			myContainerName := docker.Name(id)
+			for _, u := range usages {
+				if u.HostPort == port {
+					if id != "" && (u.ContainerName == myContainerName || strings.Contains(u.ContainerName, id)) {
+						continue
+					}
+					cName := u.ContainerName
+					if cName == "" {
+						cName = u.ContainerID
+						if len(cName) > 12 {
+							cName = cName[:12]
+						}
+					}
+					return fmt.Errorf("%w: port %d is already in use by container %q", ErrPortInUse, port, cName)
+				}
+			}
+		}
+	}
+
 	return nil
+}
+
+// CheckPortFree checks if a port is available for a server.
+func (s *Store) CheckPortFree(ctx context.Context, id string, port int) error {
+	return s.ensurePortFree(ctx, id, port)
 }
 
 // Delete removes a server record and its container if one exists.
@@ -661,11 +751,33 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	if err != nil {
 		return Server{}, err
 	}
+	// Pre-check whether ports are already occupied by another container or server
+	if srv.HostPort > 0 {
+		if err := s.ensurePortFree(ctx, id, srv.HostPort); err != nil {
+			_ = s.setState(ctx, id, StateError)
+			return Server{}, err
+		}
+	}
+	for _, ep := range srv.ExtraPorts {
+		if ep.HostPort > 0 {
+			if err := s.ensurePortFree(ctx, id, ep.HostPort); err != nil {
+				_ = s.setState(ctx, id, StateError)
+				return Server{}, err
+			}
+		}
+	}
+
 	if err := s.setState(ctx, id, StateStarting); err != nil {
 		return Server{}, err
 	}
 	if err := s.docker.Start(ctx, srv.ContainerID); err != nil {
 		_ = s.setState(ctx, id, StateError)
+		if conflictPort, _, ok := docker.ParsePortConflictError(err); ok {
+			if conflictPort > 0 {
+				return Server{}, fmt.Errorf("%w: port %d is already in use by another container on the host", ErrPortInUse, conflictPort)
+			}
+			return Server{}, fmt.Errorf("%w: %v", ErrPortInUse, err)
+		}
 		return Server{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -685,6 +797,8 @@ func stopCommandFor(serverType string) string {
 		return "end"
 	case "velocity":
 		return "shutdown"
+	case "geysermc":
+		return "geyser stop"
 	default:
 		return "stop"
 	}
@@ -1050,6 +1164,7 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 					if err == nil {
 						if dlErr := s.jars.DownloadServerJar(ctx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
 							log.Printf("[servers] failed to download jar for server %s (%s %s %s): %v", srv.ID, srv.ServerType, srv.Version, srv.Build, dlErr)
+							return Server{}, fmt.Errorf("download server jar: %w", dlErr)
 						}
 					}
 				}

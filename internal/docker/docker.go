@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -48,7 +49,7 @@ mkfifo -m 666 "$FIFO"
 exec 3<> "$FIFO"
 
 term_handler() {
-  test -p "$FIFO" && printf '%s\n' "stop" "end" "shutdown" > "$FIFO" || true
+  test -p "$FIFO" && printf '%s\n' "stop" "end" "shutdown" "geyser stop" > "$FIFO" || true
   wait "$SERVER_PID" 2>/dev/null || true
   exit 0
 }
@@ -574,6 +575,96 @@ func (m *Manager) Remove(ctx context.Context, containerID string) error {
 		return fmt.Errorf("remove container: %w", err)
 	}
 	return nil
+}
+
+// ContainerPortUsage captures a port bound by a Docker container.
+type ContainerPortUsage struct {
+	ContainerID   string `json:"container_id"`
+	ContainerName string `json:"container_name"`
+	State         string `json:"state"`
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol"`
+}
+
+// RunningContainerPorts returns all host ports bound by existing/running containers.
+func (m *Manager) RunningContainerPorts(ctx context.Context) ([]ContainerPortUsage, error) {
+	if m == nil || m.client == nil {
+		return nil, nil
+	}
+	containers, err := m.client.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	var usages []ContainerPortUsage
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		for _, p := range c.Ports {
+			if p.PublicPort > 0 {
+				usages = append(usages, ContainerPortUsage{
+					ContainerID:   c.ID,
+					ContainerName: name,
+					State:         c.State,
+					HostPort:      int(p.PublicPort),
+					ContainerPort: int(p.PrivatePort),
+					Protocol:      strings.ToLower(p.Type),
+				})
+			}
+		}
+	}
+	return usages, nil
+}
+
+// IsHostPortBound tests whether a port is currently listening on the host system.
+func IsHostPortBound(port int, protocol string) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	proto := strings.ToLower(protocol)
+	if proto == "" || proto == "tcp" {
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return true
+		}
+		_ = l.Close()
+	}
+	if proto == "udp" {
+		l, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return true
+		}
+		_ = l.Close()
+	}
+	return false
+}
+
+// ParsePortConflictError inspects Docker start errors to extract conflicting port information.
+func ParsePortConflictError(err error) (int, string, bool) {
+	if err == nil {
+		return 0, "", false
+	}
+	msg := err.Error()
+	msgLower := strings.ToLower(msg)
+	if !strings.Contains(msgLower, "port is already allocated") &&
+		!strings.Contains(msgLower, "address already in use") &&
+		!strings.Contains(msgLower, "bind: address already in use") &&
+		!strings.Contains(msgLower, "failed programming external connectivity") {
+		return 0, "", false
+	}
+	re := regexp.MustCompile(`:(\d{2,5})\s+failed|:(\d{2,5}):\s+bind|port\s+(\d{2,5})`)
+	if m := re.FindStringSubmatch(msg); len(m) > 1 {
+		for i := 1; i < len(m); i++ {
+			if m[i] != "" {
+				if p, pErr := strconv.Atoi(m[i]); pErr == nil {
+					return p, msg, true
+				}
+			}
+		}
+	}
+	return 0, msg, true
 }
 
 // ContainerState captures runtime status and start time for a container.
