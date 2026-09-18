@@ -579,11 +579,16 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 		}
 	}
 
+	initialState := StateInstalling
+	if in.ServerType == jars.TypeCustom || isDockerNil(s.docker) {
+		initialState = StateStopped
+	}
+
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, java_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`,
-		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, encodeExtraPorts(in.ExtraPorts), StateStopped, now, now, javaVer)
+		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, encodeExtraPorts(in.ExtraPorts), initialState, now, now, javaVer)
 	if err != nil {
 		return Server{}, fmt.Errorf("insert server: %w", err)
 	}
@@ -595,14 +600,16 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 	// Ensure server data directory is created
 	_ = os.MkdirAll(s.dataPath(id), 0755)
 
-	// For standard server types, eagerly provision container and download jar upfront
-	// so files (server.jar/installer.jar) are immediately ready and startup race conditions are eliminated.
+	// For standard server types, eagerly provision container and download jar in background
+	// so the server enters "installing" state immediately and the creation API returns without blocking.
 	if in.ServerType != jars.TypeCustom && !isDockerNil(s.docker) {
-		if prov, provErr := s.ensureContainer(ctx, created); provErr == nil {
-			created = prov
-		} else {
-			log.Printf("[servers] warning: eager provisioning for server %s failed: %v", id, provErr)
-		}
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+			defer cancel()
+			if _, provErr := s.ensureContainer(bgCtx, created); provErr != nil {
+				log.Printf("[servers] error: eager provisioning for server %s failed: %v", id, provErr)
+			}
+		}()
 	}
 
 	return created, nil
@@ -1371,16 +1378,62 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 					if err == nil {
 						_ = s.setState(ctx, srv.ID, StateInstalling)
 						srv.State = StateInstalling
+						s.SetTaskProgress(srv.ID, TaskProgress{
+							Operation:  "server_install",
+							Stage:      "downloading_jar",
+							StageTitle: "Downloading Server Software",
+							StageIndex: 1,
+							StageTotal: 1,
+							Percent:    0,
+							Message:    fmt.Sprintf("Preparing download for %s %s...", srv.ServerType, srv.Version),
+						})
 						log.Printf("[servers] downloading jar for server %s (%s %s %s)...", srv.ID, srv.ServerType, srv.Version, srv.Build)
 						dlCtx, dlCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 						defer dlCancel()
-						if dlErr := s.jars.DownloadServerJar(dlCtx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
+						var lastPct int = -1
+						onProgress := func(written, total int64) {
+							pct := 0
+							if total > 0 {
+								pct = int((written * 100) / total)
+							}
+							if pct != lastPct || written == total {
+								lastPct = pct
+								s.SetTaskProgress(srv.ID, TaskProgress{
+									Operation:  "server_install",
+									Stage:      "downloading_jar",
+									StageTitle: "Downloading Server Software",
+									StageIndex: 1,
+									StageTotal: 1,
+									Percent:    pct,
+									BytesDone:  written,
+									BytesTotal: total,
+									Message:    fmt.Sprintf("Downloading %s (%s %s)...", srv.ServerType, srv.Version, srv.Build),
+								})
+							}
+						}
+						if dlErr := s.jars.DownloadServerJarWithProgress(dlCtx, jt, srv.Version, srv.Build, dataDir, onProgress); dlErr != nil {
 							_ = s.setState(context.Background(), srv.ID, StateError)
 							srv.State = StateError
+							s.SetTaskProgress(srv.ID, TaskProgress{
+								Operation:  "server_install",
+								Stage:      "failed",
+								StageTitle: "Download Failed",
+								Error:      dlErr.Error(),
+								Message:    dlErr.Error(),
+							})
 							log.Printf("[servers] failed to download jar for server %s (%s %s %s): %v", srv.ID, srv.ServerType, srv.Version, srv.Build, dlErr)
 							return Server{}, fmt.Errorf("download server jar: %w", dlErr)
 						}
 						log.Printf("[servers] successfully downloaded jar for server %s (%s %s %s)", srv.ID, srv.ServerType, srv.Version, srv.Build)
+						s.SetTaskProgress(srv.ID, TaskProgress{
+							Operation:  "server_install",
+							Stage:      "provisioning",
+							StageTitle: "Provisioning Server Container",
+							StageIndex: 1,
+							StageTotal: 1,
+							Percent:    100,
+							Message:    "Creating container runtime...",
+						})
 					}
 				}
 			}
@@ -1415,6 +1468,7 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 		_ = s.setState(ctx, srv.ID, StateStopped)
 		srv.State = StateStopped
 	}
+	s.ClearTaskProgress(srv.ID)
 	return srv, nil
 }
 

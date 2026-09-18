@@ -8,6 +8,7 @@ import { AppShell } from '../components/app-shell';
 import { CopyServerDialog } from '../components/copy-server-dialog';
 import { CreateServerDialog } from '../components/create-server-dialog';
 import { RequireAuth } from '../components/require-auth';
+import { ServerInstallProgress } from '../components/server-install-progress';
 import { StatusBadge } from '../components/status-badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -35,6 +36,19 @@ export function DashboardRoute() {
     void load();
   }, [load]);
 
+  // Continuously poll while any server is undergoing installation, building, starting, or stopping
+  const hasActiveServers = servers?.some(
+    (s) => s.state === 'installing' || s.state === 'building' || s.state === 'starting' || s.state === 'stopping',
+  );
+
+  useEffect(() => {
+    if (!hasActiveServers) return;
+    const timer = setInterval(() => {
+      void load();
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [hasActiveServers, load]);
+
   return (
     <RequireAuth>
       <AppShell>
@@ -43,7 +57,10 @@ export function DashboardRoute() {
             <h1 className="text-2xl font-semibold">Servers</h1>
             <p className="text-sm text-muted-foreground">Manage your Minecraft instances.</p>
           </div>
-          <CreateServerDialog onCreated={() => void load()} />
+          <CreateServerDialog
+            onCreated={() => void load()}
+            onError={(err) => setError(err)}
+          />
         </div>
 
         {error && (
@@ -134,6 +151,11 @@ export function DashboardRoute() {
                           <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">
                             {formatUptimeFromStartedAt(server.started_at, server.uptime_seconds)}
                           </span>
+                        </div>
+                      )}
+                      {(server.state === 'installing' || server.state === 'building') && (
+                        <div className="col-span-2">
+                          <ServerInstallProgress serverId={server.id} state={server.state} compact />
                         </div>
                       )}
                     </dl>

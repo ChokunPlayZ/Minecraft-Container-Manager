@@ -734,8 +734,28 @@ func flattenPaperVersions(versions map[string][]string) []string {
 	return out
 }
 
+type progressWriter struct {
+	written    int64
+	total      int64
+	onProgress func(written, total int64)
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	pw.written += int64(n)
+	if pw.onProgress != nil {
+		pw.onProgress(pw.written, pw.total)
+	}
+	return n, nil
+}
+
 // DownloadFile downloads a remote URL directly to targetPath.
 func (r *Resolver) DownloadFile(ctx context.Context, url, targetPath string) error {
+	return r.DownloadFileWithProgress(ctx, url, targetPath, nil)
+}
+
+// DownloadFileWithProgress downloads a remote URL directly to targetPath, emitting progress if onProgress != nil.
+func (r *Resolver) DownloadFileWithProgress(ctx context.Context, url, targetPath string, onProgress func(written, total int64)) error {
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
@@ -773,11 +793,22 @@ func (r *Resolver) DownloadFile(ctx context.Context, url, targetPath string) err
 		_ = os.Remove(tmpFile)
 	}()
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	var writer io.Writer = f
+	if onProgress != nil {
+		onProgress(0, resp.ContentLength)
+		pw := &progressWriter{
+			total:      resp.ContentLength,
+			onProgress: onProgress,
+		}
+		writer = io.MultiWriter(f, pw)
+	}
+
+	if _, err := io.Copy(writer, resp.Body); err != nil {
 		return fmt.Errorf("write stream: %w", err)
 	}
 	f.Close()
 
 	return os.Rename(tmpFile, targetPath)
 }
+
 

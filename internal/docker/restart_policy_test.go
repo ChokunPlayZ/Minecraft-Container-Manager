@@ -110,4 +110,43 @@ func TestEntryScriptInstallingAndBuildingStateHandling(t *testing.T) {
 	}
 }
 
+func TestEntryScriptSpigotJDKFallback(t *testing.T) {
+	if !strings.Contains(DefaultEntryScript, `command -v javac`) {
+		t.Errorf("DefaultEntryScript missing javac presence check for Spigot BuildTools")
+	}
+	if !strings.Contains(DefaultEntryScript, `apk add --no-cache openjdk`) {
+		t.Errorf("DefaultEntryScript missing openjdk installation fallback for Spigot BuildTools")
+	}
+}
+
+func TestRuntimeImageSelection(t *testing.T) {
+	mgr := &Manager{image: "eclipse-temurin:21-jre-alpine"}
+
+	// Spigot, Bukkit, CraftBukkit must resolve to JDK image
+	if img := mgr.RuntimeImage(21, "spigot"); img != "eclipse-temurin:21-jdk-alpine" {
+		t.Errorf("expected spigot to use eclipse-temurin:21-jdk-alpine, got %s", img)
+	}
+	if img := mgr.RuntimeImage(17, "bukkit"); img != "eclipse-temurin:17-jdk-alpine" {
+		t.Errorf("expected bukkit to use eclipse-temurin:17-jdk-alpine, got %s", img)
+	}
+	if img := mgr.RuntimeImage(8, "craftbukkit"); img != "eclipse-temurin:8-jdk-alpine" {
+		t.Errorf("expected craftbukkit to use eclipse-temurin:8-jdk-alpine, got %s", img)
+	}
+
+	// Non-build servers (Paper, Purpur, Fabric, Vanilla) must resolve to JRE image
+	if img := mgr.RuntimeImage(21, "paper"); img != "eclipse-temurin:21-jre-alpine" {
+		t.Errorf("expected paper to use eclipse-temurin:21-jre-alpine, got %s", img)
+	}
+	if img := mgr.RuntimeImage(17, "fabric"); img != "eclipse-temurin:17-jre-alpine" {
+		t.Errorf("expected fabric to use eclipse-temurin:17-jre-alpine, got %s", img)
+	}
+	if img := mgr.RuntimeImage(0, "paper"); img != "eclipse-temurin:21-jre-alpine" {
+		t.Errorf("expected default javaVersion 0 to resolve to 21-jre-alpine, got %s", img)
+	}
+	if img := mgr.RuntimeImage(0, "spigot"); img != "eclipse-temurin:21-jdk-alpine" {
+		t.Errorf("expected default javaVersion 0 for spigot to resolve to 21-jdk-alpine, got %s", img)
+	}
+}
+
+
 

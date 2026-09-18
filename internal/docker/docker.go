@@ -86,6 +86,14 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
           apt-get update && apt-get install -y git
         fi
       fi
+      if ! command -v javac >/dev/null 2>&1; then
+        echo "Installing openjdk for BuildTools..."
+        if command -v apk >/dev/null 2>&1; then
+          apk add --no-cache openjdk21 || apk add --no-cache openjdk17 || apk add --no-cache openjdk || true
+        elif command -v apt-get >/dev/null 2>&1; then
+          apt-get update && apt-get install -y default-jdk-headless || true
+        fi
+      fi
       BUILD_REV="${SERVER_VERSION:-latest}"
       mkdir -p /tmp/buildtools
       cd /tmp/buildtools
@@ -374,12 +382,31 @@ func Name(id string) string {
 	return "mcm-" + id
 }
 
+// requiresJDK returns true if the server platform compiles software from source (e.g. Spigot BuildTools)
+// and therefore requires a full Java Development Kit (JDK) with javac instead of a runtime-only JRE.
+func requiresJDK(serverType string) bool {
+	st := strings.ToLower(serverType)
+	return st == "spigot" || st == "bukkit" || st == "craftbukkit"
+}
+
+// RuntimeImage returns the appropriate container image for the specified Java version and server type.
+func (m *Manager) RuntimeImage(javaVersion int, serverType string) string {
+	ver := javaVersion
+	if ver <= 0 {
+		ver = 21
+	}
+	if requiresJDK(serverType) {
+		return fmt.Sprintf("eclipse-temurin:%d-jdk-alpine", ver)
+	}
+	if m != nil && m.image != "" && javaVersion <= 0 {
+		return m.image
+	}
+	return fmt.Sprintf("eclipse-temurin:%d-jre-alpine", ver)
+}
+
 // Create provisions a stopped container for a server.
 func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
-	img := m.image
-	if opts.JavaVersion > 0 {
-		img = fmt.Sprintf("eclipse-temurin:%d-jre-alpine", opts.JavaVersion)
-	}
+	img := m.RuntimeImage(opts.JavaVersion, opts.ServerType)
 
 	// The runtime image is a hard prerequisite: pulling it here keeps server
 	// creation self-sufficient instead of failing with "No such image".

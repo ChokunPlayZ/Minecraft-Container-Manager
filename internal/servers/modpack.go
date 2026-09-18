@@ -374,6 +374,8 @@ func (s *Store) InspectModpackFile(filePath string) (*ModpackManifest, error) {
 
 // InstallModpack installs a modpack from an archive file onto the specified server.
 func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath string, opts InstallModpackOpts) (installed *InstalledModpack, err error) {
+	_ = s.setState(ctx, serverID, StateInstalling)
+
 	stageOffset := 0
 	if opts.Source != "upload" && opts.URL != "" {
 		stageOffset = 1
@@ -382,6 +384,7 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 
 	defer func() {
 		if err != nil {
+			_ = s.setState(context.Background(), serverID, StateError)
 			s.SetTaskProgress(serverID, TaskProgress{
 				Operation:  "modpack_install",
 				Stage:      "failed",
@@ -1149,6 +1152,8 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		Percent:    100,
 		Message:    msg,
 	})
+
+	_ = s.setState(ctx, serverID, StateStopped)
 
 	return installed, nil
 }

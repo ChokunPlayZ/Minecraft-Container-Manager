@@ -29,6 +29,7 @@ import { api, ApiError } from '../api/client';
 import type { Server, ServerState } from '../api/types';
 import { useLiveUptime } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
+import { RequireAuth } from '../components/require-auth';
 import { BackupsPanel } from '../components/backups-panel';
 import { ConsoleViewer } from '../components/console-viewer';
 import { CopyServerDialog } from '../components/copy-server-dialog';
@@ -37,7 +38,7 @@ import { InstallPanel } from '../components/install-panel';
 import { ModsPanel } from '../components/mods-panel';
 import { PlayersPanel } from '../components/players-panel';
 import { PropertiesEditor } from '../components/properties-editor';
-import { RequireAuth } from '../components/require-auth';
+import { ServerInstallProgress } from '../components/server-install-progress';
 import { ServerSettings } from '../components/server-settings';
 import { ServerStatsGrid } from '../components/server-stats-grid';
 import { StatusBadge } from '../components/status-badge';
@@ -74,6 +75,15 @@ export function ServerDetailRoute() {
 
   const [dnsAddress, setDnsAddress] = useState<string>('');
   const [copiedDns, setCopiedDns] = useState(false);
+
+  const state = statusState ?? server?.state ?? 'stopped';
+  const isRunning = state === 'running';
+  const isInstalling = state === 'installing' || state === 'building';
+  const isActive = isRunning || isInstalling;
+  const effectiveStartedAt = statusStartedAt !== undefined ? statusStartedAt : server?.started_at;
+  const effectiveUptimeSec = statusUptimeSeconds !== undefined ? statusUptimeSeconds : server?.uptime_seconds;
+  const liveUptime = useLiveUptime(effectiveStartedAt, effectiveUptimeSec, isRunning);
+  const effectiveTab = tab === 'overview' ? 'console' : tab;
 
   const loadDns = useCallback(async (sid: string) => {
     try {
@@ -125,9 +135,10 @@ export function ServerDetailRoute() {
   useEffect(() => {
     if (!server) return;
     void pollStatus();
-    const timer = setInterval(() => void pollStatus(), 3000);
+    const interval = isInstalling ? 2000 : 3000;
+    const timer = setInterval(() => void pollStatus(), interval);
     return () => clearInterval(timer);
-  }, [server, pollStatus]);
+  }, [server, pollStatus, isInstalling]);
 
   const run = useCallback(
     async (fn: () => Promise<Server>) => {
@@ -242,15 +253,6 @@ export function ServerDetailRoute() {
     setCopiedAddress(true);
     setTimeout(() => setCopiedAddress(false), 2000);
   }
-
-  const state = statusState ?? server?.state ?? 'stopped';
-  const isRunning = state === 'running';
-  const isInstalling = state === 'installing' || state === 'building';
-  const isActive = isRunning || isInstalling;
-  const effectiveStartedAt = statusStartedAt !== undefined ? statusStartedAt : server?.started_at;
-  const effectiveUptimeSec = statusUptimeSeconds !== undefined ? statusUptimeSeconds : server?.uptime_seconds;
-  const liveUptime = useLiveUptime(effectiveStartedAt, effectiveUptimeSec, isRunning);
-  const effectiveTab = tab === 'overview' ? 'console' : tab;
 
   if (!server) {
     return (
@@ -473,6 +475,11 @@ export function ServerDetailRoute() {
               </div>
             </div>
           </div>
+
+          {/* Installation Progress Banner */}
+          {isInstalling && (
+            <ServerInstallProgress serverId={server.id} state={state} />
+          )}
 
           {error && (
             <Card className="mb-5 border-destructive/50 bg-destructive/10">

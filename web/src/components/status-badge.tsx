@@ -1,3 +1,4 @@
+import { Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { ServerState } from '../api/types';
 import { Badge } from './ui/badge';
@@ -13,5 +14,11 @@ const stateStyle: Record<ServerState, string> = {
 };
 
 export function StatusBadge({ state, className }: { state: ServerState; className?: string }) {
-  return <Badge className={cn(stateStyle[state] ?? stateStyle.stopped, className)}>{state}</Badge>;
+  const isLoading = state === 'installing' || state === 'building' || state === 'starting' || state === 'stopping';
+  return (
+    <Badge className={cn(stateStyle[state] ?? stateStyle.stopped, 'inline-flex items-center', className)}>
+      {isLoading && <Loader2 className="h-3 w-3 animate-spin mr-1 shrink-0" data-testid="status-loader" />}
+      {state}
+    </Badge>
+  );
 }

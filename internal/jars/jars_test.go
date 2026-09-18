@@ -645,18 +645,36 @@ func TestLivePurpur(t *testing.T) {
 	}
 }
 
-func TestPurpurBuilds(t *testing.T) {
+func TestDownloadFileWithProgress(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		_, _ = w.Write([]byte("0123456789"))
+	}))
+	defer ts.Close()
+
 	r := NewResolver()
-	for _, v := range []string{"", "latest", "1.21.0", "1.21.4"} {
-		builds, err := r.PurpurBuilds(context.Background(), v)
-		if err != nil {
-			t.Fatalf("PurpurBuilds(%q) failed: %v", v, err)
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "test.bin")
+
+	var updates []int64
+	err := r.DownloadFileWithProgress(context.Background(), ts.URL, dest, func(written, total int64) {
+		updates = append(updates, written)
+		if total != 10 {
+			t.Errorf("expected total 10, got %d", total)
 		}
-		if len(builds) == 0 {
-			t.Fatalf("PurpurBuilds(%q) returned no builds", v)
-		}
-		t.Logf("PurpurBuilds(%q) returned %d builds (latest: %s)", v, len(builds), builds[len(builds)-1])
+	})
+	if err != nil {
+		t.Fatalf("DownloadFileWithProgress failed: %v", err)
+	}
+
+	data, err := os.ReadFile(dest)
+	if err != nil || string(data) != "0123456789" {
+		t.Fatalf("unexpected content: %q, err: %v", string(data), err)
+	}
+	if len(updates) == 0 || updates[len(updates)-1] != 10 {
+		t.Errorf("expected final progress to be 10, got updates: %v", updates)
 	}
 }
+
 
 

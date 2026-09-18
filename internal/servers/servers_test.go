@@ -1105,4 +1105,46 @@ func TestStartJarDownloadStateAndContextResilience(t *testing.T) {
 	}
 }
 
+func TestCreateInitialStateInstalling(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { dbHandle.Close() })
+
+	fake := &fakeRuntime{}
+	store := NewStore(dbHandle, nil, jars.NewResolver(), 25565, 25575, dir, dir)
+	store.docker = fake
+
+	// Creating a standard server with docker runtime should set initial state to StateInstalling
+	srv, err := store.Create(context.Background(), CreateInput{
+		Name:       "New Installing Server",
+		ServerType: jars.TypePaper,
+		Version:    "1.21.1",
+		RAMMB:      2048,
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if srv.State != StateInstalling {
+		t.Errorf("expected initial state %q, got %q", StateInstalling, srv.State)
+	}
+
+	// Creating custom server should set StateStopped
+	srvCustom, err := store.Create(context.Background(), CreateInput{
+		Name:       "Custom Server",
+		ServerType: jars.TypeCustom,
+		Version:    "custom",
+		RAMMB:      2048,
+	})
+	if err != nil {
+		t.Fatalf("Create custom failed: %v", err)
+	}
+	if srvCustom.State != StateStopped {
+		t.Errorf("expected custom server initial state %q, got %q", StateStopped, srvCustom.State)
+	}
+}
+
+
 

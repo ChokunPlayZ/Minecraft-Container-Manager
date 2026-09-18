@@ -958,6 +958,12 @@ func (r *Resolver) resolveQuiltInstallerURL(ctx context.Context) string {
 // DownloadServerJar resolves and downloads the server executable jar to destDir/server.jar,
 // and ensures eula.txt is accepted.
 func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, build, destDir string) error {
+	return r.DownloadServerJarWithProgress(ctx, jt, version, build, destDir, nil)
+}
+
+// DownloadServerJarWithProgress resolves and downloads the server executable jar to destDir/server.jar,
+// emitting byte download progress via onProgress if provided, and ensures eula.txt is accepted.
+func (r *Resolver) DownloadServerJarWithProgress(ctx context.Context, jt JarType, version, build, destDir string, onProgress func(written, total int64)) error {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
@@ -1079,7 +1085,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			return nil
 		}
 		installerPath := filepath.Join(destDir, "installer.jar")
-		if err := r.DownloadFile(ctx, r.buildToolsURL(), installerPath); err != nil {
+		if err := r.DownloadFileWithProgress(ctx, r.buildToolsURL(), installerPath, onProgress); err != nil {
 			return fmt.Errorf("download spigot buildtools: %w", err)
 		}
 		return nil
@@ -1087,7 +1093,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 	case TypeQuilt:
 		installerURL := r.resolveQuiltInstallerURL(ctx)
 		installerPath := filepath.Join(destDir, "installer.jar")
-		if err := r.DownloadFile(ctx, installerURL, installerPath); err != nil {
+		if err := r.DownloadFileWithProgress(ctx, installerURL, installerPath, onProgress); err != nil {
 			return fmt.Errorf("download quilt installer: %w", err)
 		}
 		return nil
@@ -1107,7 +1113,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			build = builds[0]
 		}
 		dlURL = fmt.Sprintf("https://api.mohistmc.com/project/mohist/%s/builds/%s/download", version, build)
-		dlErr := r.DownloadFile(ctx, dlURL, targetJar)
+		dlErr := r.DownloadFileWithProgress(ctx, dlURL, targetJar, onProgress)
 		if dlErr == nil {
 			return nil
 		}
@@ -1115,7 +1121,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			return fmt.Errorf("download mohist %s build %s: %w", version, build, ctx.Err())
 		}
 		dlURL = fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/Mohist-%s-%s.jar", version, version, build)
-		if fbErr := r.DownloadFile(ctx, dlURL, targetJar); fbErr != nil {
+		if fbErr := r.DownloadFileWithProgress(ctx, dlURL, targetJar, onProgress); fbErr != nil {
 			return fmt.Errorf("download mohist %s build %s: %w (fallback failed: %v)", version, build, dlErr, fbErr)
 		}
 		return nil
@@ -1135,7 +1141,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			build = builds[0]
 		}
 		dlURL = fmt.Sprintf("https://api.mohistmc.com/project/youer/%s/builds/%s/download", version, build)
-		if err := r.DownloadFile(ctx, dlURL, targetJar); err != nil {
+		if err := r.DownloadFileWithProgress(ctx, dlURL, targetJar, onProgress); err != nil {
 			return fmt.Errorf("download youer %s build %s: %w", version, build, err)
 		}
 		return nil
@@ -1194,7 +1200,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			tag = version
 		}
 		dlURL = fmt.Sprintf("https://repo.spongepowered.org/repository/maven-public/org/spongepowered/spongevanilla/%s/spongevanilla-%s-universal.jar", tag, tag)
-		err := r.DownloadFile(ctx, dlURL, targetJar)
+		err := r.DownloadFileWithProgress(ctx, dlURL, targetJar, onProgress)
 		if err == nil {
 			return nil
 		}
@@ -1202,7 +1208,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			return fmt.Errorf("download sponge: %w", ctx.Err())
 		}
 		dlURL = fmt.Sprintf("https://repo.spongepowered.org/repository/maven-public/org/spongepowered/spongevanilla/%s/spongevanilla-%s.jar", tag, tag)
-		if fbErr := r.DownloadFile(ctx, dlURL, targetJar); fbErr != nil {
+		if fbErr := r.DownloadFileWithProgress(ctx, dlURL, targetJar, onProgress); fbErr != nil {
 			return fmt.Errorf("download sponge: %w (fallback failed: %v)", err, fbErr)
 		}
 		return nil
@@ -1241,7 +1247,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		}
 		dlURL = fmt.Sprintf("https://maven.minecraftforge.net/net/minecraftforge/forge/%s/forge-%s-installer.jar", forgeVer, forgeVer)
 		installerPath := filepath.Join(destDir, "installer.jar")
-		if err := r.DownloadFile(ctx, dlURL, installerPath); err != nil {
+		if err := r.DownloadFileWithProgress(ctx, dlURL, installerPath, onProgress); err != nil {
 			return err
 		}
 		return nil
@@ -1264,14 +1270,14 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 			dlURL = fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", nfVer, nfVer)
 		}
 		installerPath := filepath.Join(destDir, "installer.jar")
-		if err := r.DownloadFile(ctx, dlURL, installerPath); err != nil {
+		if err := r.DownloadFileWithProgress(ctx, dlURL, installerPath, onProgress); err != nil {
 			return err
 		}
 		return nil
 
 	case TypeCustom:
 		if strings.HasPrefix(build, "http://") || strings.HasPrefix(build, "https://") {
-			return r.DownloadFile(ctx, build, targetJar)
+			return r.DownloadFileWithProgress(ctx, build, targetJar, onProgress)
 		}
 		// If custom jar file was specified by name, check if it exists in destDir
 		if build != "" && build != "server.jar" {
@@ -1288,7 +1294,7 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 	}
 
 	if dlURL != "" {
-		return r.DownloadFile(ctx, dlURL, targetJar)
+		return r.DownloadFileWithProgress(ctx, dlURL, targetJar, onProgress)
 	}
 
 	return nil
