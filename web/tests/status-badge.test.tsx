@@ -18,4 +18,16 @@ describe('StatusBadge', () => {
     expect(screen.getByText('error')).toBeInTheDocument();
     expect(screen.getByText('error')).toHaveClass('border-red-300');
   });
+
+  it('renders the installing state', () => {
+    render(<StatusBadge state="installing" />);
+    expect(screen.getByText('installing')).toBeInTheDocument();
+    expect(screen.getByText('installing')).toHaveClass('border-blue-300');
+  });
+
+  it('renders the building state', () => {
+    render(<StatusBadge state="building" />);
+    expect(screen.getByText('building')).toBeInTheDocument();
+    expect(screen.getByText('building')).toHaveClass('border-indigo-300');
+  });
 });

@@ -847,3 +847,164 @@ func TestHasForgeJar(t *testing.T) {
 		t.Errorf("expected hasForgeJar to be true when forge server jar is present")
 	}
 }
+
+func TestPendingInitialState(t *testing.T) {
+	dir := t.TempDir()
+	store := &Store{dataDir: dir}
+
+	// 1. Forge with installer.jar and no server.jar
+	forgeID := "srv-forge"
+	forgeDir := filepath.Join(dir, "servers", forgeID)
+	_ = os.MkdirAll(forgeDir, 0755)
+	_ = os.WriteFile(filepath.Join(forgeDir, "installer.jar"), []byte("jar"), 0644)
+	if got := store.pendingInitialState(forgeID, Server{ServerType: "forge"}); got != StateInstalling {
+		t.Errorf("expected %q for forge with installer, got %q", StateInstalling, got)
+	}
+
+	// 2. Spigot with installer.jar and no server.jar
+	spigotID := "srv-spigot"
+	spigotDir := filepath.Join(dir, "servers", spigotID)
+	_ = os.MkdirAll(spigotDir, 0755)
+	_ = os.WriteFile(filepath.Join(spigotDir, "installer.jar"), []byte("jar"), 0644)
+	if got := store.pendingInitialState(spigotID, Server{ServerType: "spigot"}); got != StateBuilding {
+		t.Errorf("expected %q for spigot with installer, got %q", StateBuilding, got)
+	}
+
+	// 3. Sponge with missing libraries/ dir
+	spongeID := "srv-sponge"
+	spongeDir := filepath.Join(dir, "servers", spongeID)
+	_ = os.MkdirAll(spongeDir, 0755)
+	_ = os.WriteFile(filepath.Join(spongeDir, "server.jar"), []byte("sponge-jar"), 0644)
+	if got := store.pendingInitialState(spongeID, Server{ServerType: "sponge"}); got != StateInstalling {
+		t.Errorf("expected %q for sponge with no libraries, got %q", StateInstalling, got)
+	}
+
+	// 4. Sponge with populated libraries/ dir
+	_ = os.MkdirAll(filepath.Join(spongeDir, "libraries", "sponge"), 0755)
+	_ = os.WriteFile(filepath.Join(spongeDir, "libraries", "sponge", "lib.jar"), []byte("lib"), 0644)
+	if got := store.pendingInitialState(spongeID, Server{ServerType: "sponge"}); got != "" {
+		t.Errorf("expected empty string for sponge with populated libraries, got %q", got)
+	}
+
+	// 5. Standard paper server with server.jar
+	paperID := "srv-paper"
+	paperDir := filepath.Join(dir, "servers", paperID)
+	_ = os.MkdirAll(paperDir, 0755)
+	_ = os.WriteFile(filepath.Join(paperDir, "server.jar"), []byte("paper-jar"), 0644)
+	if got := store.pendingInitialState(paperID, Server{ServerType: "paper"}); got != "" {
+		t.Errorf("expected empty string for paper with server.jar, got %q", got)
+	}
+}
+
+func TestStatusReconcilesInstallingAndBuilding(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	id := uuid.NewString()
+	insertServer(t, dbHandle, id, 25565, "", StateStopped)
+	serverDir := filepath.Join(dir, "servers", id)
+	_ = os.MkdirAll(serverDir, 0755)
+
+	ctx := context.Background()
+	srv, err := store.Start(ctx, id)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srv.State != StateRunning {
+		t.Fatalf("expected state running, got %s", srv.State)
+	}
+
+	// Container reports running, but writes .mcm_state = "installing"
+	_ = os.WriteFile(filepath.Join(serverDir, ".mcm_state"), []byte("installing\n"), 0644)
+	fake.mu.Lock()
+	fake.inspectState = &docker.ContainerState{Status: StateRunning}
+	fake.mu.Unlock()
+
+	status, err := store.Status(ctx, id)
+	if err != nil {
+		t.Fatalf("Status error: %v", err)
+	}
+	if status.State != StateInstalling {
+		t.Errorf("expected state %q when .mcm_state is installing, got %q", StateInstalling, status.State)
+	}
+
+	// Change .mcm_state to "building"
+	_ = os.WriteFile(filepath.Join(serverDir, ".mcm_state"), []byte("building\n"), 0644)
+	status, err = store.Status(ctx, id)
+	if err != nil {
+		t.Fatalf("Status error: %v", err)
+	}
+	if status.State != StateBuilding {
+		t.Errorf("expected state %q when .mcm_state is building, got %q", StateBuilding, status.State)
+	}
+
+	// Installer completes and removes .mcm_state
+	_ = os.Remove(filepath.Join(serverDir, ".mcm_state"))
+	status, err = store.Status(ctx, id)
+	if err != nil {
+		t.Fatalf("Status error: %v", err)
+	}
+	if status.State != StateRunning {
+		t.Errorf("expected state %q after .mcm_state removed, got %q", StateRunning, status.State)
+	}
+}
+
+func TestStartDetectsInstallerAndSetsState(t *testing.T) {
+	dir := t.TempDir()
+	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	fake := &fakeRuntime{}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+
+	// Forge server
+	forgeID := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = dbHandle.DB.ExecContext(context.Background(),
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		forgeID, "test-forge", "forge", "1.20.1", "47.2.0", 2048, 0, 0, 25566, "[]", "cont-forge", StateStopped, now, now)
+	if err != nil {
+		t.Fatalf("insert forge server: %v", err)
+	}
+	forgeDir := filepath.Join(dir, "servers", forgeID)
+	_ = os.MkdirAll(forgeDir, 0755)
+	_ = os.WriteFile(filepath.Join(forgeDir, "installer.jar"), []byte("installer"), 0644)
+
+	ctx := context.Background()
+	srv, err := store.Start(ctx, forgeID)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srv.State != StateInstalling {
+		t.Errorf("expected state %q for forge server with installer.jar, got %q", StateInstalling, srv.State)
+	}
+
+	// Spigot server
+	spigotID := uuid.NewString()
+	_, err = dbHandle.DB.ExecContext(context.Background(),
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		spigotID, "test-spigot", "spigot", "1.20.4", "latest", 2048, 0, 0, 25567, "[]", "cont-spigot", StateStopped, now, now)
+	if err != nil {
+		t.Fatalf("insert spigot server: %v", err)
+	}
+	spigotDir := filepath.Join(dir, "servers", spigotID)
+	_ = os.MkdirAll(spigotDir, 0755)
+	_ = os.WriteFile(filepath.Join(spigotDir, "installer.jar"), []byte("buildtools"), 0644)
+
+	srvSpigot, err := store.Start(ctx, spigotID)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if srvSpigot.State != StateBuilding {
+		t.Errorf("expected state %q for spigot server with installer.jar, got %q", StateBuilding, srvSpigot.State)
+	}
+}
+

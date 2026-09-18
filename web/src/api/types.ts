@@ -22,7 +22,7 @@ export type ServerType =
   | 'velocity'
   | 'geysermc';
 
-export type ServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
+export type ServerState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error' | 'installing' | 'building';
 
 export interface JavaRelease {
   version: number;

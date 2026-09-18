@@ -51,11 +51,13 @@ var _ dockerRuntime = (*docker.Manager)(nil)
 
 // Server state values.
 const (
-	StateStopped  = "stopped"
-	StateStarting = "starting"
-	StateRunning  = "running"
-	StateStopping = "stopping"
-	StateError    = "error"
+	StateStopped    = "stopped"
+	StateStarting   = "starting"
+	StateRunning    = "running"
+	StateStopping   = "stopping"
+	StateError      = "error"
+	StateInstalling = "installing"
+	StateBuilding   = "building"
 )
 
 // ErrNotFound is returned when a server id does not exist.
@@ -804,6 +806,59 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// pendingInitialState detects whether a server is currently running or about to run
+// an installer or build step (e.g. Forge installer, Spigot BuildTools, or Sponge libraries download).
+func (s *Store) pendingInitialState(id string, srv Server) string {
+	dataDir := s.dataPath(id)
+	stateFile := filepath.Join(dataDir, ".mcm_state")
+	if content, err := os.ReadFile(stateFile); err == nil {
+		st := strings.TrimSpace(string(content))
+		if st == StateInstalling || st == StateBuilding {
+			return st
+		}
+	}
+	serverJar := filepath.Join(dataDir, "server.jar")
+	runSh := filepath.Join(dataDir, "run.sh")
+	installerJar := filepath.Join(dataDir, "installer.jar")
+
+	hasServerBin := false
+	if _, err := os.Stat(serverJar); err == nil {
+		hasServerBin = true
+	} else if _, err := os.Stat(runSh); err == nil {
+		hasServerBin = true
+	} else if hasForgeJar(dataDir) {
+		hasServerBin = true
+	}
+
+	stype := strings.ToLower(srv.ServerType)
+	if !hasServerBin {
+		hasInstaller := false
+		if _, err := os.Stat(installerJar); err == nil {
+			hasInstaller = true
+		} else if matches, err := filepath.Glob(filepath.Join(dataDir, "*installer*.jar")); err == nil && len(matches) > 0 {
+			hasInstaller = true
+		}
+		if hasInstaller {
+			if stype == "spigot" || stype == "bukkit" || stype == "craftbukkit" {
+				return StateBuilding
+			}
+			return StateInstalling
+		}
+	}
+
+	if stype == "sponge" {
+		libDir := filepath.Join(dataDir, "libraries")
+		if fi, err := os.Stat(libDir); os.IsNotExist(err) || (err == nil && !fi.IsDir()) {
+			return StateInstalling
+		}
+		if entries, err := os.ReadDir(libDir); err == nil && len(entries) == 0 {
+			return StateInstalling
+		}
+	}
+
+	return ""
+}
+
 // Start ensures a container exists then starts it.
 func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	srv, err := s.Get(ctx, id)
@@ -830,7 +885,11 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 		}
 	}
 
-	if err := s.setState(ctx, id, StateStarting); err != nil {
+	initialState := StateStarting
+	if pending := s.pendingInitialState(id, srv); pending != "" {
+		initialState = pending
+	}
+	if err := s.setState(ctx, id, initialState); err != nil {
 		return Server{}, err
 	}
 	if err := s.docker.Start(ctx, srv.ContainerID); err != nil {
@@ -844,11 +903,21 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 		return Server{}, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := s.setStateWithStartedAt(ctx, id, StateRunning, &now); err != nil {
-		return Server{}, err
+	activeState := StateRunning
+	if pending := s.pendingInitialState(id, srv); pending != "" {
+		activeState = pending
 	}
-	if s.dns != nil && srv.HostPort > 0 {
-		_ = s.dns.Upsert(ctx, id, "", srv.HostPort)
+	if activeState == StateRunning {
+		if err := s.setStateWithStartedAt(ctx, id, StateRunning, &now); err != nil {
+			return Server{}, err
+		}
+		if s.dns != nil && srv.HostPort > 0 {
+			_ = s.dns.Upsert(ctx, id, "", srv.HostPort)
+		}
+	} else {
+		if err := s.setState(ctx, id, activeState); err != nil {
+			return Server{}, err
+		}
 	}
 	return s.Get(ctx, id)
 }
@@ -933,6 +1002,7 @@ func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 	}
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cleanupCancel()
+	_ = os.Remove(filepath.Join(s.dataPath(id), ".mcm_state"))
 	if err := s.setState(cleanupCtx, id, StateStopped); err != nil {
 		return Server{}, err
 	}
@@ -959,6 +1029,7 @@ func (s *Store) Kill(ctx context.Context, id string) (Server, error) {
 			return Server{}, err
 		}
 	}
+	_ = os.Remove(filepath.Join(s.dataPath(id), ".mcm_state"))
 	if err := s.setState(ctx, id, StateStopped); err != nil {
 		return Server{}, err
 	}
@@ -1016,6 +1087,15 @@ func (s *Store) Status(ctx context.Context, id string) (Server, error) {
 		return srv, nil
 	}
 	mapped := mapDockerState(insp.Status, insp.ExitCode)
+	if mapped == StateRunning {
+		stateFile := filepath.Join(s.dataPath(id), ".mcm_state")
+		if content, err := os.ReadFile(stateFile); err == nil {
+			subState := strings.TrimSpace(string(content))
+			if subState == StateInstalling || subState == StateBuilding {
+				mapped = subState
+			}
+		}
+	}
 	if mapped != srv.State {
 		if mapped == StateRunning {
 			started := insp.StartedAt
@@ -1023,6 +1103,11 @@ func (s *Store) Status(ctx context.Context, id string) (Server, error) {
 				started = time.Now().UTC().Format(time.RFC3339)
 			}
 			_ = s.setStateWithStartedAt(ctx, id, mapped, &started)
+			if s.dns != nil && srv.HostPort > 0 {
+				_ = s.dns.Upsert(ctx, id, "", srv.HostPort)
+			}
+		} else if mapped == StateInstalling || mapped == StateBuilding {
+			_ = s.setState(ctx, id, mapped)
 		} else {
 			_ = s.setState(ctx, id, mapped)
 			if s.dns != nil && (mapped == StateStopped || mapped == StateError) {
@@ -1059,7 +1144,7 @@ func (s *Store) Stats(ctx context.Context, id string) (ServerStats, error) {
 		DiskBytes:        diskBytes,
 	}
 
-	if srv.ContainerID == "" || srv.State != StateRunning {
+	if srv.ContainerID == "" || (srv.State != StateRunning && srv.State != StateInstalling && srv.State != StateBuilding) {
 		return result, nil
 	}
 

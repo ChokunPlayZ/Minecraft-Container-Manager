@@ -50,6 +50,7 @@ exec 3<> "$FIFO"
 
 term_handler() {
   test -p "$FIFO" && printf '%s\n' "stop" "end" "shutdown" "geyser stop" > "$FIFO" || true
+  rm -f /data/.mcm_state
   wait "$SERVER_PID" 2>/dev/null || true
   exit 0
 }
@@ -74,16 +75,8 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
     case "$INSTALLER" in *quilt*) IS_QUILT=1;; esac
     IS_BUILDTOOLS=0
     case "$INSTALLER" in *BuildTools*|*buildtools*) IS_BUILDTOOLS=1;; esac
-    if [ "$SERVER_TYPE" = "quilt" ] || [ $IS_QUILT -eq 1 ]; then
-      QUILT_ARGS="install server"
-      if [ -n "$SERVER_VERSION" ]; then
-        QUILT_ARGS="$QUILT_ARGS $SERVER_VERSION"
-        if [ -n "$SERVER_BUILD" ] && [ "$SERVER_BUILD" != "latest" ]; then
-          QUILT_ARGS="$QUILT_ARGS $SERVER_BUILD"
-        fi
-      fi
-      java -Djava.awt.headless=true -jar "$INSTALLER" $QUILT_ARGS --download-server --install-dir=/data
-    elif [ "$SERVER_TYPE" = "spigot" ] || [ "$SERVER_TYPE" = "bukkit" ] || [ "$SERVER_TYPE" = "craftbukkit" ] || [ $IS_BUILDTOOLS -eq 1 ]; then
+    if [ "$SERVER_TYPE" = "spigot" ] || [ "$SERVER_TYPE" = "bukkit" ] || [ "$SERVER_TYPE" = "craftbukkit" ] || [ $IS_BUILDTOOLS -eq 1 ]; then
+      echo "building" > /data/.mcm_state
       echo "Running Spigot BuildTools ($INSTALLER)..."
       if ! command -v git >/dev/null 2>&1; then
         echo "Installing git for BuildTools..."
@@ -102,6 +95,7 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
       rm -rf /tmp/buildtools
       if [ $BUILD_EXIT -ne 0 ]; then
         echo "Spigot BuildTools failed with exit code $BUILD_EXIT"
+        rm -f /data/.mcm_state
         exit $BUILD_EXIT
       fi
       echo "Spigot BuildTools completed successfully."
@@ -115,14 +109,33 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
         done
       fi
       rm -f /data/installer.jar /data/BuildTools.jar
+    elif [ "$SERVER_TYPE" = "quilt" ] || [ $IS_QUILT -eq 1 ]; then
+      echo "installing" > /data/.mcm_state
+      QUILT_ARGS="install server"
+      if [ -n "$SERVER_VERSION" ]; then
+        QUILT_ARGS="$QUILT_ARGS $SERVER_VERSION"
+        if [ -n "$SERVER_BUILD" ] && [ "$SERVER_BUILD" != "latest" ]; then
+          QUILT_ARGS="$QUILT_ARGS $SERVER_BUILD"
+        fi
+      fi
+      java -Djava.awt.headless=true -jar "$INSTALLER" $QUILT_ARGS --download-server --install-dir=/data
+      INSTALL_EXIT=$?
+      if [ $INSTALL_EXIT -ne 0 ]; then
+        echo "Server installer failed with exit code $INSTALL_EXIT"
+        rm -f /data/.mcm_state
+        exit $INSTALL_EXIT
+      fi
     else
+      echo "installing" > /data/.mcm_state
       java -Djava.awt.headless=true -jar "$INSTALLER" --installServer
+      INSTALL_EXIT=$?
+      if [ $INSTALL_EXIT -ne 0 ]; then
+        echo "Server installer failed with exit code $INSTALL_EXIT"
+        rm -f /data/.mcm_state
+        exit $INSTALL_EXIT
+      fi
     fi
-    INSTALL_EXIT=$?
-    if [ $INSTALL_EXIT -ne 0 ]; then
-      echo "Server installer failed with exit code $INSTALL_EXIT"
-      exit $INSTALL_EXIT
-    fi
+    rm -f /data/.mcm_state
     echo "Server installer completed successfully."
 
     # In older Forge (<= 1.16.5), the installer creates forge-*.jar instead of run.sh
@@ -177,6 +190,10 @@ elif [ -f "/data/quilt-server-launch.jar" ]; then
   TARGET_JAR="/data/quilt-server-launch.jar"
 fi
 
+if [ "$SERVER_TYPE" = "sponge" ] && [ ! -d "/data/libraries" ]; then
+  echo "installing" > /data/.mcm_state
+fi
+
 if [ -f "/data/run.sh" ]; then
   if [ -f "/data/user_jvm_args.txt" ]; then
     if ! grep -q "^-Xmx" /data/user_jvm_args.txt 2>/dev/null; then
@@ -197,8 +214,19 @@ else
   exit 1
 fi
 SERVER_PID=$!
+if [ "$SERVER_TYPE" = "sponge" ] && [ -f "/data/.mcm_state" ]; then
+  (
+    while [ ! -d "/data/libraries" ] || [ -z "$(ls -A /data/libraries 2>/dev/null)" ]; do
+      sleep 1
+      kill -0 "$SERVER_PID" 2>/dev/null || break
+    done
+    sleep 2
+    rm -f /data/.mcm_state
+  ) &
+fi
 wait "$SERVER_PID"
 EXIT_CODE=$?
+rm -f /data/.mcm_state
 exit $EXIT_CODE
 `
 

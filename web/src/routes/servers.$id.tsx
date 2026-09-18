@@ -245,6 +245,8 @@ export function ServerDetailRoute() {
 
   const state = statusState ?? server?.state ?? 'stopped';
   const isRunning = state === 'running';
+  const isInstalling = state === 'installing' || state === 'building';
+  const isActive = isRunning || isInstalling;
   const effectiveStartedAt = statusStartedAt !== undefined ? statusStartedAt : server?.started_at;
   const effectiveUptimeSec = statusUptimeSeconds !== undefined ? statusUptimeSeconds : server?.uptime_seconds;
   const liveUptime = useLiveUptime(effectiveStartedAt, effectiveUptimeSec, isRunning);
@@ -392,7 +394,7 @@ export function ServerDetailRoute() {
 
               {/* Right Power Actions */}
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                {!isRunning ? (
+                {!isActive ? (
                   <Button
                     variant="default"
                     size="sm"
@@ -419,7 +421,7 @@ export function ServerDetailRoute() {
                       variant="outline"
                       size="sm"
                       className="gap-1.5"
-                      disabled={busy}
+                      disabled={busy || isInstalling}
                       onClick={() => void run(() => api.restartServer(server.id))}
                     >
                       <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />

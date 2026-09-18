@@ -95,4 +95,19 @@ func TestEntryScriptSpigotBuildToolsHandling(t *testing.T) {
 	}
 }
 
+func TestEntryScriptInstallingAndBuildingStateHandling(t *testing.T) {
+	if !strings.Contains(DefaultEntryScript, `echo "building" > /data/.mcm_state`) {
+		t.Errorf("DefaultEntryScript missing building state echo for BuildTools")
+	}
+	if !strings.Contains(DefaultEntryScript, `echo "installing" > /data/.mcm_state`) {
+		t.Errorf("DefaultEntryScript missing installing state echo for installers")
+	}
+	if !strings.Contains(DefaultEntryScript, `rm -f /data/.mcm_state`) {
+		t.Errorf("DefaultEntryScript missing rm -f /data/.mcm_state cleanup")
+	}
+	if !strings.Contains(DefaultEntryScript, `[ "$SERVER_TYPE" = "sponge" ] && [ ! -d "/data/libraries" ]`) {
+		t.Errorf("DefaultEntryScript missing sponge libraries initial download check")
+	}
+}
+
 
