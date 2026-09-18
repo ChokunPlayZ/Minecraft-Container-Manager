@@ -155,7 +155,7 @@ func serverLoadersForType(serverType string) []string {
 		return []string{"neoforge"}
 	case "sponge":
 		return []string{"sponge"}
-	case "ketting", "mohist":
+	case "ketting", "mohist", "youer":
 		return []string{"forge", "neoforge", "paper", "spigot", "bukkit"}
 	case "waterfall", "bungeecord":
 		return []string{"bungeecord", "waterfall"}

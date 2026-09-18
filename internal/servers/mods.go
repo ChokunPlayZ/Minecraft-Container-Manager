@@ -142,7 +142,7 @@ func modDirForType(serverType string) (ModType, error) {
 	switch strings.ToLower(serverType) {
 	case "paper", "spigot", "purpur", "pufferfish", "leaf", "folia", "waterfall", "velocity", "bungeecord", "limbo", "nanolimbo", "geysermc":
 		return ModTypePlugins, nil
-	case "fabric", "forge", "neoforge", "quilt", "sponge", "crucible", "ketting", "mohist", "custom":
+	case "fabric", "forge", "neoforge", "quilt", "sponge", "crucible", "ketting", "mohist", "youer", "custom":
 		return ModTypeMods, nil
 	case "vanilla":
 		return ModTypeNone, ErrUnsupportedMods

@@ -50,6 +50,7 @@ export function getServerLoaders(serverType: ServerType): string[] {
     case 'sponge':
       return ['sponge'];
     case 'mohist':
+    case 'youer':
     case 'ketting':
       return ['forge', 'neoforge', 'paper', 'spigot', 'bukkit'];
     case 'waterfall':
@@ -93,6 +94,8 @@ export function getLoaderLabel(serverType: ServerType): string {
       return 'Sponge';
     case 'mohist':
       return 'Mohist';
+    case 'youer':
+      return 'Youer';
     case 'ketting':
       return 'Ketting';
     case 'crucible':

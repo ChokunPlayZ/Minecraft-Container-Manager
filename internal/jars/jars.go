@@ -37,6 +37,7 @@ const (
 	TypeFolia      JarType = "folia"
 	TypeQuilt      JarType = "quilt"
 	TypeMohist     JarType = "mohist"
+	TypeYouer      JarType = "youer"
 	TypeKetting    JarType = "ketting"
 	TypeSponge     JarType = "sponge"
 	TypeLimbo      JarType = "limbo"
@@ -55,7 +56,7 @@ const (
 func ParseJarType(s string) (JarType, error) {
 	switch JarType(strings.ToLower(s)) {
 	case TypePaper, TypeFabric, TypeVanilla, TypeForge, TypeNeoForge, TypeSpigot,
-		TypePurpur, TypeFolia, TypeQuilt, TypeMohist, TypeKetting, TypeSponge,
+		TypePurpur, TypeFolia, TypeQuilt, TypeMohist, TypeYouer, TypeKetting, TypeSponge,
 		TypeLimbo, TypeNanoLimbo, TypeCrucible, TypePufferfish, TypeLeaf,
 		TypeWaterfall, TypeBungeeCord, TypeVelocity, TypeGeyser, TypeCustom:
 		return JarType(strings.ToLower(s)), nil
@@ -497,6 +498,19 @@ func (r *Resolver) resolve(ctx context.Context, jt JarType, version, build strin
 			b = builds[0]
 		}
 		return Resolved{Type: TypeMohist, Version: version, Build: b}, nil
+	case TypeYouer:
+		builds, err := r.YouerBuilds(ctx, version)
+		if err != nil || len(builds) == 0 {
+			if err != nil {
+				return Resolved{}, fmt.Errorf("no youer builds found for version %q: %w", version, err)
+			}
+			return Resolved{}, fmt.Errorf("no youer builds found for version %q", version)
+		}
+		b, err := selectString(builds, build)
+		if err != nil {
+			b = builds[0]
+		}
+		return Resolved{Type: TypeYouer, Version: version, Build: b}, nil
 	case TypeKetting:
 		return Resolved{Type: TypeKetting, Version: version, Build: "latest"}, nil
 	case TypeSponge:
@@ -1103,6 +1117,26 @@ func (r *Resolver) DownloadServerJar(ctx context.Context, jt JarType, version, b
 		dlURL = fmt.Sprintf("https://mohistmc.com/builds-raw/Mohist-%s/Mohist-%s-%s.jar", version, version, build)
 		if fbErr := r.DownloadFile(ctx, dlURL, targetJar); fbErr != nil {
 			return fmt.Errorf("download mohist %s build %s: %w (fallback failed: %v)", version, build, dlErr, fbErr)
+		}
+		return nil
+
+	case TypeYouer:
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if build == "" || build == "latest" {
+			builds, err := r.YouerBuilds(ctx, version)
+			if err != nil || len(builds) == 0 {
+				if err != nil {
+					return fmt.Errorf("no youer builds available for version %q: %w", version, err)
+				}
+				return fmt.Errorf("no youer builds available for version %q", version)
+			}
+			build = builds[0]
+		}
+		dlURL = fmt.Sprintf("https://api.mohistmc.com/project/youer/%s/builds/%s/download", version, build)
+		if err := r.DownloadFile(ctx, dlURL, targetJar); err != nil {
+			return fmt.Errorf("download youer %s build %s: %w", version, build, err)
 		}
 		return nil
 

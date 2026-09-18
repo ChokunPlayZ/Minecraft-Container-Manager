@@ -1181,7 +1181,8 @@ export function CreateServerDialog({ onCreated }: { onCreated: () => void }) {
                       </optgroup>
                       <optgroup label="Modded &amp; Hybrid Platforms">
                         <option value="quilt">Quilt (Fabric-Compatible Modloader)</option>
-                        <option value="mohist">Mohist (Forge + Paper Hybrid)</option>
+                        <option value="youer">Youer (NeoForge + Paper Hybrid)</option>
+                        <option value="mohist">Mohist (Forge + Paper Hybrid, Legacy/EOL)</option>
                         <option value="ketting">Ketting (NeoForge/Forge Hybrid)</option>
                         <option value="sponge">Sponge (SpongeForge/Vanilla)</option>
                         <option value="crucible">Crucible (1.7.10 Hybrid)</option>

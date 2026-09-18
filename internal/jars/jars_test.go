@@ -151,7 +151,7 @@ func TestVanillaValidate(t *testing.T) {
 func TestParseJarType(t *testing.T) {
 	allTypes := []string{
 		"paper", "fabric", "vanilla", "forge", "neoforge", "spigot",
-		"purpur", "folia", "quilt", "mohist", "ketting", "sponge",
+		"purpur", "folia", "quilt", "mohist", "youer", "ketting", "sponge",
 		"limbo", "nanolimbo", "crucible", "pufferfish", "leaf",
 		"waterfall", "bungeecord", "geysermc", "custom",
 	}
@@ -451,6 +451,62 @@ func TestMohistDownloadContextCanceled(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "builds-raw") {
 		t.Fatalf("should not attempt or report builds-raw fallback when context is canceled, got: %v", err)
+	}
+}
+
+func TestYouerVersions(t *testing.T) {
+	r := NewResolver()
+	versions, err := r.YouerVersions(context.Background())
+	if err != nil {
+		t.Fatalf("YouerVersions failed: %v", err)
+	}
+	if len(versions) == 0 {
+		t.Fatal("expected at least one valid youer version")
+	}
+	has1211 := false
+	for _, v := range versions {
+		if v == "1.21.1" {
+			has1211 = true
+			break
+		}
+	}
+	if !has1211 {
+		t.Errorf("expected versions to include 1.21.1, got: %v", versions)
+	}
+}
+
+func TestYouerBuildsAndValidation(t *testing.T) {
+	r := NewResolver()
+	builds, err := r.YouerBuilds(context.Background(), "1.21.1")
+	if err != nil {
+		t.Fatalf("YouerBuilds failed: %v", err)
+	}
+	if len(builds) == 0 {
+		t.Fatal("expected at least one build for 1.21.1")
+	}
+
+	res, err := r.Validate(context.Background(), TypeYouer, "1.21.1", "latest")
+	if err != nil {
+		t.Fatalf("Validate youer failed: %v", err)
+	}
+	if res.Type != TypeYouer || res.Version != "1.21.1" || res.Build == "" || res.Build == "latest" {
+		t.Fatalf("unexpected validation result: %+v", res)
+	}
+}
+
+func TestYouerDownloadContextCanceled(t *testing.T) {
+	r := NewResolver()
+	dir := t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel context
+
+	err := r.DownloadServerJar(ctx, TypeYouer, "1.21.1", "latest", dir)
+	if err == nil {
+		t.Fatalf("expected error on canceled context")
+	}
+	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("expected context canceled error, got: %v", err)
 	}
 }
 

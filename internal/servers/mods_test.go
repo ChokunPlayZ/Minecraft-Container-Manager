@@ -18,6 +18,7 @@ func TestModDirForType(t *testing.T) {
 		{"fabric", ModTypeMods, false},
 		{"forge", ModTypeMods, false},
 		{"neoforge", ModTypeMods, false},
+		{"youer", ModTypeMods, false},
 		{"vanilla", ModTypeNone, true},
 		{"unknown", ModTypeNone, true},
 	}

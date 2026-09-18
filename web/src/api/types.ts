@@ -8,6 +8,7 @@ export type ServerType =
   | 'purpur'
   | 'ketting'
   | 'mohist'
+  | 'youer'
   | 'sponge'
   | 'limbo'
   | 'nanolimbo'

@@ -69,6 +69,8 @@ func (s *Server) handleJarVersions(w http.ResponseWriter, r *http.Request) {
 		versions, err = s.jars.QuiltGameVersions(r.Context())
 	case "mohist":
 		versions, err = s.jars.MohistVersions(r.Context())
+	case "youer":
+		versions, err = s.jars.YouerVersions(r.Context())
 	case "sponge":
 		versions, err = s.jars.SpongeVersions(r.Context())
 	case "geysermc":
@@ -139,6 +141,8 @@ func (s *Server) handleJarBuilds(w http.ResponseWriter, r *http.Request) {
 		builds, err = s.jars.QuiltLoaders(r.Context(), version)
 	case "mohist":
 		builds, err = s.jars.MohistBuilds(r.Context(), version)
+	case "youer":
+		builds, err = s.jars.YouerBuilds(r.Context(), version)
 	case "sponge":
 		builds = []string{"latest"}
 	case "geysermc":

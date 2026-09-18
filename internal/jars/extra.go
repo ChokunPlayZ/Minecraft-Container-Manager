@@ -568,6 +568,80 @@ func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, 
 	return nil, fmt.Errorf("no mohist builds available for version %q", version)
 }
 
+// YouerVersions returns supported Youer game versions that have available builds.
+func (r *Resolver) YouerVersions(ctx context.Context) ([]string, error) {
+	fallbackVersions := []string{"26.2", "1.21.1"}
+	var res []struct {
+		Name string `json:"name"`
+	}
+	if err := r.getJSON(ctx, "https://api.mohistmc.com/project/youer/versions", &res); err != nil || len(res) == 0 {
+		return fallbackVersions, nil
+	}
+
+	// Filter versions to only include those with actual released builds
+	type verCheck struct {
+		version string
+		has     bool
+	}
+	ch := make(chan verCheck, len(res))
+	for _, v := range res {
+		go func(ver string) {
+			checkCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+			defer cancel()
+			var apiList []struct {
+				ID int `json:"id"`
+			}
+			hasBuilds := false
+			if err := r.getJSON(checkCtx, fmt.Sprintf("https://api.mohistmc.com/project/youer/%s/builds", ver), &apiList); err == nil && len(apiList) > 0 {
+				hasBuilds = true
+			}
+			ch <- verCheck{version: ver, has: hasBuilds}
+		}(v.Name)
+	}
+
+	valid := make([]string, 0, len(res))
+	for range res {
+		resItem := <-ch
+		if resItem.has {
+			valid = append(valid, resItem.version)
+		}
+	}
+
+	if len(valid) == 0 {
+		return fallbackVersions, nil
+	}
+
+	sort.SliceStable(valid, func(i, j int) bool {
+		return CompareVersionTokens(valid[i], valid[j]) > 0
+	})
+	return valid, nil
+}
+
+// YouerBuilds returns builds for a Youer version.
+func (r *Resolver) YouerBuilds(ctx context.Context, version string) ([]string, error) {
+	var apiList []struct {
+		ID int `json:"id"`
+	}
+	if err := r.getJSON(ctx, fmt.Sprintf("https://api.mohistmc.com/project/youer/%s/builds", version), &apiList); err == nil && len(apiList) > 0 {
+		out := make([]string, 0, len(apiList))
+		for _, b := range apiList {
+			if b.ID > 0 {
+				out = append(out, strconv.Itoa(b.ID))
+			}
+		}
+		if len(out) > 0 {
+			sort.SliceStable(out, func(i, j int) bool {
+				return CompareVersionTokens(out[i], out[j]) > 0
+			})
+			return out, nil
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return nil, fmt.Errorf("no youer builds available for version %q", version)
+}
+
 // SpongeVersions returns supported Sponge game versions.
 func (r *Resolver) SpongeVersions(ctx context.Context) ([]string, error) {
 	var res struct {

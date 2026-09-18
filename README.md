@@ -8,11 +8,11 @@ Each Minecraft server container runs with MCM's custom native lifecycle entrypoi
 
 ## Key Features
 
-### 🎮 Comprehensive Server Platform Coverage (22 Flavors)
-- **Extensive Flavor Support**: Out-of-the-box support for 22 server platforms:
+### 🎮 Comprehensive Server Platform Coverage (23 Flavors)
+- **Extensive Flavor Support**: Out-of-the-box support for 23 server platforms:
   - **Bukkit / Paper Ecosystem**: Paper, Purpur, Folia, Pufferfish, Leaf, Spigot, and Vanilla.
   - **Mod Loaders**: Fabric, Quilt, Forge, NeoForge, and SpongeVanilla/SpongeForge.
-  - **Hybrid Mod + Plugin Engines**: Mohist, Ketting, and Crucible.
+  - **Hybrid Mod + Plugin Engines**: Youer, Mohist (Legacy), Ketting, and Crucible.
   - **High-Performance Proxies**: Velocity, Waterfall, and BungeeCord.
   - **Limbo & Queue Servers**: Limbo and NanoLimbo.
   - **Bridges & Custom**: GeyserMC Standalone and Custom Server JARs.
