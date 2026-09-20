@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mcm-panel/mcm/internal/proxy"
 )
@@ -503,6 +504,97 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 	newLithiumPath := filepath.Join(srvDir, "lithium-fabric-0.14.0.jar")
 	if _, err := os.Stat(newLithiumPath); err != nil {
 		t.Errorf("expected new lithium jar to exist, err: %v", err)
+	}
+}
+
+func TestBatchUpdateModsCurrentVersion(t *testing.T) {
+	st, serverID := newModTestStore(t, "fabric")
+	ctx := context.Background()
+
+	srvDir := filepath.Join(st.dataPath(serverID), "mods")
+	_ = os.MkdirAll(srvDir, 0o755)
+	mod1 := filepath.Join(srvDir, "appleskin-fabric-mc1.20.1-2.5.0.jar")
+	if err := os.WriteFile(mod1, []byte("fake-appleskin-jar-content"), 0o644); err != nil {
+		t.Fatalf("failed to create mod1: %v", err)
+	}
+
+	fakeDownloadServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "fail") {
+			http.Error(w, "download error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/java-archive")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("fake-new-appleskin-jar-payload"))
+	}))
+	defer fakeDownloadServer.Close()
+
+	// Seed update cache
+	st.setUpdatesCache(serverID, &ServerModUpdatesResponse{
+		TotalMods:   1,
+		UpdateCount: 1,
+		LastChecked: time.Now(),
+		Updates: map[string]ModUpdateInfo{
+			"appleskin-fabric-mc1.20.1-2.5.0": {
+				ModName:           "appleskin-fabric-mc1.20.1-2.5.0",
+				ModFile:           "appleskin-fabric-mc1.20.1-2.5.0.jar",
+				Provider:          "modrinth",
+				Title:             "AppleSkin",
+				CurrentVersion:    "2.5.0",
+				LatestVersion:     "2.5.1",
+				LatestJar:         "appleskin-fabric-mc1.20.1-2.5.1.jar",
+				LatestDownloadURL: fakeDownloadServer.URL + "/appleskin-fabric-mc1.20.1-2.5.1.jar",
+			},
+		},
+	})
+
+	// 1. Successful BatchUpdateMods
+	res, err := st.BatchUpdateMods(ctx, serverID, nil)
+	if err != nil {
+		t.Fatalf("BatchUpdateMods failed: %v", err)
+	}
+	if res.Updated != 1 || res.Failed != 0 {
+		t.Fatalf("expected 1 updated, 0 failed, got: %+v", res)
+	}
+
+	// Old jar should be removed, new jar exists
+	if _, err := os.Stat(mod1); !os.IsNotExist(err) {
+		t.Errorf("expected old appleskin jar to be removed")
+	}
+	newPath := filepath.Join(srvDir, "appleskin-fabric-mc1.20.1-2.5.1.jar")
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("expected new appleskin jar to exist, err: %v", err)
+	}
+
+	// 2. Failure preserves old jar
+	st.setUpdatesCache(serverID, &ServerModUpdatesResponse{
+		TotalMods:   1,
+		UpdateCount: 1,
+		LastChecked: time.Now(),
+		Updates: map[string]ModUpdateInfo{
+			"appleskin-fabric-mc1.20.1-2.5.1": {
+				ModName:           "appleskin-fabric-mc1.20.1-2.5.1",
+				ModFile:           "appleskin-fabric-mc1.20.1-2.5.1.jar",
+				Provider:          "modrinth",
+				Title:             "AppleSkin",
+				CurrentVersion:    "2.5.1",
+				LatestVersion:     "2.5.2",
+				LatestJar:         "appleskin-fabric-mc1.20.1-2.5.2.jar",
+				LatestDownloadURL: fakeDownloadServer.URL + "/fail.jar",
+			},
+		},
+	})
+
+	failRes, err := st.BatchUpdateMods(ctx, serverID, nil)
+	if err != nil {
+		t.Fatalf("BatchUpdateMods failed: %v", err)
+	}
+	if failRes.Updated != 0 || failRes.Failed != 1 {
+		t.Fatalf("expected 0 updated, 1 failed, got: %+v", failRes)
+	}
+	// The 2.5.1 jar must NOT have been deleted when download failed!
+	if _, err := os.Stat(newPath); err != nil {
+		t.Errorf("expected original jar to still exist after failed download, err: %v", err)
 	}
 }
 

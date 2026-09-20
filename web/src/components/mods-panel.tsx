@@ -4,6 +4,7 @@ import {
   ArrowUpCircle,
   CheckCircle2,
   Compass,
+  DownloadCloud,
   FolderOpen,
   Loader2,
   Package,
@@ -15,6 +16,7 @@ import {
   UploadCloud,
   X,
   Sparkles,
+  AlertCircle,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { InstalledModpack, Mod, Server } from '../api/types';
@@ -220,6 +222,84 @@ export function ModsPanel({ server }: { server: Server }) {
   const label = type === 'mods' ? 'Mods' : 'Plugins';
   const updateCount = Object.keys(updates).length;
 
+  const [updatingBatch, setUpdatingBatch] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    current: number;
+    total: number;
+    message: string;
+    percent: number;
+  } | null>(null);
+  const [batchResultBanner, setBatchResultBanner] = useState<{
+    type: 'success' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
+
+  async function handleBatchUpdateMods() {
+    if (updateCount === 0) return;
+
+    const confirmed = await confirm(
+      `Update all ${updateCount} outdated ${label.toLowerCase()} to their latest compatible versions for Minecraft ${server.version || ''}? Old jars will be replaced cleanly with the newest releases.`,
+      {
+        title: `One-Click Update ${updateCount} ${label}`,
+        confirmLabel: `Update All ${updateCount}`,
+      },
+    );
+    if (!confirmed) return;
+
+    setUpdatingBatch(true);
+    setBatchResultBanner(null);
+    setBatchProgress({
+      current: 0,
+      total: updateCount,
+      message: 'Preparing updates...',
+      percent: 0,
+    });
+
+    // Subscribe to SSE task events
+    const unsub = api.subscribeTaskEvents(server.id, (task) => {
+      if (task.operation === 'mod_update_batch') {
+        setBatchProgress({
+          current: Number(task.current || 0),
+          total: Number(task.total || updateCount),
+          message: task.message || `Updating ${label.toLowerCase()} (${task.current}/${task.total})...`,
+          percent: task.percent != null ? task.percent : 0,
+        });
+      }
+    });
+
+    try {
+      const res = await api.batchUpdateMods(server.id);
+      setBatchProgress({
+        current: res.total,
+        total: res.total,
+        message: `Updated ${res.updated} of ${res.total} ${label.toLowerCase()}!`,
+        percent: 100,
+      });
+      await new Promise((r) => setTimeout(r, 400));
+      if (res.failed > 0) {
+        setBatchResultBanner({
+          type: 'warning',
+          message: `Updated ${res.updated} ${label.toLowerCase()}, but ${res.failed} failed. You can update individual items below.`,
+        });
+      } else {
+        setBatchResultBanner({
+          type: 'success',
+          message: `Successfully updated all ${res.updated} ${label.toLowerCase()} to their latest versions!`,
+        });
+      }
+      void load(true);
+    } catch (err) {
+      setBatchResultBanner({
+        type: 'error',
+        message: err instanceof ApiError ? err.detail : `Failed to update ${label.toLowerCase()}.`,
+      });
+    } finally {
+      unsub();
+      setUpdatingBatch(false);
+      setBatchProgress(null);
+    }
+  }
+
   if (unsupported && activeTab !== 'modpacks') {
     return (
       <div className="space-y-4">
@@ -420,6 +500,89 @@ export function ModsPanel({ server }: { server: Server }) {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Batch progress indicator */}
+              {updatingBatch && batchProgress && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 animate-fadeIn">
+                  <ProgressBar
+                    label={
+                      <div className="flex items-center gap-1.5">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                        <span>{batchProgress.message}</span>
+                      </div>
+                    }
+                    subtext={`Updating compatible ${label.toLowerCase()} (${batchProgress.current}/${batchProgress.total})`}
+                    value={batchProgress.percent}
+                    variant={batchProgress.percent === 100 ? 'emerald' : 'default'}
+                    className="h-2"
+                  />
+                </div>
+              )}
+
+              {/* Batch update result banner */}
+              {batchResultBanner && (
+                <div
+                  className={`flex items-center justify-between gap-2 p-3 rounded-xl border text-xs animate-fadeIn ${
+                    batchResultBanner.type === 'success'
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                      : batchResultBanner.type === 'warning'
+                        ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+                        : 'border-destructive/40 bg-destructive/10 text-destructive'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {batchResultBanner.type === 'success' ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    )}
+                    <span className="truncate">{batchResultBanner.message}</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setBatchResultBanner(null)}
+                    className="h-6 w-6 p-0 hover:bg-transparent text-muted-foreground hover:text-foreground shrink-0"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+
+              {/* Quick action banner if updates are available */}
+              {updateCount > 0 && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-foreground animate-fadeIn">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <ArrowUpCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>
+                      <strong>{updateCount} {updateCount === 1 ? 'update is' : 'updates are'} available</strong> for your installed {label.toLowerCase()}.
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      onClick={() => void handleBatchUpdateMods()}
+                      disabled={updatingBatch || checkingUpdates}
+                      className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold gap-1.5 shadow-xs"
+                    >
+                      {updatingBatch ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <DownloadCloud className="h-3 w-3" />
+                      )}
+                      Update All ({updateCount})
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setActiveTab('updates')}
+                      className="h-7 text-xs border-amber-500/40 text-foreground hover:bg-amber-500/20"
+                    >
+                      View Details
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Upload Dropzone / File Picker */}
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-dashed border-border/80 bg-secondary/15 p-3.5">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -628,12 +791,27 @@ export function ModsPanel({ server }: { server: Server }) {
                   </CardDescription>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {updateCount > 0 && (
+                    <Button
+                      size="sm"
+                      onClick={() => void handleBatchUpdateMods()}
+                      disabled={updatingBatch || checkingUpdates}
+                      className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs"
+                    >
+                      {updatingBatch ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <DownloadCloud className="h-3.5 w-3.5" />
+                      )}
+                      <span>Update All ({updateCount})</span>
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => void checkForUpdates(undefined, true)}
-                    disabled={checkingUpdates || items.length === 0}
+                    disabled={checkingUpdates || items.length === 0 || updatingBatch}
                     className="gap-1.5 text-xs border-amber-500/30 text-foreground hover:bg-amber-500/10"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${checkingUpdates ? 'animate-spin' : ''}`} />
@@ -643,6 +821,53 @@ export function ModsPanel({ server }: { server: Server }) {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Batch update in-progress banner */}
+              {updatingBatch && batchProgress && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2 animate-fadeIn">
+                  <ProgressBar
+                    label={
+                      <span className="flex items-center gap-2 font-semibold text-foreground text-sm">
+                        <Loader2 className="h-4 w-4 animate-spin text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span>{batchProgress.message}</span>
+                      </span>
+                    }
+                    subtext={`Updating compatible mod jars (${batchProgress.current}/${batchProgress.total})`}
+                    value={batchProgress.percent}
+                    size="md"
+                  />
+                </div>
+              )}
+
+              {/* Batch result feedback banner */}
+              {batchResultBanner && (
+                <div
+                  className={`flex items-center justify-between gap-2.5 rounded-xl border p-3.5 text-xs animate-fadeIn ${
+                    batchResultBanner.type === 'success'
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200'
+                      : batchResultBanner.type === 'warning'
+                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+                      : 'border-destructive/40 bg-destructive/10 text-destructive'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {batchResultBanner.type === 'success' ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    )}
+                    <span className="truncate">{batchResultBanner.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setBatchResultBanner(null)}
+                    className="p-1 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+
               {checkingUpdates && (
                 <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4 text-xs text-foreground">
                   <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
@@ -656,9 +881,20 @@ export function ModsPanel({ server }: { server: Server }) {
               {/* Updates Available List */}
               {updateCount > 0 ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-muted-foreground">
                     <span className="font-semibold text-foreground">Available Updates ({updateCount})</span>
-                    <span>Click Update on any mod to view releases and pick a jar</span>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => void handleBatchUpdateMods()}
+                        disabled={updatingBatch || checkingUpdates}
+                        className="h-7 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs"
+                      >
+                        <DownloadCloud className="h-3 w-3" />
+                        One-Click Update All ({updateCount})
+                      </Button>
+                      <span className="hidden sm:inline">or pick specific jars below</span>
+                    </div>
                   </div>
 
                   <div className="space-y-2.5">

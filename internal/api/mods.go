@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/mcm-panel/mcm/internal/servers"
 )
@@ -200,6 +201,22 @@ func (s *Server) handleApplyVersionUpgrade(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, res)
 }
 
+// handleBatchUpdateMods applies available updates for installed mods on the current server version.
+func (s *Server) handleBatchUpdateMods(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Mods []string `json:"mods"`
+	}
+	// Body is optional
+	_ = decodeJSON(w, r, &in)
+
+	res, err := s.servers.BatchUpdateMods(r.Context(), r.PathValue("id"), in.Mods)
+	if err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 // handleGetModVersions returns available releases/jars for a specific mod.
 func (s *Server) handleGetModVersions(w http.ResponseWriter, r *http.Request) {
 	r = contextWithCurseForgeKey(r)
@@ -246,9 +263,9 @@ func (s *Server) handleUpdateMod(w http.ResponseWriter, r *http.Request) {
 				meta.ProjectSlug = oldMod.ProjectSlug
 			}
 		}
-		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), oldName)
 	}
 
+	// Download first to ensure the new jar is valid before removing the old jar
 	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL, meta)
 	if err != nil {
 		if errors.Is(err, servers.ErrDownloadFailed) {
@@ -258,6 +275,11 @@ func (s *Server) handleUpdateMod(w http.ResponseWriter, r *http.Request) {
 		s.writeModErr(w, err)
 		return
 	}
+
+	if in.DeleteOld && oldName != "" && !strings.EqualFold(oldName, in.Filename) {
+		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), oldName)
+	}
+
 	writeJSON(w, http.StatusOK, mod)
 }
 

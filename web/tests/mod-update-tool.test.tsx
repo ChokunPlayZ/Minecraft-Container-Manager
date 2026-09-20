@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
@@ -520,6 +520,102 @@ describe('Mod Update Tool & Jar Picker', () => {
 
       // Must be called exactly once, NOT spammed in a render loop
       expect(checkSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('supports 1-click batch update of all outdated mods from quick action banner', async () => {
+      const user = userEvent.setup();
+
+      const installedMods: Mod[] = [
+        {
+          name: 'fabric-api',
+          title: 'Fabric API',
+          file: 'fabric-api-0.100.0.jar',
+          enabled: true,
+          sha1: 'oldhash123',
+          version: '0.100.0',
+        },
+      ];
+
+      vi.spyOn(api, 'mods').mockResolvedValue({
+        type: 'mods',
+        items: installedMods,
+      });
+
+      vi.spyOn(api, 'checkModUpdates').mockResolvedValue({
+        updates: {
+          'fabric-api': {
+            mod_name: 'fabric-api',
+            title: 'Fabric API',
+            current_version: '0.100.0',
+            latest_version: '0.105.0',
+            latest_jar: 'fabric-api-0.105.0.jar',
+            latest_download_url: 'https://cdn.modrinth.com/data/fabric-api-0.105.0.jar',
+            latest_release_date: '2026-09-01T12:00:00Z',
+            provider: 'modrinth',
+            project_id: 'P7dR8mSH',
+          } as any,
+        },
+        last_checked: new Date().toISOString(),
+      });
+
+      let progressCb: ((p: any) => void) | null = null;
+      vi.spyOn(api, 'subscribeTaskEvents').mockImplementation((_sid, cb) => {
+        progressCb = cb;
+        return () => {};
+      });
+
+      const batchUpdateSpy = vi.spyOn(api, 'batchUpdateMods').mockResolvedValue({
+        updated: 1,
+        failed: 0,
+        skipped: 0,
+        total: 1,
+        results: [
+          {
+            mod_name: 'fabric-api',
+            status: 'updated',
+            old_jar: 'fabric-api-0.100.0.jar',
+            new_jar: 'fabric-api-0.105.0.jar',
+          },
+        ],
+      });
+
+      render(<ModsPanel server={mockServer} />);
+
+      // Wait for updates banner to appear
+      await waitFor(() => {
+        expect(screen.getByText(/1 update is available/i)).toBeInTheDocument();
+      });
+
+      // Click "Update All (1)" button in quick banner
+      const updateAllBannerBtn = screen.getByRole('button', { name: /Update All \(1\)/i });
+      await user.click(updateAllBannerBtn);
+
+      // Confirm modal opens
+      const confirmBtn = await screen.findByRole('button', { name: /Update All 1/i });
+      expect(confirmBtn).toBeInTheDocument();
+
+      await user.click(confirmBtn);
+
+      expect(batchUpdateSpy).toHaveBeenCalledWith('srv-update-test');
+
+      // Simulate SSE event
+      await act(async () => {
+        progressCb?.({
+          server_id: 'srv-update-test',
+          operation: 'mod_update_batch',
+          current: 1,
+          total: 1,
+          percent: 100,
+          message: 'Updated Fabric API',
+        });
+      });
+
+      // Verify success banner appears
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Successfully updated all 1 mods to their latest versions!/i),
+        ).toBeInTheDocument();
+      });
     });
   });
 });

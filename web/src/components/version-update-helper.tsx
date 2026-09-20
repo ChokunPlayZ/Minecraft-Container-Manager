@@ -61,7 +61,6 @@ export function VersionUpdateHelper({
   const [scanStage, setScanStage] = useState('');
   const [report, setReport] = useState<VersionUpdateReport | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lastScannedVersion, setLastScannedVersion] = useState<string | null>(null);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   // Clear timers on unmount
@@ -93,6 +92,8 @@ export function VersionUpdateHelper({
   const [copiedReport, setCopiedReport] = useState(false);
   const [upgradingServerJar, setUpgradingServerJar] = useState(false);
   const [serverUpgradeSuccess, setServerUpgradeSuccess] = useState<string | null>(null);
+  const [upgradingAll, setUpgradingAll] = useState(false);
+  const [oneClickStage, setOneClickStage] = useState('');
 
   // Load available server jar versions on mount
   useEffect(() => {
@@ -170,7 +171,6 @@ export function VersionUpdateHelper({
         setScanStage('Compatibility check complete!');
         await new Promise((resolve) => setTimeout(resolve, 150));
         setReport(res);
-        setLastScannedVersion(v);
       } catch (err) {
         timersRef.current.forEach((t) => clearTimeout(t));
         timersRef.current = [];
@@ -198,12 +198,12 @@ export function VersionUpdateHelper({
     }
   }
 
-  // Batch update all compatible mods
+  // Batch update all compatible mods with real-time SSE progress
   async function handleBatchUpdate() {
     if (!report || report.update_count === 0) return;
 
     const confirmed = await confirm(
-      `Download and apply target version jars for all ${report.update_count} compatible mods for Minecraft ${effectiveTargetVersion}? Old jars will be replaced with compatible builds.`,
+      `Download and apply target version jars for all ${report.update_count} compatible mods for Minecraft ${effectiveTargetVersion}? Old jars will be cleanly replaced with compatible builds.`,
       {
         title: `Update ${report.update_count} mods for MC ${effectiveTargetVersion}`,
         confirmLabel: `Update ${report.update_count} Mods`,
@@ -213,6 +213,7 @@ export function VersionUpdateHelper({
 
     setUpdatingBatch(true);
     setError(null);
+    setBackupSuccess(null);
     setBatchProgress({
       current: 0,
       total: report.update_count,
@@ -220,21 +221,129 @@ export function VersionUpdateHelper({
       percent: 0,
     });
 
+    // Stream real-time progress via SSE
+    const unsub = api.subscribeTaskEvents(server.id, (task) => {
+      if (task.operation === 'mod_upgrade_batch') {
+        setBatchProgress({
+          current: Number(task.current || 0),
+          total: Number(task.total || report.update_count),
+          message: task.message || `Updating mods (${task.current}/${task.total})...`,
+          percent: task.percent != null ? task.percent : 0,
+        });
+      }
+    });
+
     try {
       const res = await api.applyVersionUpgradeMods(server.id, effectiveTargetVersion);
+      setBatchProgress({
+        current: res.total,
+        total: res.total,
+        message: `Updated ${res.updated} of ${res.total} mods!`,
+        percent: 100,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
       onRefreshInstalled?.();
-      // Rescan after update to reflect fresh state
-      await scanCompatibility(true);
+
+      // Silently refresh the report without triggering the jarring full-screen scan
+      try {
+        const freshReport = await api.checkVersionUpgradeCompatibility(
+          server.id,
+          effectiveTargetVersion,
+          true,
+        );
+        setReport(freshReport);
+      } catch {
+        // Fallback: report will refresh on next manual check
+      }
+
       if (res.failed > 0) {
         setError(
           `Updated ${res.updated} mods, but ${res.failed} failed. Check individual mods below.`,
+        );
+      } else {
+        setBackupSuccess(
+          `Successfully updated all ${res.updated} compatible mods for Minecraft ${effectiveTargetVersion}!`,
         );
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Batch update failed.');
     } finally {
+      unsub();
       setUpdatingBatch(false);
       setBatchProgress(null);
+    }
+  }
+
+  // One-Click Full Upgrade: Backup -> Update Mods -> Upgrade Server Jar
+  async function handleOneClickUpgrade() {
+    const v = effectiveTargetVersion;
+    if (!v || !report) return;
+
+    const modUpdateMsg =
+      report.update_count > 0
+        ? `\n2. Download and apply ${report.update_count} compatible mod updates`
+        : '';
+    const step3Num = report.update_count > 0 ? '3' : '2';
+
+    const confirmed = await confirm(
+      `Perform a complete 1-click upgrade of "${server.name}" to Minecraft ${v}?\n\nThis will safely:\n1. Create a full pre-upgrade server backup${modUpdateMsg}\n${step3Num}. Upgrade server software to ${server.server_type} ${v}`,
+      {
+        title: `1-Click Upgrade to Minecraft ${v}`,
+        confirmLabel: `1-Click Upgrade Server & Mods`,
+        destructive: true,
+      },
+    );
+    if (!confirmed) return;
+
+    setUpgradingAll(true);
+    setError(null);
+    setBackupSuccess(null);
+    setServerUpgradeSuccess(null);
+
+    try {
+      // Step 1: Pre-upgrade backup
+      setOneClickStage(`1/3: Creating pre-upgrade server backup...`);
+      const backupName = `Pre-Upgrade-${v}-${new Date().toISOString().slice(0, 10)}`;
+      await api.createBackup(server.id, backupName);
+      setBackupSuccess(`Pre-upgrade backup "${backupName}" created.`);
+
+      // Step 2: Apply compatible mods if any updates exist
+      if (report.update_count > 0) {
+        setOneClickStage(
+          `2/3: Applying ${report.update_count} compatible mod updates for MC ${v}...`,
+        );
+        const res = await api.applyVersionUpgradeMods(server.id, v);
+        if (res.failed > 0) {
+          setError(
+            `Updated ${res.updated} mods, but ${res.failed} failed. Continuing server software upgrade...`,
+          );
+        }
+      }
+
+      // Step 3: Upgrade server jar to target version
+      setOneClickStage(`3/3: Upgrading ${server.server_type} server software to MC ${v}...`);
+      const builds = await api.jarBuilds(server.server_type, v);
+      const latestBuild = builds[0]?.build ?? '';
+      await api.installServer(server.id, { version: v, build: latestBuild });
+
+      setServerUpgradeSuccess(
+        `Server and mods successfully upgraded to ${server.server_type} ${v}${
+          latestBuild ? ` (build ${latestBuild})` : ''
+        }! Restart the server to run the new version.`,
+      );
+      onRefreshInstalled?.();
+
+      // Silently refresh compatibility report
+      try {
+        const freshReport = await api.checkVersionUpgradeCompatibility(server.id, v, true);
+        setReport(freshReport);
+      } catch {}
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : '1-Click upgrade failed.');
+    } finally {
+      setUpgradingAll(false);
+      setOneClickStage('');
     }
   }
 
@@ -550,6 +659,23 @@ export function VersionUpdateHelper({
           </div>
         )}
 
+        {/* In-progress 1-click full upgrade banner */}
+        {upgradingAll && (
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 space-y-2 animate-fadeIn">
+            <ProgressBar
+              label={
+                <span className="flex items-center gap-2 font-semibold text-foreground text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                  <span>{oneClickStage || 'Upgrading server & compatible mods...'}</span>
+                </span>
+              }
+              subtext={`1-Click Full Upgrade to Minecraft ${effectiveTargetVersion}`}
+              value={undefined}
+              size="md"
+            />
+          </div>
+        )}
+
         {/* Scanning in-progress progress bar card */}
         {scanning && (
           <div className="rounded-2xl border border-primary/30 bg-gradient-to-br from-card via-card to-primary/5 p-5 sm:p-6 space-y-4 shadow-sm animate-fadeIn">
@@ -667,28 +793,49 @@ export function VersionUpdateHelper({
 
               {/* Quick Jump / Actions in Verdict */}
               <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-auto flex-wrap">
+                {report.ready_to_update && (
+                  <Button
+                    size="sm"
+                    onClick={() => void handleOneClickUpgrade()}
+                    disabled={upgradingAll || updatingBatch || upgradingServerJar || scanning}
+                    className="h-9 gap-2 text-xs font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-xs"
+                    title="Creates pre-upgrade backup, updates compatible mods, and upgrades server jar in one click"
+                  >
+                    {upgradingAll ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    <span>1-Click Full Upgrade to MC {effectiveTargetVersion}</span>
+                  </Button>
+                )}
+
                 {report.update_count > 0 && (
                   <Button
                     size="sm"
                     onClick={() => void handleBatchUpdate()}
-                    disabled={updatingBatch || scanning}
+                    disabled={updatingBatch || upgradingAll || scanning}
                     className="h-9 gap-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
                   >
-                    <DownloadCloud className="h-4 w-4" />
+                    {updatingBatch ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <DownloadCloud className="h-4 w-4" />
+                    )}
                     <span>Update All Compatible Mods ({report.update_count})</span>
                   </Button>
                 )}
 
-                {report.ready_to_update && (
+                {report.ready_to_update && !upgradingAll && (
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => void handleUpgradeServerJar()}
-                    disabled={upgradingServerJar || scanning}
+                    disabled={upgradingServerJar || scanning || updatingBatch}
                     className="h-9 gap-1.5 text-xs font-semibold border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 shadow-xs"
                   >
                     <RotateCw className="h-3.5 w-3.5" />
-                    <span>Upgrade Server Jar to {effectiveTargetVersion}</span>
+                    <span>Upgrade Server Jar Only</span>
                   </Button>
                 )}
               </div>

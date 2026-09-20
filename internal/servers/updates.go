@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -574,7 +575,11 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 							isSame := strings.EqualFold(latest.FileName, mod.File) ||
 								strings.EqualFold(latest.FileName+".disabled", mod.File) ||
 								(mod.Version != "" && cleanVersionString(mod.Version) == cleanVersionString(latest.DisplayName))
-							if !isSame && latest.DownloadURL != "" {
+							dlURL := latest.DownloadURL
+							if dlURL == "" && latest.ID > 0 && latest.FileName != "" {
+								dlURL = fmt.Sprintf("https://edge.forgecdn.net/files/%d/%d/%s", latest.ID/1000, latest.ID%1000, latest.FileName)
+							}
+							if !isSame && dlURL != "" {
 								title := mod.Title
 								if title == "" {
 									title = mod.Name
@@ -593,7 +598,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 									CurrentVersion:    mod.Version,
 									LatestVersion:     latestVer,
 									LatestJar:         latest.FileName,
-									LatestDownloadURL: latest.DownloadURL,
+									LatestDownloadURL: dlURL,
 									LatestReleaseDate: latest.FileDate,
 								}
 							}
@@ -1217,6 +1222,10 @@ func (s *Store) CheckTargetVersionCompatibility(ctx context.Context, serverID, t
 							if latestVer == "" {
 								latestVer = latest.FileName
 							}
+							dlURL := latest.DownloadURL
+							if dlURL == "" && latest.ID > 0 && latest.FileName != "" {
+								dlURL = fmt.Sprintf("https://edge.forgecdn.net/files/%d/%d/%s", latest.ID/1000, latest.ID%1000, latest.FileName)
+							}
 							modsResult[mod.Name] = ModTargetCompatibility{
 								ModName:           mod.Name,
 								ModFile:           mod.File,
@@ -1228,7 +1237,7 @@ func (s *Store) CheckTargetVersionCompatibility(ctx context.Context, serverID, t
 								Status:            status,
 								CompatibleVersion: latestVer,
 								CompatibleJar:     latest.FileName,
-								DownloadURL:       latest.DownloadURL,
+								DownloadURL:       dlURL,
 								ReleaseDate:       latest.FileDate,
 							}
 							continue
@@ -1464,6 +1473,18 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 		}
 	}
 
+	sort.Slice(toUpdate, func(i, j int) bool {
+		ti := toUpdate[i].Title
+		if ti == "" {
+			ti = toUpdate[i].ModName
+		}
+		tj := toUpdate[j].Title
+		if tj == "" {
+			tj = toUpdate[j].ModName
+		}
+		return ti < tj
+	})
+
 	res := &BatchUpdateModsResult{
 		TargetVersion: targetVersion,
 		Total:         len(toUpdate),
@@ -1475,6 +1496,10 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 		if len(toUpdate) > 0 {
 			percent = (i * 100) / len(toUpdate)
 		}
+		title := item.Title
+		if title == "" {
+			title = item.ModName
+		}
 		s.SetTaskProgress(serverID, TaskProgress{
 			ServerID:   serverID,
 			Operation:  "mod_upgrade_batch",
@@ -1483,7 +1508,7 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 			Percent:    percent,
 			Current:    int64(i + 1),
 			Total:      int64(len(toUpdate)),
-			Message:    fmt.Sprintf("Updating %s (%d/%d)...", item.Title, i+1, len(toUpdate)),
+			Message:    fmt.Sprintf("Updating %s (%d/%d)...", title, i+1, len(toUpdate)),
 		})
 
 		meta := ModDownloadMeta{
@@ -1492,11 +1517,7 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 			Provider:    item.Provider,
 		}
 
-		// Delete old mod jar if filename is different from new jar
-		if !strings.EqualFold(item.ModFile, item.CompatibleJar) {
-			_ = s.DeleteMod(ctx, serverID, item.ModFile)
-		}
-
+		// Download new jar first to prevent losing the existing jar if download fails
 		_, downErr := s.DownloadMod(ctx, serverID, item.CompatibleJar, item.DownloadURL, meta)
 		if downErr != nil {
 			res.Failed++
@@ -1508,11 +1529,119 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 				Error:    downErr.Error(),
 			})
 		} else {
+			// Download succeeded! Only delete old mod jar if filename is different from new jar
+			if !strings.EqualFold(item.ModFile, item.CompatibleJar) {
+				_ = s.DeleteMod(ctx, serverID, item.ModFile)
+			}
 			res.Updated++
 			res.Items = append(res.Items, BatchUpdateModItem{
 				ModName:  item.ModName,
 				Original: item.ModFile,
 				NewJar:   item.CompatibleJar,
+				Success:  true,
+			})
+		}
+	}
+
+	s.ClearTaskProgress(serverID)
+	s.InvalidateModUpdatesCache(serverID)
+
+	return res, nil
+}
+
+// BatchUpdateMods updates installed mods to their latest versions for the current server version.
+// If modNames is empty, all mods with available updates in CheckModUpdates will be updated.
+func (s *Store) BatchUpdateMods(ctx context.Context, serverID string, modNames []string) (*BatchUpdateModsResult, error) {
+	srv, err := s.Get(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+
+	updatesRes, err := s.CheckModUpdates(ctx, serverID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	targetMap := make(map[string]bool)
+	for _, name := range modNames {
+		targetMap[strings.ToLower(name)] = true
+	}
+
+	var toUpdate []ModUpdateInfo
+	for _, u := range updatesRes.Updates {
+		if u.LatestDownloadURL == "" || u.LatestJar == "" {
+			continue
+		}
+		if len(modNames) == 0 || targetMap[strings.ToLower(u.ModName)] || targetMap[strings.ToLower(u.ModFile)] {
+			toUpdate = append(toUpdate, u)
+		}
+	}
+
+	sort.Slice(toUpdate, func(i, j int) bool {
+		ti := toUpdate[i].Title
+		if ti == "" {
+			ti = toUpdate[i].ModName
+		}
+		tj := toUpdate[j].Title
+		if tj == "" {
+			tj = toUpdate[j].ModName
+		}
+		return ti < tj
+	})
+
+	res := &BatchUpdateModsResult{
+		TargetVersion: srv.Version,
+		Total:         len(toUpdate),
+		Items:         make([]BatchUpdateModItem, 0, len(toUpdate)),
+	}
+
+	for i, item := range toUpdate {
+		percent := 0
+		if len(toUpdate) > 0 {
+			percent = (i * 100) / len(toUpdate)
+		}
+		title := item.Title
+		if title == "" {
+			title = item.ModName
+		}
+		s.SetTaskProgress(serverID, TaskProgress{
+			ServerID:   serverID,
+			Operation:  "mod_update_batch",
+			Stage:      "downloading_mods",
+			StageTitle: fmt.Sprintf("Updating Mods (%d/%d)", i+1, len(toUpdate)),
+			Percent:    percent,
+			Current:    int64(i + 1),
+			Total:      int64(len(toUpdate)),
+			Message:    fmt.Sprintf("Updating %s (%d/%d)...", title, i+1, len(toUpdate)),
+		})
+
+		meta := ModDownloadMeta{
+			ProjectID:   item.ProjectID,
+			ProjectSlug: item.ProjectSlug,
+			Provider:    item.Provider,
+		}
+
+		// Download new jar first to prevent losing the existing jar if download fails
+		_, downErr := s.DownloadMod(ctx, serverID, item.LatestJar, item.LatestDownloadURL, meta)
+		if downErr != nil {
+			res.Failed++
+			res.Items = append(res.Items, BatchUpdateModItem{
+				ModName:  item.ModName,
+				Original: item.ModFile,
+				NewJar:   item.LatestJar,
+				Success:  false,
+				Error:    downErr.Error(),
+			})
+		} else {
+			// Download succeeded! Only delete old mod jar if filename is different from new jar
+			if !strings.EqualFold(item.ModFile, item.LatestJar) {
+				_ = s.DeleteMod(ctx, serverID, item.ModFile)
+			}
+			res.Updated++
+			res.Items = append(res.Items, BatchUpdateModItem{
+				ModName:  item.ModName,
+				Original: item.ModFile,
+				NewJar:   item.LatestJar,
 				Success:  true,
 			})
 		}

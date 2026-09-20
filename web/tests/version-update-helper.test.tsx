@@ -10,7 +10,6 @@ const mockServer: Server = {
   server_type: 'fabric',
   version: '1.20.1',
   build: '0.15.11',
-  status: 'running',
   state: 'running',
   host_port: 25565,
   ram_mb: 4096,
@@ -222,7 +221,8 @@ describe('VersionUpdateHelper', () => {
       name: 'Pre-Upgrade-1.21.1',
       server_id: 'srv-1',
       size_bytes: 1000,
-      storage: 'local',
+      location: 'local',
+      status: 'completed',
       created_at: new Date().toISOString(),
     });
 
@@ -245,5 +245,163 @@ describe('VersionUpdateHelper', () => {
 
     expect(backupSpy).toHaveBeenCalledWith('srv-1', expect.stringContaining('Pre-Upgrade-1.21.1'));
     expect(screen.getByText(/created successfully!/i)).toBeInTheDocument();
+  });
+
+  it('performs batch update of compatible mods with real-time progress and silent report refresh', async () => {
+    let progressCb: ((p: any) => void) | null = null;
+    vi.spyOn(api, 'subscribeTaskEvents').mockImplementation((_sid, cb) => {
+      progressCb = cb;
+      return () => {};
+    });
+
+    const applySpy = vi.spyOn(api, 'applyVersionUpgradeMods').mockResolvedValue({
+      updated: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          mod_name: 'lithium-fabric-0.12.0',
+          status: 'updated',
+          old_jar: 'lithium-fabric-0.12.0.jar',
+          new_jar: 'lithium-fabric-0.14.0.jar',
+        },
+      ],
+    });
+
+    render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
+
+    const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    fireEvent.click(checkBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Lithium')).toBeInTheDocument();
+    });
+
+    // Find and click "Update All Compatible Mods (1)"
+    const updateAllBtn = screen.getByRole('button', {
+      name: /Update All Compatible Mods \(1\)/i,
+    });
+    fireEvent.click(updateAllBtn);
+
+    // Confirm dialog should appear
+    const confirmBtn = await screen.findByRole('button', { name: /Update 1 Mods/i });
+    expect(confirmBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+
+    expect(applySpy).toHaveBeenCalledWith('srv-1', '1.21.1');
+
+    // Simulate real-time progress event from backend
+    await act(async () => {
+      progressCb?.({
+        server_id: 'srv-1',
+        operation: 'mod_upgrade_batch',
+        current: 1,
+        total: 1,
+        percent: 100,
+        message: 'Updated lithium-fabric-0.12.0',
+      });
+    });
+
+    // Verify success banner is shown
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Successfully updated all 1 compatible mods for Minecraft 1.21.1!/i),
+      ).toBeInTheDocument();
+    });
+
+    // Verify silent refresh of compatibility report was triggered
+    expect(api.checkVersionUpgradeCompatibility).toHaveBeenCalledTimes(2);
+  });
+
+  it('executes 1-Click Full Upgrade sequentially (backup -> update mods -> server jar upgrade)', async () => {
+    const readyReport: VersionUpdateReport = {
+      ...mockReport,
+      ready_to_update: true,
+      not_available_count: 0,
+      update_count: 1,
+    };
+    vi.spyOn(api, 'checkVersionUpgradeCompatibility').mockResolvedValue(readyReport);
+
+    const backupSpy = vi.spyOn(api, 'createBackup').mockResolvedValue({
+      id: 'bk-full',
+      server_id: 'srv-1',
+      name: 'Pre-Upgrade-1.21.1',
+      size_bytes: 5000,
+      location: 'local',
+      status: 'completed',
+      created_at: new Date().toISOString(),
+    });
+
+    const applySpy = vi.spyOn(api, 'applyVersionUpgradeMods').mockResolvedValue({
+      updated: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          mod_name: 'lithium-fabric-0.12.0',
+          status: 'updated',
+          old_jar: 'lithium-fabric-0.12.0.jar',
+          new_jar: 'lithium-fabric-0.14.0.jar',
+        },
+      ],
+    });
+
+    const buildsSpy = vi.spyOn(api, 'jarBuilds').mockResolvedValue([
+      { build: '0.16.0', display_name: '0.16.0' } as any,
+    ]);
+
+    const installSpy = vi.spyOn(api, 'installServer').mockResolvedValue({
+      ...mockServer,
+      version: '1.21.1',
+      build: '0.16.0',
+    });
+
+    const refreshSpy = vi.fn();
+
+    render(
+      <VersionUpdateHelper
+        server={mockServer}
+        installedMods={mockMods}
+        onRefreshInstalled={refreshSpy}
+      />,
+    );
+
+    const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    fireEvent.click(checkBtn);
+
+    // Wait for the ready report and 1-Click Upgrade button
+    const oneClickBtn = await screen.findByRole('button', {
+      name: /1-Click Full Upgrade to MC 1.21.1/i,
+    });
+    expect(oneClickBtn).toBeInTheDocument();
+
+    fireEvent.click(oneClickBtn);
+
+    // Modal confirmation dialog
+    const confirmBtn = await screen.findByRole('button', {
+      name: /1-Click Upgrade Server & Mods/i,
+    });
+    expect(confirmBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+
+    // Verify all steps executed in order
+    expect(backupSpy).toHaveBeenCalledWith('srv-1', expect.stringContaining('Pre-Upgrade-1.21.1'));
+    expect(applySpy).toHaveBeenCalledWith('srv-1', '1.21.1');
+    expect(buildsSpy).toHaveBeenCalledWith('fabric', '1.21.1');
+    expect(installSpy).toHaveBeenCalledWith('srv-1', { version: '1.21.1', build: '0.16.0' });
+    expect(refreshSpy).toHaveBeenCalled();
+
+    // Verify success banner
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Server and mods successfully upgraded to fabric 1.21.1/i),
+      ).toBeInTheDocument();
+    });
   });
 });

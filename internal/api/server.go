@@ -153,6 +153,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/mods", s.requireAuth(s.wrapJSON(s.handleListMods)))
 	s.mux.HandleFunc("GET /api/servers/{id}/mods/updates", s.requireAuth(s.wrapJSON(s.handleGetModUpdates)))
 	s.mux.HandleFunc("POST /api/servers/{id}/mods/updates/check", s.requireAuth(s.wrapJSON(s.handleCheckModUpdates)))
+	s.mux.HandleFunc("POST /api/servers/{id}/mods/batch-update", s.requireAuth(s.wrapJSON(s.handleBatchUpdateMods)))
 	s.mux.HandleFunc("GET /api/servers/{id}/mods/upgrade-check", s.requireAuth(s.wrapJSON(s.handleCheckVersionUpgrade)))
 	s.mux.HandleFunc("POST /api/servers/{id}/mods/upgrade-apply", s.requireAuth(s.wrapJSON(s.handleApplyVersionUpgrade)))
 	s.mux.HandleFunc("GET /api/servers/{id}/mods/{name}/versions", s.requireAuth(s.wrapJSON(s.handleGetModVersions)))

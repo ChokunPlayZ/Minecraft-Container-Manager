@@ -897,6 +897,17 @@ export const api = {
       },
     ),
 
+  batchUpdateMods: (serverId: string, modNames?: string[]) =>
+    request<BatchUpdateModsResult>(
+      `/api/servers/${serverId}/mods/batch-update`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          mods: modNames || [],
+        }),
+      },
+    ),
+
   getModAvailableVersions: (serverId: string, modName: string) => {
     const cfHeader = typeof window !== 'undefined' && localStorage.getItem('mcm_curseforge_api_key')
       ? { 'x-curseforge-api-key': localStorage.getItem('mcm_curseforge_api_key')!.trim() }
