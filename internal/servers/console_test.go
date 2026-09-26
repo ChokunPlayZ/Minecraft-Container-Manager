@@ -29,19 +29,31 @@ type fakeRuntime struct {
 	stopCalled      bool
 	lastStopTimeout time.Duration
 	statsResult     docker.ContainerStats
+	removedIDs      []string
 }
 
 func (f *fakeRuntime) Ping(context.Context) error { return nil }
 func (f *fakeRuntime) RuntimeStatus(context.Context) docker.RuntimeStatus {
 	return docker.RuntimeStatus{Reachable: true}
 }
-func (f *fakeRuntime) Remove(context.Context, string) error { return nil }
-func (f *fakeRuntime) Start(context.Context, string) error  { return nil }
+func (f *fakeRuntime) Remove(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedIDs = append(f.removedIDs, id)
+	return nil
+}
+func (f *fakeRuntime) Start(context.Context, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.inspectState = &docker.ContainerState{Status: StateRunning}
+	return nil
+}
 func (f *fakeRuntime) Stop(_ context.Context, _ string, timeout time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.stopCalled = true
 	f.lastStopTimeout = timeout
+	f.inspectState = &docker.ContainerState{Status: "stopped"}
 	return nil
 }
 func (f *fakeRuntime) Kill(context.Context, string) error { return nil }
@@ -92,6 +104,9 @@ func (f *fakeRuntime) SendConsole(_ context.Context, _ string, cmd string) error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.consoleCommands = append(f.consoleCommands, cmd)
+	if cmd == "stop" || cmd == "end" || cmd == "shutdown" || cmd == "geyser stop" {
+		f.inspectState = &docker.ContainerState{Status: "stopped"}
+	}
 	return nil
 }
 

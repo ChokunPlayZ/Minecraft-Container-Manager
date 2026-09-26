@@ -126,3 +126,69 @@ func TestHandleCopyServer(t *testing.T) {
 		t.Errorf("expected 404 Not Found, got %d", wNotFound.Code)
 	}
 }
+
+func TestHandleRecreateServer(t *testing.T) {
+	tempDir := t.TempDir()
+	store, err := db.Open(filepath.Join(tempDir, "mcm_api_test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	ctx := context.Background()
+
+	// Seed user and session
+	users := auth.NewUsers(store.DB)
+	user, err := users.Create(ctx, "admin@example.com", "password123")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	sessions := auth.NewManager(store.DB)
+	token, err := sessions.Create(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	jr := jars.NewResolver()
+	serverStore := servers.NewStore(store, nil, jr, 25565, 25575, tempDir, "")
+
+	apiServer := New(Options{
+		DB:       store,
+		Users:    users,
+		Sessions: sessions,
+		Servers:  serverStore,
+	})
+
+	srv, err := serverStore.Create(ctx, servers.CreateInput{
+		Name:       "Rebuild Target Server",
+		ServerType: jars.TypePaper,
+		Version:    "1.21.1",
+		RAMMB:      2048,
+	})
+	if err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/servers/"+srv.ID+"/recreate", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	csrf := mustCSRF(t)
+	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: csrf})
+	req.Header.Set(csrfHeaderName, csrf)
+	w := httptest.NewRecorder()
+	apiServer.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	var res servers.Server
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if res.ID != srv.ID {
+		t.Errorf("expected server ID %q, got %q", srv.ID, res.ID)
+	}
+	if res.State != servers.StateStopped {
+		t.Errorf("expected server state %q, got %q", servers.StateStopped, res.State)
+	}
+}

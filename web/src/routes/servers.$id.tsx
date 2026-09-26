@@ -178,9 +178,16 @@ export function ServerDetailRoute() {
 
   async function handleRecreate() {
     if (!server) return;
+    const isOnline = isRunning || isInstalling || state === 'starting';
     const confirmed = await confirm(
-      `Rebuild the container for "${server.name}"? This stops the server now and provisions a fresh container on the next start.`,
-      { title: 'Rebuild container', confirmLabel: 'Rebuild', destructive: true },
+      isOnline
+        ? `Rebuild the container for "${server.name}"? This will shut down the server gracefully, recreate the container with updated settings, and boot it back up.`
+        : `Rebuild the container for "${server.name}"? This will recreate the container with updated settings.`,
+      {
+        title: 'Rebuild container',
+        confirmLabel: isOnline ? 'Rebuild & Restart' : 'Rebuild',
+        destructive: false,
+      },
     );
     if (!confirmed) return;
     try {
@@ -188,9 +195,9 @@ export function ServerDetailRoute() {
       setError(null);
       const updated = await api.recreateServer(server.id);
       setServer(updated);
-      setStatusState('stopped');
-      setStatusStartedAt(null);
-      setStatusUptimeSeconds(0);
+      setStatusState(updated.state);
+      setStatusStartedAt(updated.started_at ?? null);
+      setStatusUptimeSeconds(updated.uptime_seconds ?? 0);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to rebuild container');
     } finally {

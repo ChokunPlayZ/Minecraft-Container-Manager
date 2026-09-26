@@ -1059,29 +1059,60 @@ func (s *Store) Restart(ctx context.Context, id string) (Server, error) {
 	return s.Start(ctx, id)
 }
 
-// Recreate tears down an existing server container and clears its
-// container_id so the next Start provisions a fresh container. This is used to
-// rebind an existing server onto a new runtime image (e.g. the switch to
-// itzg/minecraft-server) without losing its data directory or settings.
+// Recreate rebuilds an existing server container. If the server is currently
+// online (running, starting, installing, or building), it is gracefully shut down
+// first (saving world chunks and clean exit), the old container is removed, a fresh
+// container is provisioned with current settings, and the server is booted back up.
+// If the server is stopped, the existing container is torn down and its container_id
+// is cleared so the next Start provisions a fresh container.
 func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
-	srv, err := s.Get(ctx, id)
+	opCtx, opCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
+	defer opCancel()
+
+	srv, err := s.Get(opCtx, id)
 	if err != nil {
 		return Server{}, err
 	}
-	if srv.ContainerID != "" {
+
+	wasOnline := srv.State == StateRunning || srv.State == StateStarting || srv.State == StateInstalling || srv.State == StateBuilding
+	if !wasOnline && srv.ContainerID != "" && !isDockerNil(s.docker) {
+		if insp, err := s.docker.Inspect(opCtx, srv.ContainerID); err == nil {
+			if insp.Status == "running" || insp.Status == "restarting" {
+				wasOnline = true
+			}
+		}
+	}
+
+	if wasOnline && !isDockerNil(s.docker) {
+		if _, err := s.Stop(opCtx, id); err != nil {
+			return Server{}, fmt.Errorf("graceful stop before rebuild: %w", err)
+		}
+		// Refresh server state after graceful shutdown
+		srv, err = s.Get(opCtx, id)
+		if err != nil {
+			return Server{}, err
+		}
+	}
+
+	if srv.ContainerID != "" && !isDockerNil(s.docker) {
 		// Best-effort: the container may already be gone; we still clear the
 		// recorded id so ensureContainer rebuilds it on next start.
-		_ = s.docker.Remove(ctx, srv.ContainerID)
+		_ = s.docker.Remove(opCtx, srv.ContainerID)
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE servers SET container_id='', container_config=NULL, state=?, started_at=NULL, updated_at=? WHERE id=?`,
+	_, err = s.db.ExecContext(opCtx, `UPDATE servers SET container_id='', container_config=NULL, state=?, started_at=NULL, updated_at=? WHERE id=?`,
 		StateStopped, time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return Server{}, err
 	}
 	if s.dns != nil {
-		_ = s.dns.Remove(ctx, id)
+		_ = s.dns.Remove(opCtx, id)
 	}
-	return s.Get(ctx, id)
+
+	if wasOnline && !isDockerNil(s.docker) {
+		return s.Start(opCtx, id)
+	}
+
+	return s.Get(opCtx, id)
 }
 
 // Status returns the current server state, reconciling from docker when a

@@ -118,19 +118,46 @@ func TestRebuildWarningLifecycle(t *testing.T) {
 		t.Errorf("expected NeedsRebuild == true after adding ExtraPort")
 	}
 
-	// 7. Calling Recreate detaches container and clears NeedsRebuild
+	// 7. Calling Recreate on running server gracefully stops, recreates container, and boots it back up
 	srv, err = store.Recreate(ctx, id)
 	if err != nil {
 		t.Fatalf("Recreate: %v", err)
 	}
-	if srv.ContainerID != "" {
-		t.Errorf("expected ContainerID == '' after Recreate, got %q", srv.ContainerID)
+	if srv.ContainerID == "" {
+		t.Errorf("expected non-empty ContainerID after Recreate on running server")
+	}
+	if srv.State != StateRunning {
+		t.Errorf("expected State == %q after Recreate on running server, got %q", StateRunning, srv.State)
 	}
 	if srv.NeedsRebuild {
-		t.Errorf("expected NeedsRebuild == false after Recreate")
+		t.Errorf("expected NeedsRebuild == false after Recreate on running server")
 	}
 
-	// 8. Next Start provisions fresh container with the extra ports, needs_rebuild stays false
+	// 8. Recreate on stopped server detaches container and leaves server stopped
+	srv, err = store.Stop(ctx, id)
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	newRAMVal := 8192
+	srv, err = store.Update(ctx, id, UpdateInput{RAMMB: &newRAMVal})
+	if err != nil {
+		t.Fatalf("Update RAM on stopped server: %v", err)
+	}
+	srv, err = store.Recreate(ctx, id)
+	if err != nil {
+		t.Fatalf("Recreate on stopped server: %v", err)
+	}
+	if srv.ContainerID != "" {
+		t.Errorf("expected ContainerID == '' after Recreate on stopped server, got %q", srv.ContainerID)
+	}
+	if srv.State != StateStopped {
+		t.Errorf("expected State == %q after Recreate on stopped server, got %q", StateStopped, srv.State)
+	}
+	if srv.NeedsRebuild {
+		t.Errorf("expected NeedsRebuild == false after Recreate on stopped server")
+	}
+
+	// 9. Next Start provisions fresh container, needs_rebuild stays false
 	srv, err = store.Start(ctx, id)
 	if err != nil {
 		t.Fatalf("Start after recreate: %v", err)
