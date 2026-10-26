@@ -630,11 +630,12 @@ export function CreateServerDialog({
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => !busy && setOpen(false)}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !busy) setOpen(false);
+          }}
         >
           <div
             className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border bg-card p-6 shadow-2xl transition-all"
-            onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-border/80">
               <div>

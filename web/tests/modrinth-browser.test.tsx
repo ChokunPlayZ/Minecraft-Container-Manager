@@ -231,6 +231,17 @@ describe('ModrinthBrowser component', () => {
       // Verifies the version row is marked with "Installed Jar" badge
       expect(screen.getByText('Installed Jar')).toBeInTheDocument();
     });
+
+    const dialog = screen.getByRole('dialog');
+    await user.pointer([
+      { target: dialog, keys: '[MouseLeft>]' },
+      { target: dialog.parentElement! },
+      { keys: '[/MouseLeft]' },
+    ]);
+    expect(dialog).toBeInTheDocument();
+
+    await user.click(dialog.parentElement!);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('supports infinite lazy load pagination via fallback button when IntersectionObserver is not available', async () => {

@@ -256,6 +256,14 @@ describe('PlayersPanel with Large Player Counts', () => {
     const reasonInput = screen.getByPlaceholderText(/e.g. Inappropriate behavior/i);
     await user.type(reasonInput, 'Testing kick command');
 
+    await user.pointer([
+      { target: reasonInput, keys: '[MouseLeft>]' },
+      { target: screen.getByRole('dialog').parentElement! },
+      { keys: '[/MouseLeft]' },
+    ]);
+    expect(reasonInput).toBeInTheDocument();
+    expect(reasonInput).toHaveValue('Testing kick command');
+
     const confirmBtn = screen.getByRole('button', { name: /Confirm Action/i });
     await user.click(confirmBtn);
 

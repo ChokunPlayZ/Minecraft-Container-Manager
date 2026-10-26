@@ -127,11 +127,12 @@ export function ModpackInstallDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
-      onClick={() => !installing && onClose()}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !installing) onClose();
+      }}
     >
       <div
         className="w-full max-w-lg rounded-2xl border border-border/90 bg-card p-6 shadow-2xl transition-all"
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3 border-b border-border/70 pb-4">
