@@ -27,6 +27,8 @@ import type {
   FileEntry,
   FileList,
   FileContent,
+  ServerLogFile,
+  ServerLogContent,
   UnzipResult,
   User,
   PasskeyMeta,
@@ -1097,6 +1099,17 @@ export const api = {
 
   deleteBackup: (backupId: string) =>
     request<{ ok: boolean }>(`/api/backups/${backupId}`, { method: 'DELETE' }),
+
+  listServerLogs: (serverId: string, archivePath?: string) => {
+    const q = archivePath ? `?path=${encodeURIComponent(archivePath)}` : '';
+    return request<{ files: ServerLogFile[] }>(`/api/servers/${serverId}/logs${q}`);
+  },
+
+  readServerLog: (serverId: string, path: string, entry?: string) => {
+    const q = new URLSearchParams({ path });
+    if (entry) q.set('entry', entry);
+    return request<ServerLogContent>(`/api/servers/${serverId}/logs/content?${q}`);
+  },
 
   listFiles: (serverId: string, path: string) => {
     const q = path ? `?path=${encodeURIComponent(path)}` : '';

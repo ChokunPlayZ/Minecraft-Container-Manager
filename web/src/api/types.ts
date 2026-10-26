@@ -451,6 +451,22 @@ export interface FileContent {
   content: string;
 }
 
+export interface ServerLogFile {
+  path: string;
+  name: string;
+  size_bytes: number;
+  modified_at: string;
+  archive: boolean;
+}
+
+export interface ServerLogContent {
+  path: string;
+  entry?: string;
+  content: string;
+  truncated: boolean;
+  limit_bytes: number;
+}
+
 export interface UnzipResult {
   ok: boolean;
   count: number;

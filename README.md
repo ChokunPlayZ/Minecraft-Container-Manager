@@ -65,6 +65,7 @@ Each Minecraft server container runs with MCM's custom native lifecycle entrypoi
 - **Last-Event-ID Resumption**: Seamlessly reconnects to log streams after network hiccups without duplicate messages or log gaps.
 - **Interactive Command Input**: Send console commands directly to the running server via native FIFO stdin pipe (`/tmp/console.in`) with RCON fallback.
 - **Smart Auto-Scroll**: Sticky bottom-scrolling that pauses automatically when scrolling up to inspect past logs.
+- **Saved Log Browser**: Open the server's Logs tab to read files from `logs/` and `crash-reports/`, including `.log.gz` rotations and logs inside `.tar`, `.tar.gz`, and `.tgz` archives, without extracting them. Search, line numbers, wrapping, and pagination help inspect saved output. Previews show the first 2 MiB; search applies to that preview.
 
 ### 👥 Player & Permissions Management
 - **Live Player Roster**: Real-time list of online players with 3D player head avatars (powered by Minotar).
@@ -274,6 +275,8 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `GET` | `/api/servers/:id/status` | Lightweight status polling endpoint. |
 | `GET` | `/api/servers/:id/stats` | Real-time container resource metrics (CPU %, memory, net I/O, disk I/O). |
 | `GET` | `/api/servers/:id/console` | Stream real-time console logs via Server-Sent Events (SSE) with `Last-Event-ID`. |
+| `GET` | `/api/servers/:id/logs` | List saved server logs; pass `?path=logs/archive.tar.gz` to list log members in a tar archive. |
+| `GET` | `/api/servers/:id/logs/content` | Preview a plain or gzip-compressed log using `?path=...`; add `&entry=...` for a tar archive member. Returns content, truncation state, and preview limit. |
 | `POST` | `/api/servers/:id/console/command` | Send command to server stdin FIFO pipe (with RCON fallback). |
 | `GET` | `/api/servers/:id/install` | Get installed version and available upgrade builds. |
 | `POST` | `/api/servers/:id/install` | Trigger server version or build upgrade. |

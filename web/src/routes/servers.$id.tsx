@@ -11,6 +11,7 @@ import {
   Copy,
   Cpu,
   Download,
+  FileText,
   FolderOpen,
   Globe,
   HardDrive,
@@ -35,6 +36,7 @@ import { ConsoleViewer } from '../components/console-viewer';
 import { CopyServerDialog } from '../components/copy-server-dialog';
 import { FileManager } from '../components/file-manager';
 import { InstallPanel } from '../components/install-panel';
+import { LogBrowser } from '../components/log-browser';
 import { ModsPanel } from '../components/mods-panel';
 import { PlayersPanel } from '../components/players-panel';
 import { PropertiesEditor } from '../components/properties-editor';
@@ -58,7 +60,7 @@ export const Route = createFileRoute('/servers/$id')({
   component: ServerDetailRoute,
 });
 
-type ServerTab = 'console' | 'players' | 'files' | 'mods' | 'backups' | 'settings' | 'overview';
+type ServerTab = 'console' | 'logs' | 'players' | 'files' | 'mods' | 'backups' | 'settings' | 'overview';
 
 export function ServerDetailRoute() {
   const { id } = Route.useParams();
@@ -276,6 +278,7 @@ export function ServerDetailRoute() {
 
   const TABS: { id: ServerTab; label: string; icon: typeof Terminal }[] = [
     { id: 'console', label: 'Console', icon: Terminal },
+    { id: 'logs', label: 'Logs', icon: FileText },
     { id: 'players', label: 'Players', icon: Users },
     { id: 'files', label: 'Files', icon: FolderOpen },
     { id: 'mods', label: 'Mods & Plugins', icon: Package },
@@ -580,6 +583,10 @@ export function ServerDetailRoute() {
           <div id="server-workspace-panel" role="tabpanel" aria-labelledby={`server-tab-${effectiveTab}`} tabIndex={0} className="outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg">
           {effectiveTab === 'console' && (
             <ConsoleViewer serverId={server.id} running={isRunning} />
+          )}
+
+          {effectiveTab === 'logs' && (
+            <LogBrowser key={server.id} serverId={server.id} />
           )}
 
           {effectiveTab === 'players' && (

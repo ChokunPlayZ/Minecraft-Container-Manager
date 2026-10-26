@@ -182,6 +182,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/proxy", s.requireAuth(s.handleProxy))
 	s.mux.HandleFunc("POST /api/proxy", s.requireAuth(s.handleProxy))
 
+	// Saved server logs, including compressed logs and tar archive members.
+	s.mux.HandleFunc("GET /api/servers/{id}/logs", s.requireAuth(s.wrapJSON(s.handleListLogs)))
+	s.mux.HandleFunc("GET /api/servers/{id}/logs/content", s.requireAuth(s.wrapJSON(s.handleReadLog)))
+
 	// File manager.
 	s.mux.HandleFunc("GET /api/servers/{id}/files", s.requireAuth(s.wrapJSON(s.handleListFiles)))
 	s.mux.HandleFunc("GET /api/servers/{id}/files/download", s.requireAuth(s.handleDownloadFile))
