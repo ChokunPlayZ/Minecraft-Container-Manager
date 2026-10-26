@@ -866,13 +866,16 @@ func (m *Manager) Logs(ctx context.Context, containerID string, follow bool) (io
 
 // SendConsole writes a command to a running server's console without requiring
 // RCON. It first tries writing directly to the named console pipe (/tmp/console.in)
-// created in lightweight containers. If that is unavailable or fails, it falls back
+// created in lightweight containers. If that is unavailable, it falls back
 // to exec-ing the itzg image's stdin-helper (mc-send-to-console / rcon-cli).
 func (m *Manager) SendConsole(ctx context.Context, containerID, command string) error {
 	// 1. Try named pipe inside the lightweight container
 	err := m.execPipeConsole(ctx, containerID, command)
 	if err == nil {
 		return nil
+	}
+	if !errors.Is(err, errConsolePipeMissing) {
+		return err
 	}
 
 	// 2. Fall back to itzg image helpers if pipe is not present
@@ -887,12 +890,18 @@ func (m *Manager) SendConsole(ctx context.Context, containerID, command string) 
 			return err
 		}
 	}
-	return fmt.Errorf("no console pipe or helper found in container")
+	return ErrConsolePipeDisabled
 }
 
+var errConsolePipeMissing = errors.New("console input pipe not found")
+
 func (m *Manager) execPipeConsole(ctx context.Context, containerID, command string) error {
+	// The FIFO belongs to the server user. Linux's protected_fifos can reject
+	// even root's shell redirection to another user's FIFO in /tmp. Exit 66
+	// distinguishes an absent pipe from a failure to write an existing one.
 	execID, err := m.client.ContainerExecCreate(ctx, containerID, container.ExecOptions{
-		Cmd:          []string{"sh", "-c", `test -p /tmp/console.in && printf '%s\n' "$1" > /tmp/console.in`, "--", command},
+		Cmd:          []string{"sh", "-c", `if [ ! -p /tmp/console.in ]; then exit 66; fi; printf '%s\n' "$1" > /tmp/console.in`, "--", command},
+		User:         m.execUserForContainer(ctx, containerID),
 		AttachStdin:  false,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -911,6 +920,9 @@ func (m *Manager) execPipeConsole(ctx context.Context, containerID, command stri
 	if err != nil {
 		return fmt.Errorf("inspect pipe console exec: %w", err)
 	}
+	if insp.ExitCode == 66 {
+		return errConsolePipeMissing
+	}
 	if insp.ExitCode != 0 {
 		return fmt.Errorf("pipe console failed (code %d): %s", insp.ExitCode, strings.TrimSpace(stderr.String()))
 	}
@@ -922,10 +934,8 @@ func (m *Manager) execPipeConsole(ctx context.Context, containerID, command stri
 // "command not found" status).
 var errConsoleBinaryMissing = errors.New("console helper binary not found")
 
-// ErrConsolePipeDisabled marks a console exec that failed because the server
-// container was not started with itzg's CREATE_CONSOLE_IN_PIPE, so the named
-// console input pipe does not exist. The container must be recreated (restarted
-// with the env present) before console input can work.
+// ErrConsolePipeDisabled marks a server container with no console input pipe or
+// supported helper. Recreating it enables console input with the current entrypoint.
 var ErrConsolePipeDisabled = errors.New("console input pipe is not enabled on the server container")
 
 func (m *Manager) execConsole(ctx context.Context, containerID, helper, command string) error {
@@ -973,7 +983,7 @@ func (m *Manager) execConsole(ctx context.Context, containerID, helper, command 
 func (m *Manager) execUserForContainer(ctx context.Context, containerID string) string {
 	uid, gid := "1000", "1000"
 	insp, err := m.client.ContainerInspect(ctx, containerID)
-	if err != nil {
+	if err != nil || insp.Config == nil {
 		return uid + ":" + gid
 	}
 	for _, e := range insp.Config.Env {
