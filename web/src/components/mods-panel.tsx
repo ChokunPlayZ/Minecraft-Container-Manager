@@ -316,7 +316,7 @@ export function ModsPanel({ server }: { server: Server }) {
             <button
               type="button"
               onClick={() => setActiveTab('modpacks')}
-              className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold bg-primary text-primary-foreground shadow-xs"
+              className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold bg-primary text-primary-foreground "
             >
               <Package className="h-4 w-4" />
               Modpacks
@@ -353,12 +353,12 @@ export function ModsPanel({ server }: { server: Server }) {
         {/* Sub-navigation Tabs */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-border/80 pb-2.5">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <button
+            <button aria-pressed={activeTab === 'installed'}
               type="button"
               onClick={() => setActiveTab('installed')}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors ${
                 activeTab === 'installed'
-                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
               }`}
             >
@@ -372,12 +372,12 @@ export function ModsPanel({ server }: { server: Server }) {
               </Badge>
             </button>
 
-            <button
+            <button aria-pressed={activeTab === 'modpacks'}
               type="button"
               onClick={() => setActiveTab('modpacks')}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors ${
                 activeTab === 'modpacks'
-                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
               }`}
             >
@@ -393,12 +393,12 @@ export function ModsPanel({ server }: { server: Server }) {
               )}
             </button>
 
-            <button
+            <button aria-pressed={activeTab === 'updates'}
               type="button"
               onClick={() => setActiveTab('updates')}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors ${
                 activeTab === 'updates'
-                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
               }`}
             >
@@ -407,7 +407,7 @@ export function ModsPanel({ server }: { server: Server }) {
               {updateCount > 0 ? (
                 <Badge
                   variant="secondary"
-                  className="ml-1 bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-1.5 py-0 text-xs font-semibold animate-pulse"
+                  className="ml-1 bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-1.5 py-0 text-xs font-semibold "
                 >
                   {updateCount}
                 </Badge>
@@ -416,12 +416,12 @@ export function ModsPanel({ server }: { server: Server }) {
               ) : null}
             </button>
 
-            <button
+            <button aria-pressed={activeTab === 'version-helper'}
               type="button"
               onClick={() => setActiveTab('version-helper')}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors ${
                 activeTab === 'version-helper'
-                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
               }`}
             >
@@ -429,18 +429,18 @@ export function ModsPanel({ server }: { server: Server }) {
               Version Update Helper
             </button>
 
-            <button
+            <button aria-pressed={activeTab === 'browse'}
               type="button"
               onClick={() => setActiveTab('browse')}
-              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+              className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors ${
                 activeTab === 'browse'
-                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
               }`}
             >
               <Compass className="h-4 w-4" />
-              Browse Modrinth &amp; Catalogs
-              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              Browse catalogs
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 " />
             </button>
           </div>
 
@@ -538,6 +538,7 @@ export function ModsPanel({ server }: { server: Server }) {
                     <span className="truncate">{batchResultBanner.message}</span>
                   </div>
                   <Button
+                    aria-label="Dismiss update result"
                     size="sm"
                     variant="ghost"
                     onClick={() => setBatchResultBanner(null)}
@@ -562,7 +563,7 @@ export function ModsPanel({ server }: { server: Server }) {
                       size="sm"
                       onClick={() => void handleBatchUpdateMods()}
                       disabled={updatingBatch || checkingUpdates}
-                      className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold gap-1.5 shadow-xs"
+                      className="h-7 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold gap-1.5 "
                     >
                       {updatingBatch ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -589,13 +590,13 @@ export function ModsPanel({ server }: { server: Server }) {
                   <UploadCloud className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium text-foreground">Upload .jar artifact</p>
+                  <p className="text-xs font-medium text-foreground">Upload a JAR</p>
                   <p className="text-xs text-muted-foreground">
-                    Directly drop or choose a jar file to place in the {type} folder.
+                    Choose a .jar file to upload to the {type} folder.
                   </p>
                 </div>
                 <label className="cursor-pointer shrink-0">
-                  <span className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground shadow-2xs hover:bg-secondary/80 transition-colors">
+                  <span className="inline-flex items-center gap-1.5 rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground  hover:bg-secondary/80 transition-colors">
                     Choose file
                   </span>
                   <input
@@ -618,7 +619,7 @@ export function ModsPanel({ server }: { server: Server }) {
                     value={uploadProgress}
                     label={
                       <span className="flex items-center gap-2 truncate font-medium">
-                        <UploadCloud className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                        <UploadCloud className="h-4 w-4 text-primary  shrink-0" />
                         <span className="truncate">Uploading {uploadStats?.fileName || 'file'}...</span>
                       </span>
                     }
@@ -644,6 +645,7 @@ export function ModsPanel({ server }: { server: Server }) {
                   />
                   {installedSearch && (
                     <button
+                      aria-label="Clear installed mod search"
                       type="button"
                       onClick={() => setInstalledSearch('')}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -691,7 +693,7 @@ export function ModsPanel({ server }: { server: Server }) {
                             {updateInfo && (
                               <Badge
                                 variant="outline"
-                                className="border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] px-1.5 py-0 font-medium shrink-0 flex items-center gap-1"
+                                className="border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[11px] px-1.5 py-0 font-medium shrink-0 flex items-center gap-1"
                               >
                                 <ArrowUpCircle className="h-2.5 w-2.5" />
                                 Update available: {updateInfo.latestVersion}
@@ -778,7 +780,7 @@ export function ModsPanel({ server }: { server: Server }) {
                 <div>
                   <div className="flex items-center gap-2">
                     <CardTitle className="text-base">
-                      <h3 className="text-base font-semibold">Mod Update Tool</h3>
+                      Mod Update Tool
                     </CardTitle>
                     {updateCount > 0 && (
                       <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/30 text-xs px-2 py-0.5">
@@ -797,7 +799,7 @@ export function ModsPanel({ server }: { server: Server }) {
                       size="sm"
                       onClick={() => void handleBatchUpdateMods()}
                       disabled={updatingBatch || checkingUpdates}
-                      className="gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs"
+                      className="gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold "
                     >
                       {updatingBatch ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -857,7 +859,7 @@ export function ModsPanel({ server }: { server: Server }) {
                     )}
                     <span className="truncate">{batchResultBanner.message}</span>
                   </div>
-                  <button
+                  <button aria-label="Dismiss"
                     type="button"
                     onClick={() => setBatchResultBanner(null)}
                     className="p-1 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
@@ -888,7 +890,7 @@ export function ModsPanel({ server }: { server: Server }) {
                         size="sm"
                         onClick={() => void handleBatchUpdateMods()}
                         disabled={updatingBatch || checkingUpdates}
-                        className="h-7 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs"
+                        className="h-7 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold "
                       >
                         <DownloadCloud className="h-3 w-3" />
                         One-Click Update All ({updateCount})
@@ -905,16 +907,16 @@ export function ModsPanel({ server }: { server: Server }) {
                         return (
                           <div
                             key={m.name}
-                            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-amber-500/40 bg-card p-4 shadow-2xs transition-all hover:border-amber-500/60 hover:shadow-xs"
+                            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-amber-500/40 bg-card p-4  transition-colors hover:border-amber-500/60 "
                           >
                             <div className="min-w-0 space-y-1.5 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-bold text-foreground text-sm">{u.title || m.name}</span>
-                                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[10px] px-1.5 py-0 font-mono uppercase">
+                                <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[11px] px-1.5 py-0 font-mono uppercase">
                                   {u.provider}
                                 </Badge>
                                 {u.latestReleaseType && (
-                                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase">
+                                  <Badge variant="secondary" className="text-[11px] px-1.5 py-0 uppercase">
                                     {u.latestReleaseType}
                                   </Badge>
                                 )}
@@ -933,7 +935,7 @@ export function ModsPanel({ server }: { server: Server }) {
                                   <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold truncate max-w-[240px]" title={u.latestJar}>
                                     {u.latestJar}
                                   </span>
-                                  <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] px-1 py-0 shrink-0">
+                                  <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[11px] px-1 py-0 shrink-0">
                                     {u.latestVersion}
                                   </Badge>
                                 </div>
@@ -944,7 +946,7 @@ export function ModsPanel({ server }: { server: Server }) {
                               <Button
                                 size="sm"
                                 onClick={() => setPickerMod({ mod: m, updateInfo: u })}
-                                className="h-8 gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+                                className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold "
                               >
                                 <ArrowUpCircle className="h-3.5 w-3.5" />
                                 Update &amp; Pick Jar
@@ -1000,7 +1002,7 @@ export function ModsPanel({ server }: { server: Server }) {
                             <span className="font-medium text-foreground truncate">{m.name}</span>
                             <span className="font-mono text-muted-foreground truncate text-[11px]">{m.file}</span>
                           </div>
-                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0 shrink-0">
+                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] px-1.5 py-0 shrink-0">
                             Current
                           </Badge>
                         </div>

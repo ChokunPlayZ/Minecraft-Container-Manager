@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
@@ -344,7 +345,7 @@ export function SpigetBrowser({
       {notification && (
         <div
           role="status"
-          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-all animate-in fade-in slide-in-from-bottom-2 ${
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-colors animate-in fade-in slide-in-from-bottom-2 ${
             notification.type === 'success'
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200'
               : 'border-destructive/30 bg-destructive/10 text-destructive'
@@ -391,7 +392,7 @@ export function SpigetBrowser({
                 className="pl-9 pr-8 text-sm"
               />
               {query && (
-                <button
+                <button aria-label="Close dialog"
                   type="button"
                   onClick={() => setQuery('')}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -406,7 +407,7 @@ export function SpigetBrowser({
                 aria-label="Sort by"
                 value={sort}
                 onChange={(e) => setSort(e.target.value as typeof sort)}
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-2xs focus:outline-hidden focus:ring-1 focus:ring-ring"
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs  focus:outline-hidden focus:ring-1 focus:ring-ring"
               >
                 {SPIGET_SORT_OPTIONS.map((opt) => (
                   <option key={opt.id} value={opt.id}>
@@ -542,10 +543,10 @@ export function SpigetBrowser({
 
       {/* Version Selection Modal */}
       {selectedResource && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in"
+        <DialogBackdrop onDismiss={() => setSelectedResource(null)}
+
+
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4  animate-in fade-in"
         >
           <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-background shadow-2xl">
             <div className="flex items-center justify-between border-b px-6 py-4">
@@ -557,7 +558,7 @@ export function SpigetBrowser({
                   SpigotMC releases for resource #{selectedResource.id}
                 </p>
               </div>
-              <button
+              <button aria-label="Close dialog"
                 type="button"
                 onClick={() => setSelectedResource(null)}
                 className="rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -634,7 +635,7 @@ export function SpigetBrowser({
                           {isThisInstalled && (
                             <Badge
                               variant="secondary"
-                              className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 text-[10px]"
+                              className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 text-[11px]"
                             >
                               Installed
                             </Badge>
@@ -656,7 +657,7 @@ export function SpigetBrowser({
                           className={`h-8 gap-1.5 text-xs ${
                             isThisInstalled
                               ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
-                              : 'bg-amber-600 hover:bg-amber-700 text-white'
+                              : 'bg-primary hover:bg-primary/90 text-primary-foreground'
                           }`}
                         >
                           <Download className="h-3.5 w-3.5" />
@@ -692,7 +693,7 @@ export function SpigetBrowser({
               </Button>
             </div>
           </div>
-        </div>
+        </DialogBackdrop>
       )}
     </div>
   );

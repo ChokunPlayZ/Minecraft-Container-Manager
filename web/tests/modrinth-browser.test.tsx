@@ -727,7 +727,7 @@ describe('ModrinthBrowser component', () => {
       return { ok: false, status: 404 } as Response;
     });
 
-    const downloadSpy = vi.spyOn(api, 'downloadMod').mockImplementation(async (_sid, url, filename) => ({
+    const downloadSpy = vi.spyOn(api, 'downloadMod').mockImplementation(async (_sid, _url, filename) => ({
       name: filename.replace('.jar', ''),
       file: filename,
       enabled: true,
@@ -808,7 +808,7 @@ describe('ModsPanel with tabs', () => {
     });
 
     // Switch to Browse Modrinth
-    const browseTabButton = screen.getByRole('button', { name: /Browse Modrinth/i });
+    const browseTabButton = screen.getByRole('button', { name: /Browse catalogs/i, pressed: false });
     await user.click(browseTabButton);
 
     // Now shows Modrinth browser

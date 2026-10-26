@@ -46,7 +46,7 @@ export function CatalogBrowser({
       name: 'Modrinth',
       subtitle: 'Mods & Plugins',
       color: 'emerald',
-      activeClass: 'bg-emerald-600 text-white shadow-sm border-emerald-600',
+      activeClass: 'bg-accent text-accent-foreground border-border',
       icon: Compass,
     },
     {
@@ -54,7 +54,7 @@ export function CatalogBrowser({
       name: 'PaperMC Hangar',
       subtitle: 'Paper / Purpur / Folia',
       color: 'sky',
-      activeClass: 'bg-sky-600 text-white shadow-sm border-sky-600',
+      activeClass: 'bg-accent text-accent-foreground border-border',
       icon: Layers,
       badge: !isPluginServer ? 'Paper only' : undefined,
     },
@@ -63,7 +63,7 @@ export function CatalogBrowser({
       name: 'SpigotMC',
       subtitle: '100k+ Plugins',
       color: 'amber',
-      activeClass: 'bg-amber-600 text-white shadow-sm border-amber-600',
+      activeClass: 'bg-accent text-accent-foreground border-border',
       icon: Package,
       badge: !isPluginServer ? 'Bukkit only' : undefined,
     },
@@ -72,7 +72,7 @@ export function CatalogBrowser({
       name: 'CurseForge',
       subtitle: 'Mods & Plugins',
       color: 'orange',
-      activeClass: 'bg-orange-600 text-white shadow-sm border-orange-600',
+      activeClass: 'bg-accent text-accent-foreground border-border',
       icon: Flame,
     },
   ];
@@ -80,7 +80,7 @@ export function CatalogBrowser({
   return (
     <div className="space-y-4">
       {/* Provider Selector Bar */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-border/80 bg-card/60 p-2 shadow-2xs">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border bg-card p-2 ">
         <div className="flex flex-wrap items-center gap-1.5">
           {providers.map((p) => {
             const Icon = p.icon;
@@ -91,19 +91,20 @@ export function CatalogBrowser({
                 key={p.id}
                 type="button"
                 onClick={() => setActiveProvider(p.id)}
-                className={`group flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all ${
+                aria-pressed={isActive}
+                className={`group flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                   isActive
                     ? p.activeClass
                     : 'border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                 }`}
               >
-                <Icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-muted-foreground group-hover:text-foreground'}`} />
+                <Icon className={`h-4 w-4 ${isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'}`} />
                 <span className="font-semibold">{p.name}</span>
                 {p.badge ? (
                   <span
-                    className={`rounded-full px-1.5 py-0.2 text-[9px] font-medium ${
+                    className={`rounded-full px-1.5 py-0.2 text-[11px] font-medium ${
                       isActive
-                        ? 'bg-white/20 text-white'
+                        ? 'bg-card text-primary'
                         : 'bg-secondary text-muted-foreground'
                     }`}
                   >
@@ -111,8 +112,8 @@ export function CatalogBrowser({
                   </span>
                 ) : (
                   <span
-                    className={`hidden md:inline text-[10px] font-normal opacity-80 ${
-                      isActive ? 'text-white/90' : 'text-muted-foreground'
+                    className={`hidden md:inline text-[11px] font-normal opacity-80 ${
+                      isActive ? 'text-accent-foreground' : 'text-muted-foreground'
                     }`}
                   >
                     · {p.subtitle}
@@ -125,7 +126,7 @@ export function CatalogBrowser({
 
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground px-2">
           <span>Active catalog:</span>
-          <Badge variant="outline" className="text-[10px] font-semibold uppercase px-1.5 py-0">
+          <Badge variant="outline" className="text-[11px] font-semibold uppercase px-1.5 py-0">
             {activeProvider === 'modrinth'
               ? 'Modrinth'
               : activeProvider === 'hangar'

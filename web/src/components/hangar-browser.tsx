@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
@@ -457,7 +458,7 @@ export function HangarBrowser({
       {notification && (
         <div
           role="status"
-          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-all animate-in fade-in slide-in-from-bottom-2 ${
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-colors animate-in fade-in slide-in-from-bottom-2 ${
             notification.type === 'success'
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200'
               : 'border-destructive/30 bg-destructive/10 text-destructive'
@@ -504,7 +505,7 @@ export function HangarBrowser({
                 className="pl-9 pr-8 text-sm"
               />
               {query && (
-                <button
+                <button aria-label="Close dialog"
                   type="button"
                   onClick={() => setQuery('')}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -519,7 +520,7 @@ export function HangarBrowser({
                 aria-label="Sort by"
                 value={sort}
                 onChange={(e) => setSort(e.target.value as typeof sort)}
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-2xs focus:outline-hidden focus:ring-1 focus:ring-ring"
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs  focus:outline-hidden focus:ring-1 focus:ring-ring"
               >
                 {HANGAR_SORT_OPTIONS.map((opt) => (
                   <option key={opt.id} value={opt.id}>
@@ -538,9 +539,9 @@ export function HangarBrowser({
                 key={cat.id}
                 type="button"
                 onClick={() => setCategory(cat.id)}
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-all ${
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
                   category === cat.id
-                    ? 'bg-sky-600 text-white shadow-2xs'
+                    ? 'bg-sky-600 text-white '
                     : 'bg-secondary/70 text-muted-foreground hover:bg-secondary hover:text-foreground'
                 }`}
               >
@@ -669,10 +670,10 @@ export function HangarBrowser({
 
       {/* Version Selection Modal */}
       {selectedProject && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in"
+        <DialogBackdrop onDismiss={() => setSelectedProject(null)}
+
+
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4  animate-in fade-in"
         >
           <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-background shadow-2xl">
             <div className="flex items-center justify-between border-b px-6 py-4">
@@ -684,7 +685,7 @@ export function HangarBrowser({
                   Available versions on PaperMC Hangar
                 </p>
               </div>
-              <button
+              <button aria-label="Close dialog"
                 type="button"
                 onClick={() => setSelectedProject(null)}
                 className="rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -756,7 +757,7 @@ export function HangarBrowser({
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-foreground">{ver.name}</span>
                           <span
-                            className="rounded-full px-2 py-0.2 text-[10px] font-semibold text-white uppercase"
+                            className="rounded-full px-2 py-0.2 text-[11px] font-semibold text-white uppercase"
                             style={{ backgroundColor: ver.channel?.color || '#0284c7' }}
                           >
                             {ver.channel?.name || 'Release'}
@@ -764,7 +765,7 @@ export function HangarBrowser({
                           {isInstalled && (
                             <Badge
                               variant="secondary"
-                              className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 text-[10px]"
+                              className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 text-[11px]"
                             >
                               Installed on server
                             </Badge>
@@ -824,7 +825,7 @@ export function HangarBrowser({
                           size="sm"
                           disabled={isInstallingThis || !download?.downloadUrl}
                           onClick={() => void handleInstallVersion(ver, selectedProject.name)}
-                          className="h-8 gap-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white"
+                          className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground"
                         >
                           {isInstallingThis ? (
                             <>
@@ -855,7 +856,7 @@ export function HangarBrowser({
               </Button>
             </div>
           </div>
-        </div>
+        </DialogBackdrop>
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './dialog-backdrop';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from './button';
 import { Input } from './input';
@@ -86,9 +87,9 @@ export function useModal() {
   }
 
   const dialog: ReactNode = request ? (
-    <div
+    <DialogBackdrop onDismiss={() => finish(null)}
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
-      role="presentation"
+
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) finish(null);
       }}
@@ -130,7 +131,7 @@ export function useModal() {
           </Button>
         </div>
       </div>
-    </div>
+    </DialogBackdrop>
   ) : null;
 
   return { confirm, prompt, dialog };

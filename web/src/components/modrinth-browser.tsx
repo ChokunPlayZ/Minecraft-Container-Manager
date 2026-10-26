@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
@@ -844,7 +845,7 @@ export function ModrinthBrowser({
       {notification && (
         <div
           role="status"
-          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-all animate-in fade-in slide-in-from-bottom-2 ${
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-colors animate-in fade-in slide-in-from-bottom-2 ${
             notification.type === 'success'
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200'
               : 'border-destructive/30 bg-destructive/10 text-destructive'
@@ -856,7 +857,7 @@ export function ModrinthBrowser({
             <Info className="h-4 w-4 shrink-0" />
           )}
           <p className="text-sm font-medium">{notification.text}</p>
-          <button
+          <button aria-label="Close dialog"
             type="button"
             className="ml-2 text-muted-foreground hover:text-foreground"
             onClick={() => setNotification(null)}
@@ -867,7 +868,7 @@ export function ModrinthBrowser({
       )}
 
       {/* Server Compatibility Matching Banner */}
-      <div className="rounded-xl border border-primary/20 bg-gradient-to-r from-primary/5 via-secondary/20 to-primary/5 p-4 backdrop-blur-xs">
+      <div className="rounded-xl border border-primary/20 bg-card p-4 ">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -898,7 +899,7 @@ export function ModrinthBrowser({
               onClick={() => setMatchLoader(!matchLoader)}
               className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium transition-colors ${
                 matchLoader
-                  ? 'border-primary/40 bg-primary/10 text-primary shadow-2xs'
+                  ? 'border-primary/40 bg-primary/10 text-primary '
                   : 'border-border bg-background text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -912,7 +913,7 @@ export function ModrinthBrowser({
                 onClick={() => setMatchVersion(!matchVersion)}
                 className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium transition-colors ${
                   matchVersion
-                    ? 'border-primary/40 bg-primary/10 text-primary shadow-2xs'
+                    ? 'border-primary/40 bg-primary/10 text-primary '
                     : 'border-border bg-background text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -926,7 +927,7 @@ export function ModrinthBrowser({
               onClick={() => setServerSideOnly(!serverSideOnly)}
               className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium transition-colors ${
                 serverSideOnly
-                  ? 'border-primary/40 bg-primary/10 text-primary shadow-2xs'
+                  ? 'border-primary/40 bg-primary/10 text-primary '
                   : 'border-border bg-background text-muted-foreground hover:text-foreground'
               }`}
               title="Exclude client-only mods from search results"
@@ -940,7 +941,7 @@ export function ModrinthBrowser({
               onClick={() => setOnlyServerSide(!onlyServerSide)}
               className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-medium transition-colors ${
                 onlyServerSide
-                  ? 'border-primary/40 bg-primary/10 text-primary shadow-2xs'
+                  ? 'border-primary/40 bg-primary/10 text-primary '
                   : 'border-border bg-background text-muted-foreground hover:text-foreground'
               }`}
               title="Show only mods that run exclusively on the server (no client-side mod required)"
@@ -981,7 +982,7 @@ export function ModrinthBrowser({
               aria-label="Sort search results"
               value={sort}
               onChange={(e) => setSort(e.target.value as typeof sort)}
-              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium text-foreground shadow-2xs focus:outline-none focus:ring-1 focus:ring-ring"
+              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium text-foreground  focus:outline-none focus:ring-1 focus:ring-ring"
             >
               {SORT_OPTIONS.map((opt) => (
                 <option key={opt.id} value={opt.id}>
@@ -990,7 +991,7 @@ export function ModrinthBrowser({
               ))}
             </select>
 
-            <Button
+            <Button aria-label="Refresh results"
               variant="outline"
               size="sm"
               onClick={() => void performSearch(true)}
@@ -1013,7 +1014,7 @@ export function ModrinthBrowser({
                 onClick={() => setCategory(cat.id)}
                 className={`shrink-0 rounded-full px-3 py-1 font-medium transition-colors ${
                   active
-                    ? 'bg-primary text-primary-foreground shadow-2xs'
+                    ? 'bg-primary text-primary-foreground '
                     : 'bg-secondary/60 text-secondary-foreground hover:bg-secondary'
                 }`}
               >
@@ -1096,14 +1097,14 @@ export function ModrinthBrowser({
             const badges = (
               <>
                 {isClientOnly && (
-                  <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
+                  <Badge variant="destructive" className="text-[11px] px-1.5 py-0">
                     Client Only
                   </Badge>
                 )}
                 {isServerOnly && (
                   <Badge
                     variant="outline"
-                    className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px] px-1.5 py-0"
+                    className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[11px] px-1.5 py-0"
                   >
                     Server Only
                   </Badge>
@@ -1112,7 +1113,7 @@ export function ModrinthBrowser({
                   <Badge
                     key={cat}
                     variant="secondary"
-                    className="text-[10px] px-1.5 py-0 capitalize"
+                    className="text-[11px] px-1.5 py-0 capitalize"
                   >
                     {cat}
                   </Badge>
@@ -1165,7 +1166,7 @@ export function ModrinthBrowser({
           className="flex flex-col items-center justify-center py-6 text-xs text-muted-foreground"
         >
           {loadingMore ? (
-            <div className="flex items-center gap-2 rounded-full border border-primary/20 bg-secondary/70 px-4 py-2 shadow-2xs backdrop-blur-xs animate-in fade-in">
+            <div className="flex items-center gap-2 rounded-full border border-primary/20 bg-secondary/70 px-4 py-2   animate-in fade-in">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
               <span className="font-medium text-foreground">Loading more mods...</span>
             </div>
@@ -1193,9 +1194,9 @@ export function ModrinthBrowser({
 
       {/* Project Details & Versions Dialog */}
       {selectedProject && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
-          role="presentation"
+        <DialogBackdrop onDismiss={() => setSelectedProject(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 "
+
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setSelectedProject(null);
           }}
@@ -1209,7 +1210,7 @@ export function ModrinthBrowser({
             {/* Header */}
             <div className="flex items-start justify-between border-b p-5">
               <div className="flex items-start gap-4">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-secondary/40 shadow-xs">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-secondary/40 ">
                   {selectedProject.icon_url ? (
                     <img
                       src={selectedProject.icon_url}
@@ -1238,7 +1239,7 @@ export function ModrinthBrowser({
 
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {selectedProject.server_side === 'unsupported' ? (
-                      <Badge variant="destructive" className="text-[10px]">
+                      <Badge variant="destructive" className="text-[11px]">
                         Client Only
                       </Badge>
                     ) : selectedProject.client_side === 'unsupported' ||
@@ -1246,17 +1247,17 @@ export function ModrinthBrowser({
                       selectedProject.environment?.includes('dedicated_server_only') ? (
                       <Badge
                         variant="outline"
-                        className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px]"
+                        className="border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[11px]"
                       >
                         Server Only
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="text-[10px]">
+                      <Badge variant="outline" className="text-[11px]">
                         Client & Server
                       </Badge>
                     )}
                     {selectedProject.categories?.map((cat) => (
-                      <Badge key={cat} variant="secondary" className="text-[10px] capitalize">
+                      <Badge key={cat} variant="secondary" className="text-[11px] capitalize">
                         {cat}
                       </Badge>
                     ))}
@@ -1315,7 +1316,7 @@ export function ModrinthBrowser({
                     <div className="flex items-center gap-2 shrink-0">
                       <Badge
                         variant="outline"
-                        className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
+                        className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[11px] text-emerald-600 dark:text-emerald-400"
                       >
                         {selectedInstalledMod.enabled ? 'Enabled' : 'Disabled'}
                       </Badge>
@@ -1370,7 +1371,7 @@ export function ModrinthBrowser({
                           key={ver.id}
                           className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-xs transition-colors ${
                             isThisFileInstalled
-                              ? 'border-emerald-500/50 bg-emerald-500/10 dark:bg-emerald-950/20 shadow-2xs'
+                              ? 'border-emerald-500/50 bg-emerald-500/10 dark:bg-emerald-950/20 '
                               : 'border-border bg-background/60 hover:border-primary/40 hover:bg-secondary/20'
                           }`}
                         >
@@ -1381,14 +1382,14 @@ export function ModrinthBrowser({
                               </span>
                               <Badge
                                 variant={ver.version_type === 'release' ? 'default' : 'secondary'}
-                                className="text-[10px] px-1.5 py-0 uppercase"
+                                className="text-[11px] px-1.5 py-0 uppercase"
                               >
                                 {ver.version_type}
                               </Badge>
                               {isThisFileInstalled && (
                                 <Badge
                                   variant="outline"
-                                  className="border-emerald-500/40 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 gap-1 text-[10px] px-1.5 py-0 font-medium"
+                                  className="border-emerald-500/40 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 gap-1 text-[11px] px-1.5 py-0 font-medium"
                                 >
                                   <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
                                   Installed Jar
@@ -1404,13 +1405,13 @@ export function ModrinthBrowser({
                               {ver.game_versions?.slice(0, 4).map((gv) => (
                                 <span
                                   key={gv}
-                                  className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-secondary-foreground"
+                                  className="rounded bg-secondary px-1.5 py-0.5 text-[11px] text-secondary-foreground"
                                 >
                                   {gv}
                                 </span>
                               ))}
                               {(ver.game_versions?.length || 0) > 4 && (
-                                <span className="text-[10px] text-muted-foreground">
+                                <span className="text-[11px] text-muted-foreground">
                                   +{(ver.game_versions?.length || 0) - 4} more
                                 </span>
                               )}
@@ -1495,7 +1496,7 @@ export function ModrinthBrowser({
               </Button>
             </div>
           </div>
-        </div>
+        </DialogBackdrop>
       )}
     </div>
   );

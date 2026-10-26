@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useId, useState } from 'react';
 import {
   Check,
@@ -8,7 +9,6 @@ import {
   Loader2,
   Package,
   ShieldAlert,
-  Sparkles,
   X,
 } from 'lucide-react';
 import type { ResolvedDependency } from '../api/mod-dependencies';
@@ -102,9 +102,9 @@ export function ModDependenciesDialog({
   const requiredCount = missingDeps.filter((d) => d.dependencyType === 'required').length;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-xs"
-      role="presentation"
+    <DialogBackdrop onDismiss={() => { if (!isInstalling) onCancel(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 "
+
       onMouseDown={(e) => {
         if (!isInstalling && e.target === e.currentTarget) {
           onCancel();
@@ -119,9 +119,9 @@ export function ModDependenciesDialog({
         aria-describedby={descId}
       >
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-border/70 p-5 bg-gradient-to-r from-primary/10 via-background to-secondary/30">
+        <div className="flex items-start justify-between border-b border-border/70 p-5 bg-card">
           <div className="flex items-start gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/15 text-primary shadow-xs">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/15 text-primary ">
               <Layers className="h-5 w-5" />
             </div>
             <div>
@@ -131,7 +131,7 @@ export function ModDependenciesDialog({
                 </h3>
                 <Badge
                   variant="outline"
-                  className="border-primary/30 bg-primary/10 text-primary text-[10px] uppercase font-mono"
+                  className="border-primary/30 bg-primary/10 text-primary text-[11px] uppercase font-mono"
                 >
                   Auto-Resolved
                 </Badge>
@@ -177,8 +177,8 @@ export function ModDependenciesDialog({
               {installProgress && (
                 <div className="max-w-md mx-auto pt-2">
                   <ProgressBar
-                    progress={Math.round((installProgress.current / installProgress.total) * 100)}
-                    variant="primary"
+                    value={installProgress.total > 0 ? Math.round((installProgress.current / installProgress.total) * 100) : 0}
+                    variant="default"
                     size="sm"
                   />
                 </div>
@@ -189,7 +189,7 @@ export function ModDependenciesDialog({
               {/* Primary Mod Summary Card */}
               <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-secondary/30 p-3 text-xs">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-background/80 shadow-2xs">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-background/80 ">
                     {primaryMod.iconUrl ? (
                       <img
                         src={primaryMod.iconUrl}
@@ -209,7 +209,7 @@ export function ModDependenciesDialog({
                     </span>
                   </div>
                 </div>
-                <Badge variant="default" className="shrink-0 text-[10px] px-2 py-0.5 font-medium">
+                <Badge variant="default" className="shrink-0 text-[11px] px-2 py-0.5 font-medium">
                   Primary Mod
                 </Badge>
               </div>
@@ -222,7 +222,7 @@ export function ModDependenciesDialog({
                       Required & Recommended ({missingDeps.length})
                     </span>
                     {requiredCount > 0 && (
-                      <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
                         <ShieldAlert className="h-3 w-3" />
                         {requiredCount} required
                       </span>
@@ -265,9 +265,9 @@ export function ModDependenciesDialog({
                             toggleDep(dep.id);
                           }
                         }}
-                        className={`group flex items-start gap-3 rounded-xl border p-3 text-xs transition-all cursor-pointer ${
+                        className={`group flex items-start gap-3 rounded-xl border p-3 text-xs transition-colors cursor-pointer ${
                           isSelected
-                            ? 'border-primary/50 bg-primary/5 shadow-2xs'
+                            ? 'border-primary/50 bg-primary/5 '
                             : 'border-border/60 bg-background/50 hover:border-border hover:bg-secondary/20'
                         }`}
                       >
@@ -282,7 +282,7 @@ export function ModDependenciesDialog({
                           />
                         </div>
 
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-secondary/40 shadow-2xs">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-secondary/40 ">
                           {dep.iconUrl ? (
                             <img
                               src={dep.iconUrl}
@@ -302,19 +302,19 @@ export function ModDependenciesDialog({
                             {dep.dependencyType === 'required' ? (
                               <Badge
                                 variant="outline"
-                                className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[10px] px-1.5 py-0"
+                                className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[11px] px-1.5 py-0"
                               >
                                 Required
                               </Badge>
                             ) : (
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                              <Badge variant="secondary" className="text-[11px] px-1.5 py-0">
                                 Optional
                               </Badge>
                             )}
                             {dep.isLibrary && (
                               <Badge
                                 variant="outline"
-                                className="border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-400 text-[10px] px-1.5 py-0"
+                                className="border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-400 text-[11px] px-1.5 py-0"
                               >
                                 Library
                               </Badge>
@@ -327,7 +327,7 @@ export function ModDependenciesDialog({
                             </p>
                           )}
 
-                          <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+                          <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
                             {dep.filename && <span className="truncate">{dep.filename}</span>}
                             {dep.fileSize !== undefined && (
                               <span>· {formatFileSize(dep.fileSize)}</span>
@@ -377,7 +377,7 @@ export function ModDependenciesDialog({
                           </div>
                           <Badge
                             variant="outline"
-                            className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] px-1.5 py-0 shrink-0"
+                            className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[11px] px-1.5 py-0 shrink-0"
                           >
                             Installed
                           </Badge>
@@ -402,13 +402,13 @@ export function ModDependenciesDialog({
             </span>
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <div className="flex w-full min-w-0 flex-col-reverse gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             <Button
               variant="outline"
               size="sm"
               disabled={isInstalling}
               onClick={onCancel}
-              className="text-xs"
+              className="h-auto min-h-9 w-full whitespace-normal py-2 text-xs sm:w-auto"
             >
               Cancel
             </Button>
@@ -419,7 +419,7 @@ export function ModDependenciesDialog({
                 size="sm"
                 disabled={isInstalling}
                 onClick={onSkipAndInstallPrimaryOnly}
-                className="text-xs text-muted-foreground hover:text-foreground"
+                className="h-auto min-h-9 w-full whitespace-normal py-2 text-xs text-muted-foreground hover:text-foreground sm:w-auto"
                 title="Install only the main mod without any dependencies"
               >
                 Skip & Install Only {primaryMod.title}
@@ -430,7 +430,7 @@ export function ModDependenciesDialog({
               size="sm"
               disabled={isInstalling}
               onClick={() => onConfirmInstall(selectedDependencies)}
-              className="gap-1.5 text-xs font-semibold shadow-xs"
+              className="h-auto min-h-9 w-full gap-1.5 whitespace-normal py-2 text-xs font-semibold sm:w-auto"
             >
               <Download className="h-3.5 w-3.5" />
               {selectedDependencies.length > 0
@@ -440,6 +440,6 @@ export function ModDependenciesDialog({
           </div>
         </div>
       </div>
-    </div>
+    </DialogBackdrop>
   );
 }

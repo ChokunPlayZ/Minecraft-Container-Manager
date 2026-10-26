@@ -20,3 +20,8 @@ coverage/
 .codex/
 /internal/web/dist/*
 !/internal/web/dist/index.html
+
+# Local interface review captures and Impeccable decision sessions
+.impeccable/review/
+.impeccable/questions/
+.impeccable/hook.cache.json

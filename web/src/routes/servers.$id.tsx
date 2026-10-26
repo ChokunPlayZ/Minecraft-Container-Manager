@@ -44,6 +44,7 @@ import { ServerStatsGrid } from '../components/server-stats-grid';
 import { StatusBadge } from '../components/status-badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
+import { Skeleton } from '../components/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -265,8 +266,8 @@ export function ServerDetailRoute() {
     return (
       <RequireAuth>
         <AppShell>
-          <div className="flex h-64 items-center justify-center">
-            <p className="text-muted-foreground">{error ?? 'Loading server details...'}</p>
+          <div aria-label="Loading server details" className="space-y-6">
+            {error ? <div role="alert" className="rounded-lg border border-destructive/30 p-6"><p className="text-destructive">{error}</p><Button variant="outline" className="mt-4" onClick={() => void loadServer()}>Try again</Button></div> : <><Skeleton className="h-28" /><Skeleton className="h-32" /><Skeleton className="h-96" /></>}
           </div>
         </AppShell>
       </RequireAuth>
@@ -288,7 +289,7 @@ export function ServerDetailRoute() {
       <RequireAuth>
         <AppShell>
           {/* Breadcrumbs */}
-          <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="mb-6 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             <Link
               to="/dashboard"
               className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
@@ -300,12 +301,12 @@ export function ServerDetailRoute() {
           </div>
 
           {/* Hero Header Card */}
-          <div className="mb-6 rounded-xl border bg-card p-5 shadow-xs sm:p-6">
+          <div className="mb-7 border-b pb-7">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               {/* Left specs & title */}
               <div className="min-w-0 space-y-2">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h1 className="truncate text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+                  <h1 className="truncate text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
                     {server.name}
                   </h1>
                   <StatusBadge state={state} />
@@ -394,7 +395,7 @@ export function ServerDetailRoute() {
                           : 'Server is running'
                       }
                     >
-                      <Clock className="h-3.5 w-3.5 text-emerald-500 animate-pulse" />
+                      <Clock className="h-3.5 w-3.5" />
                       <span className="font-mono font-medium">Uptime: {liveUptime}</span>
                     </span>
                   )}
@@ -403,12 +404,14 @@ export function ServerDetailRoute() {
 
               {/* Right Power Actions */}
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                {!isActive ? (
+                {state === 'starting' || state === 'stopping' ? (
+                  <Button size="sm" disabled><RefreshCw className="h-4 w-4 animate-spin" />{state === 'starting' ? 'Starting…' : 'Stopping…'}</Button>
+                ) : !isActive ? (
                   <Button
                     variant="default"
                     size="sm"
-                    className="gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium shadow-xs"
-                    disabled={busy || state === 'starting'}
+                    className="gap-1.5"
+                    disabled={busy}
                     onClick={() => void run(() => api.startServer(server.id))}
                   >
                     <Play className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
@@ -535,7 +538,7 @@ export function ServerDetailRoute() {
 
           {/* Tab Navigation */}
           <div
-            className="mb-6 flex items-center gap-1 overflow-x-auto rounded-xl border bg-muted/40 p-1.5 shadow-2xs"
+            className="workspace-tabs"
             role="tablist"
             aria-label="Server sections"
           >
@@ -549,10 +552,21 @@ export function ServerDetailRoute() {
                   onClick={() => setTab(t.id)}
                   role="tab"
                   aria-selected={isSelected}
-                  className={`inline-flex shrink-0 items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                  id={`server-tab-${t.id}`}
+                  aria-controls="server-workspace-panel"
+                  tabIndex={isSelected ? 0 : -1}
+                  onKeyDown={(event) => {
+                    const index = TABS.findIndex((item) => item.id === effectiveTab);
+                    const next = event.key === 'ArrowRight' ? (index + 1) % TABS.length : event.key === 'ArrowLeft' ? (index - 1 + TABS.length) % TABS.length : event.key === 'Home' ? 0 : event.key === 'End' ? TABS.length - 1 : -1;
+                    if (next < 0) return;
+                    event.preventDefault();
+                    setTab(TABS[next].id);
+                    document.getElementById(`server-tab-${TABS[next].id}`)?.focus();
+                  }}
+                  className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
                     isSelected
-                      ? 'bg-background text-foreground shadow-xs'
-                      : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   <Icon className={`h-4 w-4 ${isSelected ? 'text-primary' : ''}`} />
@@ -563,6 +577,7 @@ export function ServerDetailRoute() {
           </div>
 
           {/* Tab Panes */}
+          <div id="server-workspace-panel" role="tabpanel" aria-labelledby={`server-tab-${effectiveTab}`} tabIndex={0} className="outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg">
           {effectiveTab === 'console' && (
             <ConsoleViewer serverId={server.id} running={isRunning} />
           )}
@@ -613,6 +628,7 @@ export function ServerDetailRoute() {
             </div>
           )}
 
+          </div>
           {server && (
             <CopyServerDialog
               server={server}

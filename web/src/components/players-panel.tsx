@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Ban,
@@ -239,13 +240,13 @@ export function PlayersPanel({ server }: { server: Server }) {
     <div className="space-y-4">
       {/* Sub-tabs bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
-        <div className="inline-flex rounded-lg border bg-muted/40 p-1">
-          <button
+        <div className="inline-flex max-w-full flex-wrap gap-1 rounded-lg border bg-card p-1">
+          <button aria-pressed={subTab === 'online'}
             type="button"
             onClick={() => setSubTab('online')}
             className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
               subTab === 'online'
-                ? 'bg-background text-foreground shadow-xs'
+                ? 'bg-accent text-accent-foreground'
                 : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
             }`}
           >
@@ -256,12 +257,12 @@ export function PlayersPanel({ server }: { server: Server }) {
             </Badge>
           </button>
 
-          <button
+          <button aria-pressed={subTab === 'ops'}
             type="button"
             onClick={() => setSubTab('ops')}
             className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
               subTab === 'ops'
-                ? 'bg-background text-foreground shadow-xs'
+                ? 'bg-accent text-accent-foreground'
                 : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
             }`}
           >
@@ -274,12 +275,12 @@ export function PlayersPanel({ server }: { server: Server }) {
             )}
           </button>
 
-          <button
+          <button aria-pressed={subTab === 'whitelist'}
             type="button"
             onClick={() => setSubTab('whitelist')}
             className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
               subTab === 'whitelist'
-                ? 'bg-background text-foreground shadow-xs'
+                ? 'bg-accent text-accent-foreground'
                 : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
             }`}
           >
@@ -405,22 +406,22 @@ export function PlayersPanel({ server }: { server: Server }) {
 
                   {/* View Mode Toggle */}
                   <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
-                    <button
+                    <button aria-pressed={viewMode === 'grid'}
                       type="button"
                       onClick={() => setViewMode('grid')}
                       className={`rounded p-1 transition-colors ${
-                        viewMode === 'grid' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'
+                        viewMode === 'grid' ? 'bg-background  text-foreground' : 'text-muted-foreground hover:text-foreground'
                       }`}
                       title="Grid view"
                       aria-label="Grid view"
                     >
                       <LayoutGrid className="h-3.5 w-3.5" />
                     </button>
-                    <button
+                    <button aria-pressed={viewMode === 'list'}
                       type="button"
                       onClick={() => setViewMode('list')}
                       className={`rounded p-1 transition-colors ${
-                        viewMode === 'list' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'
+                        viewMode === 'list' ? 'bg-background  text-foreground' : 'text-muted-foreground hover:text-foreground'
                       }`}
                       title="List view"
                       aria-label="List view"
@@ -482,7 +483,7 @@ export function PlayersPanel({ server }: { server: Server }) {
                   return (
                     <div
                       key={p.name}
-                      className="group relative flex flex-col justify-between rounded-lg border bg-card p-3 shadow-xs transition-all hover:border-primary/40 hover:shadow-sm"
+                      className="group relative flex flex-col justify-between rounded-lg border bg-card p-3  transition-colors hover:border-primary/40 "
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -504,12 +505,12 @@ export function PlayersPanel({ server }: { server: Server }) {
                             </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-1">
                               {isOp && (
-                                <Badge variant="secondary" className="gap-0.5 px-1 py-0 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                                <Badge variant="secondary" className="gap-0.5 px-1 py-0 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
                                   <Crown className="h-2.5 w-2.5" /> OP
                                 </Badge>
                               )}
                               {source === 'console' && (
-                                <Badge variant="outline" className="px-1 py-0 text-[10px] text-muted-foreground">
+                                <Badge variant="outline" className="px-1 py-0 text-[11px] text-muted-foreground">
                                   console
                                 </Badge>
                               )}
@@ -590,7 +591,7 @@ export function PlayersPanel({ server }: { server: Server }) {
                               </Badge>
                             )}
                             {source === 'console' && (
-                              <Badge variant="outline" className="hidden sm:inline-flex text-[10px]">
+                              <Badge variant="outline" className="hidden sm:inline-flex text-[11px]">
                                 console
                               </Badge>
                             )}
@@ -714,9 +715,9 @@ export function PlayersPanel({ server }: { server: Server }) {
 
       {/* Action Dialog Modal */}
       {active && activeDef && active.action !== 'give' && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in"
-          role="presentation"
+        <DialogBackdrop onDismiss={() => { if (!formBusy) setActive(null); }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60  p-4 animate-in fade-in"
+
           onMouseDown={(e) => {
             if (e.target === e.currentTarget && !formBusy) setActive(null);
           }}
@@ -857,7 +858,7 @@ export function PlayersPanel({ server }: { server: Server }) {
               </Button>
             </div>
           </div>
-        </div>
+        </DialogBackdrop>
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useEffect } from 'react';
 import {
   AlertTriangle,
@@ -47,15 +48,15 @@ export function ModUpdateDialog({
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
-      role="presentation"
+    <DialogBackdrop onDismiss={() => { if (!isInstalling) onCancel(); }}
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60  p-4"
+
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !isInstalling) onCancel();
       }}
     >
       <div
-        className="relative w-full max-w-lg rounded-xl border border-border bg-card p-6 text-card-foreground shadow-2xl transition-all animate-in fade-in zoom-in-95 duration-150"
+        className="relative w-full max-w-lg rounded-xl border border-border bg-card p-6 text-card-foreground shadow-2xl transition-colors animate-in fade-in zoom-in-95 duration-150"
         role="dialog"
         aria-modal="true"
         aria-labelledby="mod-update-title"
@@ -93,7 +94,7 @@ export function ModUpdateDialog({
                 {installedJar}
               </span>
             </div>
-            <Badge variant="outline" className="border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 shrink-0 text-[10px] px-1.5 py-0">
+            <Badge variant="outline" className="border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 shrink-0 text-[11px] px-1.5 py-0">
               Old Version
             </Badge>
           </div>
@@ -109,7 +110,7 @@ export function ModUpdateDialog({
                 {newJar}
               </span>
             </div>
-            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 shrink-0 text-[10px] px-1.5 py-0">
+            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 shrink-0 text-[11px] px-1.5 py-0">
               New Version
             </Badge>
           </div>
@@ -127,7 +128,7 @@ export function ModUpdateDialog({
               variant="default"
               disabled={isInstalling}
               onClick={() => void onConfirmDeleteAndInstall()}
-              className="gap-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+              className="gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground "
             >
               {isInstalling ? (
                 <>
@@ -182,6 +183,6 @@ export function ModUpdateDialog({
           </div>
         </div>
       </div>
-    </div>
+    </DialogBackdrop>
   );
 }

@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useEffect, useState } from 'react';
 import {
   AlertCircle,
@@ -217,9 +218,9 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
       : null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in-0 duration-200"
-      role="presentation"
+    <DialogBackdrop onDismiss={() => { if (!busy) onClose(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4  animate-in fade-in-0 duration-200"
+
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
@@ -278,8 +279,8 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
             <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
               <div>
-                <strong>Server is currently running:</strong> MCM can copy active server files safely
-                (locks are excluded), but stopping the server first ensures the cleanest world snapshot.
+                <strong>Server is running.</strong> Stop it before copying to get a consistent world snapshot.
+                Active file locks are excluded.
               </div>
             </div>
           )}
@@ -307,11 +308,11 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
               Game Port Allocation
             </Label>
             <div className="grid grid-cols-2 gap-2">
-              <button
+              <button aria-pressed={portMode === 'auto'}
                 type="button"
                 disabled={busy}
                 onClick={() => setPortMode('auto')}
-                className={`flex items-center justify-between rounded-lg border p-3 text-left transition-all ${
+                className={`flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
                   portMode === 'auto'
                     ? 'border-primary bg-primary/5 text-foreground ring-1 ring-primary'
                     : 'border-border bg-card hover:bg-muted/40 text-muted-foreground'
@@ -326,11 +327,11 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
                 {portMode === 'auto' && <Check className="h-4 w-4 text-primary shrink-0" />}
               </button>
 
-              <button
+              <button aria-pressed={portMode === 'custom'}
                 type="button"
                 disabled={busy}
                 onClick={() => setPortMode('custom')}
-                className={`flex items-center justify-between rounded-lg border p-3 text-left transition-all ${
+                className={`flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
                   portMode === 'custom'
                     ? 'border-primary bg-primary/5 text-foreground ring-1 ring-primary'
                     : 'border-border bg-card hover:bg-muted/40 text-muted-foreground'
@@ -636,6 +637,6 @@ export function CopyServerDialog({ server, open, onClose, onCopied }: CopyServer
           </div>
         </form>
       </div>
-    </div>
+    </DialogBackdrop>
   );
 }

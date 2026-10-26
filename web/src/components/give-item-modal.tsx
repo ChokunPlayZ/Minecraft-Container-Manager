@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Package,
@@ -199,11 +200,11 @@ export function GiveItemModal({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="give-item-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150"
+    <DialogBackdrop onDismiss={() => { if (!submitting) onClose(); }}
+
+
+
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4  overflow-y-auto animate-in fade-in duration-150"
     >
       <div className="relative w-full max-w-xl rounded-xl border bg-card p-6 shadow-2xl text-card-foreground my-8 max-h-[90vh] flex flex-col">
         {/* Header */}
@@ -267,7 +268,7 @@ export function GiveItemModal({
 
             {/* Category Filter Pills */}
             <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-none text-[11px]">
-              <button
+              <button aria-pressed={selectedCategory === 'all'}
                 type="button"
                 onClick={() => setSelectedCategory('all')}
                 className={`rounded-full px-2 py-0.5 whitespace-nowrap transition-colors ${
@@ -355,7 +356,7 @@ export function GiveItemModal({
                             </span>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                            <Badge variant="outline" className="text-[10px] uppercase tracking-wider py-0 px-1.5 h-4">
+                            <Badge variant="outline" className="text-[11px] uppercase tracking-wider py-0 px-1.5 h-4">
                               {item.category}
                             </Badge>
                             {isCurrent && <Check className="h-3.5 w-3.5 text-primary" />}
@@ -427,24 +428,24 @@ export function GiveItemModal({
 
               {enableNbt && (
                 <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded text-[11px]">
-                  <button
+                  <button aria-pressed={nbtFormat === 'modern'}
                     type="button"
                     onClick={() => setNbtFormat('modern')}
                     className={`px-2 py-0.5 rounded transition-colors ${
                       nbtFormat === 'modern'
-                        ? 'bg-background shadow-xs text-foreground font-medium'
+                        ? 'bg-background  text-foreground font-medium'
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                     title="1.20.5+ Item Components syntax: [key=value]"
                   >
                     1.20.5+ Components
                   </button>
-                  <button
+                  <button aria-pressed={nbtFormat === 'legacy'}
                     type="button"
                     onClick={() => setNbtFormat('legacy')}
                     className={`px-2 py-0.5 rounded transition-colors ${
                       nbtFormat === 'legacy'
-                        ? 'bg-background shadow-xs text-foreground font-medium'
+                        ? 'bg-background  text-foreground font-medium'
                         : 'text-muted-foreground hover:text-foreground'
                     }`}
                     title="Legacy SNBT syntax: {tag:value}"
@@ -478,7 +479,7 @@ export function GiveItemModal({
                         type="button"
                         onClick={() => handleApplyPreset(preset)}
                         title={preset.description}
-                        className="rounded-md border bg-card px-2 py-1 text-[11px] text-foreground hover:bg-accent hover:border-primary/50 transition-all text-left shadow-xs flex items-center gap-1"
+                        className="rounded-md border bg-card px-2 py-1 text-[11px] text-foreground hover:bg-accent hover:border-primary/50 transition-colors text-left  flex items-center gap-1"
                       >
                         {preset.label}
                       </button>
@@ -513,7 +514,7 @@ export function GiveItemModal({
                       !nbtValidation.valid ? 'border-destructive focus-visible:ring-destructive' : ''
                     }`}
                   />
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-[11px] text-muted-foreground">
                     Tip: You can edit or paste any arbitrary Minecraft NBT / components here (e.g. custom enchants, potion effects, display names).
                   </p>
                 </div>
@@ -572,6 +573,6 @@ export function GiveItemModal({
           </div>
         </form>
       </div>
-    </div>
+    </DialogBackdrop>
   );
 }

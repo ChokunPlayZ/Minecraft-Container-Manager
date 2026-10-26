@@ -77,7 +77,10 @@ export function PropertiesEditor({ server }: { server: Server }) {
   ) {
     return <ProxyConfigEditor server={server} />;
   }
+  return <MinecraftPropertiesEditor server={server} />;
+}
 
+function MinecraftPropertiesEditor({ server }: { server: Server }) {
   const [rawContent, setRawContent] = useState('');
   const [initialContent, setInitialContent] = useState('');
   const [parsedLines, setParsedLines] = useState<ParsedPropertyLine[]>([]);
@@ -235,14 +238,14 @@ export function PropertiesEditor({ server }: { server: Server }) {
       'message of the day'.includes(searchQuery.toLowerCase()));
 
   return (
-    <Card className="shadow-xs">
+    <Card className="">
       <CardHeader className="pb-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <CardTitle className="text-base font-semibold">Server Properties</CardTitle>
               {isDirty && (
-                <Badge variant="secondary" className="text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                <Badge variant="secondary" className="text-[11px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
                   Unsaved Changes
                 </Badge>
               )}
@@ -260,7 +263,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                 onClick={() => handleModeChange('interactive')}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
                   viewMode === 'interactive'
-                    ? 'bg-background text-foreground shadow-xs'
+                    ? 'bg-background text-foreground '
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -272,7 +275,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                 onClick={() => handleModeChange('raw')}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
                   viewMode === 'raw'
-                    ? 'bg-background text-foreground shadow-xs'
+                    ? 'bg-background text-foreground '
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -339,7 +342,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
 
               {/* Category Pills */}
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                <button
+                <button aria-pressed={activeCategory === 'all'}
                   type="button"
                   onClick={() => setActiveCategory('all')}
                   className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
@@ -374,12 +377,12 @@ export function PropertiesEditor({ server }: { server: Server }) {
 
             {/* 1. Built-in MOTD Designer */}
             {showMotdSection && (
-              <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+              <div className="space-y-3 border-b pb-6">
                 <div className="flex items-center justify-between border-b border-border pb-2">
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-amber-500" />
                     <h3 className="text-sm font-semibold">Message of the Day (MOTD)</h3>
-                    <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                    <code className="text-[11px] font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
                       motd
                     </code>
                   </div>
@@ -390,7 +393,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                   onChange={(newMotd) => handlePropertyChange('motd', newMotd)}
                   serverName={server.name}
                   serverVersion={server.version}
-                  maxPlayers={propertiesMap['max-players'] || server.ram_mb || 20}
+                  maxPlayers={propertiesMap['max-players'] || 20}
                 />
               </div>
             )}
@@ -398,7 +401,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
             {/* 2. Structured Mapped Properties Grid */}
             {filteredSchemas.filter((s) => s.type !== 'motd').length > 0 && (
               <div className="space-y-3">
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="divide-y">
                   {filteredSchemas
                     .filter((s) => s.type !== 'motd')
                     .map((schema) => {
@@ -406,21 +409,21 @@ export function PropertiesEditor({ server }: { server: Server }) {
                       return (
                         <div
                           key={schema.key}
-                          className="flex flex-col justify-between rounded-lg border border-border bg-card p-3 shadow-xs space-y-2.5 hover:border-border/80 transition-colors"
+                          className="grid items-center gap-3 py-5 sm:grid-cols-[minmax(0,1.6fr)_minmax(180px,1fr)] sm:gap-8"
                         >
                           <div>
-                            <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                               <label
                                 htmlFor={`prop-${schema.key}`}
-                                className="text-xs font-semibold text-foreground tracking-tight"
+                                className="text-sm font-medium text-foreground"
                               >
                                 {schema.label}
                               </label>
-                              <code className="text-[10px] font-mono bg-muted/70 px-1 py-0.5 rounded text-muted-foreground">
+                              <code className="text-[11px] font-mono bg-muted/70 px-1 py-0.5 rounded text-muted-foreground">
                                 {schema.key}
                               </code>
                             </div>
-                            <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
+                            <p className="mt-1.5 max-w-prose text-xs leading-5 text-muted-foreground">
                               {schema.description}
                             </p>
                           </div>
@@ -451,7 +454,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                                 step={schema.step}
                                 value={currentValue}
                                 onChange={(e) => handlePropertyChange(schema.key, e.target.value)}
-                                className="h-8 text-xs font-mono"
+                                className="h-10 text-sm"
                               />
                             )}
 
@@ -460,7 +463,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                                 id={`prop-${schema.key}`}
                                 value={currentValue}
                                 onChange={(e) => handlePropertyChange(schema.key, e.target.value)}
-                                className="h-8 text-xs font-mono"
+                                className="h-10 text-sm"
                               >
                                 {schema.options?.map((opt) => (
                                   <option key={opt.value} value={opt.value}>
@@ -478,12 +481,13 @@ export function PropertiesEditor({ server }: { server: Server }) {
                                   value={currentValue}
                                   placeholder={schema.placeholder}
                                   onChange={(e) => handlePropertyChange(schema.key, e.target.value)}
-                                  className="h-8 text-xs font-mono pr-8"
+                                  className="h-10 pr-10 text-sm"
                                 />
                                 <button
                                   type="button"
                                   onClick={() => setShowRconPassword((v) => !v)}
                                   className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                  aria-label={showRconPassword ? 'Hide RCON password' : 'Show RCON password'}
                                   title={showRconPassword ? 'Hide password' : 'Show password'}
                                 >
                                   {showRconPassword ? (
@@ -502,7 +506,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                                 value={currentValue}
                                 placeholder={schema.placeholder}
                                 onChange={(e) => handlePropertyChange(schema.key, e.target.value)}
-                                className="h-8 text-xs font-mono"
+                                className="h-10 text-sm"
                               />
                             )}
                           </div>
@@ -520,7 +524,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                   <div className="flex items-center gap-2">
                     <Sliders className="h-4 w-4 text-primary" />
                     <h3 className="text-sm font-semibold">Custom & Mod Properties</h3>
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-[11px]">
                       {filteredCustom.length}
                     </Badge>
                   </div>
@@ -544,7 +548,7 @@ export function PropertiesEditor({ server }: { server: Server }) {
                           onChange={(e) => handlePropertyChange(item.key, e.target.value)}
                           className="h-7 text-xs font-mono flex-1"
                         />
-                        <Button
+                        <Button aria-label="Delete property"
                           type="button"
                           variant="ghost"
                           size="icon"
@@ -573,13 +577,13 @@ export function PropertiesEditor({ server }: { server: Server }) {
                       placeholder="Property key (e.g. view-distance-no-tick)"
                       value={newKey}
                       onChange={(e) => setNewKey(e.target.value)}
-                      className="h-8 text-xs font-mono"
+                      className="h-10 text-sm"
                     />
                     <Input
                       placeholder="Value"
                       value={newVal}
                       onChange={(e) => setNewVal(e.target.value)}
-                      className="h-8 text-xs font-mono"
+                      className="h-10 text-sm"
                     />
                     <Button
                       type="button"

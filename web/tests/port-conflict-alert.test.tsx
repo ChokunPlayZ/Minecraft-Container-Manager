@@ -34,6 +34,8 @@ const mockServers: Server[] = [
     version: '1.21.4',
     build: '145',
     ram_mb: 4096,
+    cpu_limit: 2,
+    memory_limit_mb: 4096,
     host_port: 25565,
     extra_ports: [
       {
@@ -59,6 +61,8 @@ const mockServers: Server[] = [
     version: '1.21.4',
     build: '145',
     ram_mb: 2048,
+    cpu_limit: 1,
+    memory_limit_mb: 2048,
     host_port: 25566,
     extra_ports: [],
     container_id: 'mcm-srv-2',

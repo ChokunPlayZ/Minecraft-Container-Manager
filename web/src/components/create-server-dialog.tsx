@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   AlertTriangle,
@@ -118,7 +119,7 @@ export function CreateServerDialog({
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [loadingBuilds, setLoadingBuilds] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy] = useState(false);
 
   // Port pool state
   const [port, setPort] = useState<string>('');
@@ -134,10 +135,10 @@ export function CreateServerDialog({
   const [inspectingModpack, setInspectingModpack] = useState(false);
   const [inspectProgress, setInspectProgress] = useState<number | null>(null);
   const [inspectStats, setInspectStats] = useState<{ loaded: number; total: number } | null>(null);
-  const [createProgress, setCreateProgress] = useState<number | null>(null);
-  const [createProgressStats, setCreateProgressStats] = useState<{ loaded: number; total: number } | null>(null);
-  const [createStageInfo, setCreateStageInfo] = useState<{ index: number; total: number; title?: string } | null>(null);
-  const [createStageDetail, setCreateStageDetail] = useState<string>('');
+  const [createProgress] = useState<number | null>(null);
+  const [createProgressStats] = useState<{ loaded: number; total: number } | null>(null);
+  const [createStageInfo] = useState<{ index: number; total: number; title?: string } | null>(null);
+  const [createStageDetail] = useState<string>('');
 
   // Modpack search state
   const [searchSource, setSearchSource] = useState<'modrinth' | 'curseforge'>('modrinth');
@@ -153,7 +154,7 @@ export function CreateServerDialog({
 
   const parsedPort = parseInt(port, 10);
   const isPortUsed = !behindProxy && !isNaN(parsedPort) && usedPorts.includes(parsedPort);
-  const isPortInvalid = !behindProxy && (isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535);
+  const isPortInvalid = !behindProxy && port.trim() !== '' && (isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535);
   const portConflict = !isNaN(parsedPort) ? usedPortDetails[parsedPort] : undefined;
 
   useEffect(() => {
@@ -628,23 +629,23 @@ export function CreateServerDialog({
         Create server
       </Button>
       {open && (
-        <div
+        <DialogBackdrop onDismiss={() => { if (!busy) setOpen(false); }}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget && !busy) setOpen(false);
           }}
         >
           <div
-            className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border bg-card p-6 shadow-2xl transition-all"
+            className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border bg-card p-6 shadow-2xl transition-colors"
           >
             <div className="flex items-center justify-between pb-3 border-b border-border/80">
               <div>
                 <h2 className="text-lg font-bold">Create server</h2>
                 <p className="text-xs text-muted-foreground">
-                  Deploy a new Minecraft server container with custom settings or an official modpack.
+                  Choose server software or install a modpack.
                 </p>
               </div>
-              <button
+              <button aria-label="Close dialog"
                 type="button"
                 onClick={() => !busy && setOpen(false)}
                 className="rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -655,7 +656,7 @@ export function CreateServerDialog({
 
             {/* Mode Switcher Tabs */}
             <div className="mt-4 grid grid-cols-3 gap-1.5 bg-secondary/30 p-1 rounded-xl border border-border/60 text-xs font-semibold">
-              <button
+              <button aria-pressed={createMode === 'standard'}
                 type="button"
                 onClick={() => {
                   setCreateMode('standard');
@@ -663,46 +664,46 @@ export function CreateServerDialog({
                   setModpackManifest(null);
                   setSelectedPack(null);
                 }}
-                className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
                   createMode === 'standard'
-                    ? 'bg-card text-foreground shadow-xs'
+                    ? 'bg-card text-foreground '
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Standard Server
               </button>
-              <button
+              <button aria-pressed={createMode === 'search-modpack'}
                 type="button"
                 onClick={() => {
                   setCreateMode('search-modpack');
                   setModpackFile(null);
                   setModpackManifest(null);
                 }}
-                className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
                   createMode === 'search-modpack'
-                    ? 'bg-primary text-primary-foreground shadow-xs'
+                    ? 'bg-primary text-primary-foreground '
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 <Compass className="h-3.5 w-3.5" />
                 Search Modpacks
               </button>
-              <button
+              <button aria-pressed={createMode === 'modpack'}
                 type="button"
                 onClick={() => {
                   setCreateMode('modpack');
                   setSelectedPack(null);
                 }}
-                className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 text-center ${
+                className={`py-1.5 px-2 rounded-lg transition-colors flex items-center justify-center gap-1.5 text-center ${
                   createMode === 'modpack'
-                    ? 'bg-primary text-primary-foreground shadow-xs'
+                    ? 'bg-primary text-primary-foreground '
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 <UploadCloud className="h-3.5 w-3.5 shrink-0" />
                 <span className="flex flex-col items-center leading-tight">
                   <span>From Modpack</span>
-                  <span className="text-[10px] font-normal opacity-80">(.mrpack, .zip)</span>
+                  <span className="text-[11px] font-normal opacity-80">(.mrpack, .zip)</span>
                 </span>
               </button>
             </div>
@@ -715,24 +716,24 @@ export function CreateServerDialog({
                     <div className="space-y-3 rounded-xl border border-border/80 bg-secondary/10 p-3.5">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1 bg-secondary/50 p-0.5 rounded-lg border border-border/60 text-[11px] font-semibold">
-                          <button
+                          <button aria-pressed={searchSource === 'modrinth'}
                             type="button"
                             onClick={() => setSearchSource('modrinth')}
-                            className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-all ${
+                            className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-colors ${
                               searchSource === 'modrinth'
-                                ? 'bg-emerald-600 text-white shadow-xs'
+                                ? 'bg-primary text-primary-foreground '
                                 : 'text-muted-foreground hover:text-foreground'
                             }`}
                           >
                             <Compass className="h-3 w-3" />
                             Modrinth
                           </button>
-                          <button
+                          <button aria-pressed={searchSource === 'curseforge'}
                             type="button"
                             onClick={() => setSearchSource('curseforge')}
-                            className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-all ${
+                            className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-colors ${
                               searchSource === 'curseforge'
-                                ? 'bg-orange-600 text-white shadow-xs'
+                                ? 'bg-primary text-primary-foreground '
                                 : 'text-muted-foreground hover:text-foreground'
                             }`}
                           >
@@ -791,7 +792,7 @@ export function CreateServerDialog({
                           className="pl-8 h-8 text-xs"
                         />
                         {searchQuery && (
-                          <button
+                          <button aria-label="Clear modpack search"
                             type="button"
                             onClick={() => setSearchQuery('')}
                             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -829,7 +830,7 @@ export function CreateServerDialog({
                             ? mrHits.map((hit) => (
                                 <div
                                   key={hit.project_id}
-                                  className="flex items-center justify-between gap-2.5 p-2 rounded-lg border border-border/60 bg-card hover:border-primary/50 hover:bg-secondary/20 transition-all text-xs"
+                                  className="flex items-center justify-between gap-2.5 p-2 rounded-lg border border-border/60 bg-card hover:border-primary/50 hover:bg-secondary/20 transition-colors text-xs"
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                     {hit.icon_url ? (
@@ -846,7 +847,7 @@ export function CreateServerDialog({
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-1.5">
                                         <h4 className="font-bold text-foreground truncate">{hit.title}</h4>
-                                        <span className="text-[10px] text-muted-foreground shrink-0 flex items-center gap-0.5">
+                                        <span className="text-[11px] text-muted-foreground shrink-0 flex items-center gap-0.5">
                                           <Download className="h-2.5 w-2.5" />
                                           {formatCount(hit.downloads)}
                                         </span>
@@ -859,7 +860,7 @@ export function CreateServerDialog({
                                     type="button"
                                     size="sm"
                                     onClick={() => void handleSelectModrinthHit(hit)}
-                                    className="h-7 px-2.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shrink-0 gap-1"
+                                    className="h-7 px-2.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shrink-0 gap-1"
                                   >
                                     Select
                                     <ArrowRight className="h-3 w-3" />
@@ -869,7 +870,7 @@ export function CreateServerDialog({
                             : cfHits.map((mod) => (
                                 <div
                                   key={mod.id}
-                                  className="flex items-center justify-between gap-2.5 p-2 rounded-lg border border-border/60 bg-card hover:border-primary/50 hover:bg-secondary/20 transition-all text-xs"
+                                  className="flex items-center justify-between gap-2.5 p-2 rounded-lg border border-border/60 bg-card hover:border-primary/50 hover:bg-secondary/20 transition-colors text-xs"
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                     {mod.logo?.thumbnailUrl ? (
@@ -886,7 +887,7 @@ export function CreateServerDialog({
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-1.5">
                                         <h4 className="font-bold text-foreground truncate">{mod.name}</h4>
-                                        <span className="text-[10px] text-muted-foreground shrink-0 flex items-center gap-0.5">
+                                        <span className="text-[11px] text-muted-foreground shrink-0 flex items-center gap-0.5">
                                           <Download className="h-2.5 w-2.5" />
                                           {formatCount(mod.downloadCount)}
                                         </span>
@@ -899,7 +900,7 @@ export function CreateServerDialog({
                                     type="button"
                                     size="sm"
                                     onClick={() => void handleSelectCurseForgeHit(mod)}
-                                    className="h-7 px-2.5 text-xs font-semibold bg-orange-600 hover:bg-orange-700 text-white shrink-0 gap-1"
+                                    className="h-7 px-2.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground shrink-0 gap-1"
                                   >
                                     Select
                                     <ArrowRight className="h-3 w-3" />
@@ -911,14 +912,14 @@ export function CreateServerDialog({
                     </div>
                   ) : (
                     /* Selected Modpack Preview Card */
-                    <div className="rounded-xl border border-primary/40 bg-gradient-to-br from-card via-card to-primary/5 p-3.5 text-xs space-y-2.5">
+                    <div className="rounded-xl border border-primary/40 bg-card p-3.5 text-xs space-y-2.5">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2.5 min-w-0">
                           {selectedPack.icon_url ? (
                             <img
                               src={selectedPack.icon_url}
                               alt={selectedPack.title}
-                              className="h-10 w-10 rounded-xl object-cover border border-border shadow-2xs shrink-0"
+                              className="h-10 w-10 rounded-xl object-cover border border-border  shrink-0"
                             />
                           ) : (
                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
@@ -928,7 +929,7 @@ export function CreateServerDialog({
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <h4 className="font-bold text-sm text-foreground truncate">{selectedPack.title}</h4>
-                              <Badge variant="outline" className="text-[9px] uppercase font-bold px-1.5 py-0">
+                              <Badge variant="outline" className="text-[11px] uppercase font-bold px-1.5 py-0">
                                 {selectedPack.source}
                               </Badge>
                             </div>
@@ -980,7 +981,7 @@ export function CreateServerDialog({
               {/* MODE 2: UPLOAD MODPACK ARCHIVE */}
               {createMode === 'modpack' && (
                 <div className="space-y-3">
-                  <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border/80 bg-secondary/20 p-5 text-center hover:bg-secondary/40 hover:border-primary/50 cursor-pointer transition-all">
+                  <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border/80 bg-secondary/20 p-5 text-center hover:bg-secondary/40 hover:border-primary/50 cursor-pointer transition-colors">
                     <input
                       type="file"
                       accept=".mrpack,.zip"
@@ -1025,7 +1026,7 @@ export function CreateServerDialog({
                         <span className="font-bold text-emerald-900 dark:text-emerald-200">
                           {modpackManifest.name} (v{modpackManifest.version})
                         </span>
-                        <Badge variant="outline" className="text-[10px] uppercase font-semibold">
+                        <Badge variant="outline" className="text-[11px] uppercase font-semibold">
                           {modpackManifest.format}
                         </Badge>
                       </div>
@@ -1050,7 +1051,7 @@ export function CreateServerDialog({
                             <span>Manual action needed after creation:</span>
                           </div>
                           <p className="mt-0.5 text-muted-foreground">
-                            {modpackManifest.user_required_files.length} mod(s) cannot be auto-downloaded and must be placed into <code className="bg-muted px-1 py-0.5 rounded font-mono text-[10px]">mods/</code> manually ({modpackManifest.user_required_files.slice(0, 3).join(', ')}{modpackManifest.user_required_files.length > 3 ? '...' : ''}).
+                            {modpackManifest.user_required_files.length} mod(s) cannot be auto-downloaded and must be placed into <code className="bg-muted px-1 py-0.5 rounded font-mono text-[11px]">mods/</code> manually ({modpackManifest.user_required_files.slice(0, 3).join(', ')}{modpackManifest.user_required_files.length > 3 ? '...' : ''}).
                           </p>
                         </div>
                       )}
@@ -1060,7 +1061,7 @@ export function CreateServerDialog({
               )}
 
               {/* COMMON FORM FIELDS */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="server-name">Server Name</Label>
                   <Input
@@ -1077,7 +1078,7 @@ export function CreateServerDialog({
                       <Label htmlFor="server-port">Server Port</Label>
                       {loadingPorts && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                     </div>
-                    {!behindProxy && (
+                    {!behindProxy && port.trim() !== '' && (
                       isPortUsed ? (
                         <span className="text-[11px] font-semibold text-destructive">Already in use</span>
                       ) : isPortInvalid ? (
@@ -1090,7 +1091,7 @@ export function CreateServerDialog({
                   {behindProxy ? (
                     <div className="flex h-9 items-center justify-between px-3 rounded-lg border border-border bg-muted/40 text-xs text-muted-foreground font-mono">
                       <span>Internal Network Only (mcm-:id)</span>
-                      <span className="text-[10px] text-primary font-sans font-medium">No host port required</span>
+                      <span className="text-[11px] text-primary font-sans font-medium">No host port required</span>
                     </div>
                   ) : (
                     <Input
@@ -1112,7 +1113,7 @@ export function CreateServerDialog({
                         onChange={(e) => setBehindProxy(e.target.checked)}
                         className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
                       />
-                      <span>Behind Proxy (Internal only, no open host port)</span>
+                      <span>Behind proxy (internal network only)</span>
                     </label>
                   </div>
                   {!behindProxy && isPortUsed && (
@@ -1208,9 +1209,9 @@ export function CreateServerDialog({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-1">
                         <Label htmlFor="server-java">Java Runtime</Label>
-                        <span className="text-[10px] text-muted-foreground">Auto-recommended</span>
+                        <span className="text-[11px] text-muted-foreground">Auto-recommended</span>
                       </div>
                       <Select
                         id="server-java"
@@ -1304,7 +1305,7 @@ export function CreateServerDialog({
                       <span className="capitalize text-foreground">{serverType}</span>
                       <span className="text-muted-foreground">·</span>
                       <span className="text-foreground">{version || 'Auto-detected'}</span>
-                      {build && createMode !== 'search-modpack' && <span className="text-muted-foreground text-[10px]">({build})</span>}
+                      {build && createMode !== 'search-modpack' && <span className="text-muted-foreground text-[11px]">({build})</span>}
                     </div>
                   </div>
                   <div className="space-y-1.5">
@@ -1397,7 +1398,7 @@ export function CreateServerDialog({
               </div>
             </form>
           </div>
-        </div>
+        </DialogBackdrop>
       )}
     </>
   );

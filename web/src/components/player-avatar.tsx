@@ -29,7 +29,7 @@ export function PlayerAvatar({ name, size = 32 }: PlayerAvatarProps) {
       height={size}
       loading="lazy"
       onError={() => setLoadError(true)}
-      className="shrink-0 rounded-md bg-muted object-contain shadow-2xs"
+      className="shrink-0 rounded-md bg-muted object-contain "
     />
   );
 }

@@ -594,7 +594,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         });
         if (retryRes.ok) {
           if (retryRes.status === 204) return undefined as T;
-          return (await retryRes.json()) as T;
+          return readResponse<T>(retryRes);
         }
       }
     }
@@ -603,7 +603,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  return readResponse<T>(res);
+}
+
+
+async function readResponse<T>(response: Response): Promise<T> {
+  try {
+    return await response.json() as T;
+  } catch {
+    throw new ApiError(502, 'Could not read the server response. Try again.');
+  }
 }
 
 

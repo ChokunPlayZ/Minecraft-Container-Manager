@@ -97,7 +97,7 @@ describe('BackupsPanel', () => {
     render(<BackupsPanel server={mockServer} />);
 
     await waitFor(() => {
-      expect(screen.getByText('No backups yet.')).toBeInTheDocument();
+      expect(screen.getByText('No backups yet')).toBeInTheDocument();
     });
 
     // Simulate progress event received
@@ -157,7 +157,7 @@ describe('BackupsPanel', () => {
     render(<BackupsPanel server={mockServer} />);
 
     await waitFor(() => {
-      expect(screen.getByText('No backups yet.')).toBeInTheDocument();
+      expect(screen.getByText('No backups yet')).toBeInTheDocument();
     });
 
     const file = new File(['dummy backup content'], 'uploaded-world.tar.gz', {

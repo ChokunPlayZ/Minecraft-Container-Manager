@@ -167,14 +167,14 @@ export function MotdDesigner({
       {/* 1. Live Minecraft Server List Card Preview */}
       <div>
         <div className="flex items-center justify-between pb-1.5">
-          <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
             <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-            Live Minecraft Server Browser Preview
+            Server list preview
           </label>
-          <span className="text-[11px] text-muted-foreground">Faithful multiplayer client view</span>
+
         </div>
 
-        <div className="rounded-lg border border-border bg-[#101114] p-3 text-zinc-100 shadow-md">
+        <div className="rounded-lg border border-border bg-[#101114] p-3 text-zinc-100 ">
           <div className="flex items-start gap-3">
             {/* Minecraft Grass Block SVG Icon */}
             <div className="h-12 w-12 shrink-0 rounded bg-[#1e2025] p-1 border border-zinc-700/60 shadow-inner flex items-center justify-center">
@@ -281,7 +281,7 @@ export function MotdDesigner({
       </div>
 
       {/* 2. Formatting Toolbar */}
-      <div className="rounded-lg border border-border bg-card p-3 space-y-3 shadow-xs">
+      <div className="border-t pt-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           {/* Target line selector pills */}
           <div className="inline-flex items-center rounded-md border border-input bg-muted/30 p-0.5 text-xs">

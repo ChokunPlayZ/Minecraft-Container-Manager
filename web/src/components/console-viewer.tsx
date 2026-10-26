@@ -143,11 +143,11 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
   }
 
   return (
-    <Card className="flex flex-col border-border/70 shadow-sm">
+    <Card className="flex flex-col border-border/70 ">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3 sm:px-5">
         <div className="flex items-center gap-2">
-          <Terminal className="h-4 w-4 text-emerald-500" />
-          <CardTitle className="text-base font-semibold">Live Server Console</CardTitle>
+          <Terminal className="h-4 w-4 text-primary" />
+          <CardTitle className="text-base font-semibold">Server console</CardTitle>
           <Badge variant="outline" className="text-xs font-normal">
             {lines.length} lines
           </Badge>
@@ -161,8 +161,9 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
               type="text"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="Search logs..."
-              className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-7 text-xs shadow-xs placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
+              aria-label="Search console logs"
+              placeholder="Search logs…"
+              className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-7 text-xs  placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-ring"
             />
             {filter && (
               <button
@@ -178,10 +179,12 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
 
           {/* Auto-scroll toggle */}
           <Button
-            variant={autoScrollLocked ? 'default' : 'outline'}
+            variant="outline"
             size="sm"
             className="h-8 gap-1 text-xs"
             onClick={() => setAutoScrollLocked((prev) => !prev)}
+            aria-label={autoScrollLocked ? 'Resume auto-scroll' : 'Pause auto-scroll'}
+            aria-pressed={!autoScrollLocked}
             title={autoScrollLocked ? 'Auto-scroll is paused' : 'Auto-scroll is enabled'}
           >
             <ArrowDownToLine className="h-3.5 w-3.5" />
@@ -195,6 +198,7 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
             className="h-8 gap-1 text-xs"
             onClick={() => setLines([])}
             title="Clear buffer in browser"
+            aria-label="Clear console display"
           >
             <Eraser className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Clear</span>
@@ -206,16 +210,16 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
         <div
           ref={scrollRef}
           onScroll={handleConsoleScroll}
-          className="h-96 min-h-[360px] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-950 p-3.5 font-mono text-xs leading-5 text-emerald-100 shadow-inner sm:h-[460px]"
+          className="console-output h-96 min-h-[320px] overflow-y-auto rounded-lg p-4 font-mono text-xs leading-6 sm:h-[420px]"
         >
           {filteredLines.length === 0 && !error ? (
-            <div className="flex h-full items-center justify-center text-neutral-500">
-              {filter ? `No log lines matching "${filter}"` : 'Waiting for server log output...'}
+            <div className="flex h-full items-center justify-center text-neutral-400">
+              {filter ? `No log lines matching "${filter}"` : 'Waiting for server logs…'}
             </div>
           ) : (
             filteredLines.map((line, i) => (
               <div key={`${line.timestamp}-${i}`} className="whitespace-pre-wrap hover:bg-neutral-900/60">
-                {line.timestamp && <span className="mr-2 select-none text-emerald-500/60">{line.timestamp}</span>}
+                {line.timestamp && <span className="mr-2 select-none text-primary/60">{line.timestamp}</span>}
                 <span className={line.level === 'WARN' ? 'text-amber-300' : line.level === 'ERROR' ? 'text-rose-400' : 'text-neutral-200'}>
                   {line.message}
                 </span>
@@ -226,7 +230,7 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
         </div>
 
         {/* Quick command buttons */}
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs text-muted-foreground mr-1">Quick:</span>
             {QUICK_COMMANDS.map((qc) => (

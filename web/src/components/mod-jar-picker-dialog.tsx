@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useEffect, useState } from 'react';
 import {
   AlertCircle,
@@ -227,9 +228,9 @@ export function ModJarPickerDialog({
   const modTitle = mod.title || updateInfo?.title || mod.name;
 
   return (
-    <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
-      role="presentation"
+    <DialogBackdrop onDismiss={() => { if (!isUpdating) onClose(); }}
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60  p-4"
+
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !isUpdating) onClose();
       }}
@@ -255,7 +256,7 @@ export function ModJarPickerDialog({
                   Update {modTitle}
                 </h3>
                 {updateInfo?.provider && (
-                  <Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0">
+                  <Badge variant="outline" className="text-[11px] uppercase font-mono px-1.5 py-0">
                     {updateInfo.provider}
                   </Badge>
                 )}
@@ -286,7 +287,7 @@ export function ModJarPickerDialog({
                 {mod.file}
               </span>
               {mod.version && (
-                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-mono shrink-0">
+                <Badge variant="secondary" className="text-[11px] px-1.5 py-0 font-mono shrink-0">
                   v{mod.version}
                 </Badge>
               )}
@@ -303,10 +304,10 @@ export function ModJarPickerDialog({
 
         {/* Subtabs: Online Releases vs Upload Jar */}
         <div className="flex items-center border-b px-5 pt-3 gap-2">
-          <button
+          <button aria-pressed={activeTab === 'catalog'}
             type="button"
             onClick={() => setActiveTab('catalog')}
-            className={`inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition-all ${
+            className={`inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition-colors ${
               activeTab === 'catalog'
                 ? 'border-primary text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -315,16 +316,16 @@ export function ModJarPickerDialog({
             <FolderArchive className="h-4 w-4" />
             Available Releases
             {jars.length > 0 && (
-              <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0">
+              <Badge variant="secondary" className="ml-1 text-[11px] px-1.5 py-0">
                 {jars.length}
               </Badge>
             )}
           </button>
 
-          <button
+          <button aria-pressed={activeTab === 'upload'}
             type="button"
             onClick={() => setActiveTab('upload')}
-            className={`inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition-all ${
+            className={`inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition-colors ${
               activeTab === 'upload'
                 ? 'border-primary text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -393,7 +394,7 @@ export function ModJarPickerDialog({
                       return (
                         <div
                           key={j.versionId + j.filename}
-                          className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-xs transition-all ${
+                          className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-xs transition-colors ${
                             isAlreadyInstalled
                               ? 'border-emerald-500/40 bg-emerald-500/10 dark:bg-emerald-950/20'
                               : 'border-border/80 bg-card hover:border-primary/40 hover:bg-secondary/20'
@@ -407,7 +408,7 @@ export function ModJarPickerDialog({
                               {j.releaseType && (
                                 <Badge
                                   variant={j.releaseType === 'release' ? 'default' : 'secondary'}
-                                  className="text-[10px] px-1.5 py-0 uppercase"
+                                  className="text-[11px] px-1.5 py-0 uppercase"
                                 >
                                   {j.releaseType}
                                 </Badge>
@@ -415,7 +416,7 @@ export function ModJarPickerDialog({
                               {isAlreadyInstalled && (
                                 <Badge
                                   variant="outline"
-                                  className="border-emerald-500/40 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 gap-1 text-[10px] px-1.5 py-0 font-medium"
+                                  className="border-emerald-500/40 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 gap-1 text-[11px] px-1.5 py-0 font-medium"
                                 >
                                   <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
                                   Currently Installed
@@ -432,13 +433,13 @@ export function ModJarPickerDialog({
                                 {j.gameVersions.slice(0, 4).map((gv) => (
                                   <span
                                     key={gv}
-                                    className="rounded bg-secondary px-1.5 py-0.2 text-[10px] text-secondary-foreground font-mono"
+                                    className="rounded bg-secondary px-1.5 py-0.2 text-[11px] text-secondary-foreground font-mono"
                                   >
                                     {gv}
                                   </span>
                                 ))}
                                 {j.gameVersions.length > 4 && (
-                                  <span className="text-[10px] text-muted-foreground">
+                                  <span className="text-[11px] text-muted-foreground">
                                     +{j.gameVersions.length - 4} more
                                   </span>
                                 )}
@@ -454,7 +455,7 @@ export function ModJarPickerDialog({
                               className={`h-8 gap-1.5 text-xs ${
                                 isAlreadyInstalled
                                   ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
-                                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                  : 'bg-primary hover:bg-primary/90 text-primary-foreground'
                               }`}
                               title={isAlreadyInstalled ? 'Reinstall this jar version' : 'Select and install this jar'}
                             >
@@ -498,7 +499,7 @@ export function ModJarPickerDialog({
                   </p>
                 </div>
                 <label className="cursor-pointer shrink-0">
-                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground shadow-xs hover:bg-primary/90 transition-colors">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground  hover:bg-primary/90 transition-colors">
                     Choose .jar File
                   </span>
                   <input
@@ -520,7 +521,7 @@ export function ModJarPickerDialog({
                     value={uploadProgress}
                     label={
                       <span className="flex items-center gap-2 font-medium">
-                        <UploadCloud className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                        <UploadCloud className="h-4 w-4 text-primary  shrink-0" />
                         <span>Uploading replacement jar...</span>
                       </span>
                     }
@@ -561,6 +562,6 @@ export function ModJarPickerDialog({
           </div>
         </div>
       </div>
-    </div>
+    </DialogBackdrop>
   );
 }

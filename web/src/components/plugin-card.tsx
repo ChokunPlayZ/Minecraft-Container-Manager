@@ -31,28 +31,28 @@ const PROVIDER_THEMES: Record<PluginProvider, ProviderTheme> = {
     borderHover: 'hover:border-emerald-500/40',
     titleHover: 'group-hover:text-emerald-600 dark:group-hover:text-emerald-400',
     iconBox: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-    installButton: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+    installButton: 'bg-primary hover:bg-primary/90 text-primary-foreground',
     defaultIcon: Compass,
   },
   hangar: {
     borderHover: 'hover:border-sky-500/40',
     titleHover: 'group-hover:text-sky-600 dark:group-hover:text-sky-400',
     iconBox: 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
-    installButton: 'bg-sky-600 hover:bg-sky-700 text-white',
+    installButton: 'bg-primary hover:bg-primary/90 text-primary-foreground',
     defaultIcon: Layers,
   },
   spiget: {
     borderHover: 'hover:border-amber-500/40',
     titleHover: 'group-hover:text-amber-600 dark:group-hover:text-amber-400',
     iconBox: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-    installButton: 'bg-amber-600 hover:bg-amber-700 text-white',
+    installButton: 'bg-primary hover:bg-primary/90 text-primary-foreground',
     defaultIcon: Package,
   },
   curseforge: {
     borderHover: 'hover:border-orange-500/40',
     titleHover: 'group-hover:text-orange-600 dark:group-hover:text-orange-400',
     iconBox: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
-    installButton: 'bg-orange-600 hover:bg-orange-700 text-white',
+    installButton: 'bg-primary hover:bg-primary/90 text-primary-foreground',
     defaultIcon: Flame,
   },
 };
@@ -142,7 +142,7 @@ export function PluginCard({
 
   return (
     <div
-      className={`group relative flex flex-col justify-between rounded-xl border border-border/80 bg-card/60 p-4 shadow-2xs transition-all ${theme.borderHover} hover:shadow-md hover:bg-card`}
+      className={`group relative flex flex-col justify-between rounded-xl border border-border/80 bg-card/60 p-4  transition-colors ${theme.borderHover}  hover:bg-card`}
     >
       <div>
         <div className="flex items-start gap-3">
@@ -176,8 +176,8 @@ export function PluginCard({
                   variant="secondary"
                   className={
                     hasUpdate
-                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 text-[10px] px-1.5 py-0 shrink-0 font-medium'
-                      : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] px-1.5 py-0 shrink-0 font-medium'
+                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 text-[11px] px-1.5 py-0 shrink-0 font-medium'
+                      : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[11px] px-1.5 py-0 shrink-0 font-medium'
                   }
                 >
                   {hasUpdate ? 'Update Available' : 'Installed'}
@@ -242,7 +242,7 @@ export function PluginCard({
 
           <div className="flex items-center gap-1.5">
             {category && (
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase">
+              <Badge variant="outline" className="text-[11px] px-1.5 py-0 uppercase">
                 {category}
               </Badge>
             )}
@@ -266,7 +266,7 @@ export function PluginCard({
               size="sm"
               onClick={onUpdate}
               disabled={isInstalling || installDisabled}
-              className="flex-1 h-8 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-2xs"
+              className="flex-1 h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold "
               title={updateLabel ? `Update available: ${updateLabel}` : 'Update available! Click to pick a new jar'}
             >
               {isInstalling ? (
@@ -352,7 +352,7 @@ export function PluginCard({
 
 export function PluginCardSkeleton() {
   return (
-    <div className="flex h-48 flex-col justify-between rounded-xl border border-border/60 bg-card/40 p-4 animate-pulse">
+    <div className="flex h-48 animate-pulse flex-col justify-between rounded-xl border border-border/60 bg-card/40 p-4">
       <div>
         <div className="flex items-start gap-3">
           <div className="h-11 w-11 shrink-0 rounded-lg bg-secondary/80" />

@@ -80,6 +80,7 @@ export function ModpacksPanel({
     try {
       if (pack.format === 'modrinth' && (pack.project_slug || pack.project_id)) {
         const id = pack.project_slug || pack.project_id;
+        if (!id) return;
         const list = await getProjectVersions(id);
         const mapped = list
           .map((v) => {
@@ -242,11 +243,11 @@ export function ModpacksPanel({
       <div className="space-y-6">
         {/* ACTIVE MODPACK HERO CARD */}
         {installedModpack ? (
-          <Card className="border-primary/30 bg-gradient-to-br from-card via-card to-primary/5 shadow-md">
+          <Card className="border-primary/30 bg-card ">
             <CardHeader className="pb-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3.5">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 text-primary shadow-xs">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 text-primary ">
                     {installedModpack.icon_url ? (
                       <img
                         src={installedModpack.icon_url}
@@ -265,22 +266,22 @@ export function ModpacksPanel({
                       {installedModpack.created_with_modpack && (
                         <Badge
                           variant="outline"
-                          className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[10px] uppercase font-bold px-2 py-0.5 gap-1"
+                          className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[11px] uppercase font-bold px-2 py-0.5 gap-1"
                         >
                           <Lock className="h-3 w-3" />
                           Modpack Server (Locked)
                         </Badge>
                       )}
-                      <Badge variant="secondary" className="text-[10px] uppercase font-bold px-2 py-0.5">
+                      <Badge variant="secondary" className="text-[11px] uppercase font-bold px-2 py-0.5">
                         {installedModpack.format}
                       </Badge>
-                      <Badge variant="outline" className="text-[10px] font-medium capitalize">
+                      <Badge variant="outline" className="text-[11px] font-medium capitalize">
                         {installedModpack.loader} {installedModpack.minecraft_version}
                       </Badge>
                       {installedModpack.user_required_files && installedModpack.user_required_files.length > 0 && (
                         <Badge
                           variant="outline"
-                          className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[10px] uppercase font-bold px-2 py-0.5 gap-1"
+                          className="border-amber-500/40 text-amber-600 dark:text-amber-400 text-[11px] uppercase font-bold px-2 py-0.5 gap-1"
                         >
                           <AlertTriangle className="h-3 w-3" />
                           {installedModpack.user_required_files.length} Manual Mods Needed
@@ -344,7 +345,7 @@ export function ModpacksPanel({
                         Action Required: Manual Mods Missing ({installedModpack.user_required_files.length})
                       </span>
                       <p className="mt-0.5 text-muted-foreground text-[11px] leading-relaxed">
-                        These mods could not be downloaded automatically due to creator licensing restrictions. Upload them to the server's <code className="bg-muted px-1 py-0.5 rounded font-mono text-[10px]">mods/</code> folder via the File Manager or SFTP:
+                        These mods could not be downloaded automatically due to creator licensing restrictions. Upload them to the server's <code className="bg-muted px-1 py-0.5 rounded font-mono text-[11px]">mods/</code> folder via the File Manager or SFTP:
                       </p>
                       <div className="mt-2 max-h-28 overflow-y-auto space-y-1 rounded-lg border border-amber-500/20 bg-background/60 p-2 font-mono text-[11px] text-amber-950 dark:text-amber-100">
                         {installedModpack.user_required_files.map((file, idx) => (
@@ -382,7 +383,7 @@ export function ModpacksPanel({
                   <h3 className="text-sm font-bold text-foreground">Modpack Updates</h3>
                   <Badge
                     variant="outline"
-                    className="text-[10px] font-semibold border-amber-500/40 text-amber-600 dark:text-amber-400 gap-1"
+                    className="text-[11px] font-semibold border-amber-500/40 text-amber-600 dark:text-amber-400 gap-1"
                   >
                     <Lock className="h-3 w-3" />
                     Locked to {installedModpack.name}
@@ -431,7 +432,7 @@ export function ModpacksPanel({
                   return (
                     <Card
                       key={v.id}
-                      className={`border-border/80 transition-all ${
+                      className={`border-border/80 transition-colors ${
                         isCurrent ? 'bg-primary/5 border-primary/40' : 'hover:border-primary/50'
                       }`}
                     >
@@ -439,18 +440,18 @@ export function ModpacksPanel({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <h4 className="font-bold text-xs text-foreground">{v.name}</h4>
-                            <Badge variant="secondary" className="text-[10px] font-mono px-1.5 py-0">
+                            <Badge variant="secondary" className="text-[11px] font-mono px-1.5 py-0">
                               {v.version_number}
                             </Badge>
                             {v.release_type && (
-                              <Badge variant="outline" className="text-[9px] uppercase font-semibold">
+                              <Badge variant="outline" className="text-[11px] uppercase font-semibold">
                                 {v.release_type}
                               </Badge>
                             )}
                             {isCurrent && (
                               <Badge
                                 variant="secondary"
-                                className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] gap-1 px-1.5 py-0"
+                                className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] gap-1 px-1.5 py-0"
                               >
                                 <CheckCircle2 className="h-3 w-3" />
                                 Current Active Version
@@ -485,7 +486,7 @@ export function ModpacksPanel({
                     <p className="text-xs text-muted-foreground">
                       Have a newer <code>.mrpack</code> or <code>.zip</code> file for <strong>{installedModpack.name}</strong>?
                     </p>
-                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 bg-primary/10 text-primary font-semibold text-xs cursor-pointer hover:bg-primary/20 transition-all">
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 bg-primary/10 text-primary font-semibold text-xs cursor-pointer hover:bg-primary/20 transition-colors">
                       <UploadCloud className="h-3.5 w-3.5" />
                       Upload Update File
                       <input
@@ -509,7 +510,7 @@ export function ModpacksPanel({
                       value={uploadProgress}
                       label={
                         <span className="flex items-center gap-2 font-medium truncate">
-                          <UploadCloud className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                          <UploadCloud className="h-4 w-4 text-primary  shrink-0" />
                           <span className="truncate">Uploading {uploadStats?.fileName || 'modpack'}...</span>
                         </span>
                       }
@@ -528,7 +529,7 @@ export function ModpacksPanel({
                     <p className="text-xs text-muted-foreground max-w-md mx-auto">
                       To update <strong>{installedModpack.name}</strong>, upload an updated <code>.mrpack</code> or <code>.zip</code> archive.
                     </p>
-                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 bg-primary/10 text-primary font-semibold text-xs cursor-pointer hover:bg-primary/20 transition-all">
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 bg-primary/10 text-primary font-semibold text-xs cursor-pointer hover:bg-primary/20 transition-colors">
                       <UploadCloud className="h-3.5 w-3.5" />
                       Choose Update File
                       <input

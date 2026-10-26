@@ -217,7 +217,7 @@ export function BackupsPanel({ server }: { server: Server }) {
             </div>
             <div className="flex items-end gap-1.5 sm:col-span-2">
               <Button onClick={() => void createBackup()} disabled={busy} className="flex-1 font-semibold">
-                <Plus className="h-4 w-4 mr-1" /> {busy ? 'Processing...' : 'Create'}
+                <Plus className="h-4 w-4 mr-1" /> {busy ? 'Processing…' : 'Create backup'}
               </Button>
               <input
                 ref={fileInputRef}
@@ -244,7 +244,7 @@ export function BackupsPanel({ server }: { server: Server }) {
 
           {/* Active Backup / Restore Operation Progress Bar */}
           {activeProgress && activeProgress.stage !== 'completed' && activeProgress.stage !== 'failed' && (
-            <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 transition-all">
+            <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3.5 transition-colors">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold text-foreground flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -280,7 +280,7 @@ export function BackupsPanel({ server }: { server: Server }) {
             <div className="space-y-2 rounded-xl border border-sky-500/20 bg-sky-500/5 p-3.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-medium text-foreground flex items-center gap-2 truncate">
-                  <UploadCloud className="h-4 w-4 text-sky-500 animate-bounce" />
+                  <UploadCloud className="h-4 w-4 text-sky-500 " />
                   Uploading {uploadFileName || 'backup archive'}...
                 </span>
                 <span className="font-bold text-sky-600 dark:text-sky-400 tabular-nums">
@@ -300,20 +300,20 @@ export function BackupsPanel({ server }: { server: Server }) {
 
           <div className="space-y-2">
             {backups.length === 0 && (
-              <p className="text-sm text-muted-foreground py-2">No backups yet.</p>
+              <div className="empty-state"><h3 className="section-heading">No backups yet</h3><p>Create a backup before changing server software or restoring world data.</p></div>
             )}
             {backups.map((b) => {
               const isLocal = b.location?.startsWith('local:');
               return (
                 <div
                   key={b.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border p-2.5 text-sm transition-colors hover:bg-muted/30"
+                  className="flex flex-wrap items-center justify-between gap-3 border-b py-4 text-sm last:border-0"
                 >
                   <div className="min-w-0 space-y-0.5">
                     <div className="flex items-center gap-2">
                       <p className="truncate font-medium text-foreground">{b.name}</p>
                       <span
-                        className={`inline-flex items-center rounded-md px-1.5 py-0.2 text-[10px] font-semibold uppercase tracking-wider ${
+                        className={`inline-flex items-center rounded-md px-1.5 py-0.2 text-[11px] font-semibold uppercase tracking-wider ${
                           isLocal
                             ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
                             : 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'

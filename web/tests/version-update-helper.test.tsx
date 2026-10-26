@@ -15,7 +15,10 @@ const mockServer: Server = {
   ram_mb: 4096,
   cpu_limit: 2,
   memory_limit_mb: 4096,
-  autostart: true,
+  extra_ports: [],
+  container_id: null,
+  backup_enabled: false,
+  backup_interval_minutes: 0,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };
@@ -257,12 +260,13 @@ describe('VersionUpdateHelper', () => {
     const applySpy = vi.spyOn(api, 'applyVersionUpgradeMods').mockResolvedValue({
       updated: 1,
       failed: 0,
-      skipped: 0,
-      results: [
+      target_version: '1.21.1',
+      total: 1,
+      items: [
         {
           mod_name: 'lithium-fabric-0.12.0',
-          status: 'updated',
-          old_jar: 'lithium-fabric-0.12.0.jar',
+          success: true,
+          original: 'lithium-fabric-0.12.0.jar',
           new_jar: 'lithium-fabric-0.14.0.jar',
         },
       ],
@@ -316,7 +320,7 @@ describe('VersionUpdateHelper', () => {
     expect(api.checkVersionUpgradeCompatibility).toHaveBeenCalledTimes(2);
   });
 
-  it('executes 1-Click Full Upgrade sequentially (backup -> update mods -> server jar upgrade)', async () => {
+  it('upgrades the server and mods sequentially (backup -> update mods -> server jar upgrade)', async () => {
     const readyReport: VersionUpdateReport = {
       ...mockReport,
       ready_to_update: true,
@@ -338,12 +342,13 @@ describe('VersionUpdateHelper', () => {
     const applySpy = vi.spyOn(api, 'applyVersionUpgradeMods').mockResolvedValue({
       updated: 1,
       failed: 0,
-      skipped: 0,
-      results: [
+      target_version: '1.21.1',
+      total: 1,
+      items: [
         {
           mod_name: 'lithium-fabric-0.12.0',
-          status: 'updated',
-          old_jar: 'lithium-fabric-0.12.0.jar',
+          success: true,
+          original: 'lithium-fabric-0.12.0.jar',
           new_jar: 'lithium-fabric-0.14.0.jar',
         },
       ],
@@ -354,7 +359,8 @@ describe('VersionUpdateHelper', () => {
     ]);
 
     const installSpy = vi.spyOn(api, 'installServer').mockResolvedValue({
-      ...mockServer,
+      server_id: mockServer.id,
+      installed: true,
       version: '1.21.1',
       build: '0.16.0',
     });
@@ -372,9 +378,9 @@ describe('VersionUpdateHelper', () => {
     const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
     fireEvent.click(checkBtn);
 
-    // Wait for the ready report and 1-Click Upgrade button
+    // Wait for the ready report and upgrade button
     const oneClickBtn = await screen.findByRole('button', {
-      name: /1-Click Full Upgrade to MC 1.21.1/i,
+      name: /Upgrade server & mods to MC 1.21.1/i,
     });
     expect(oneClickBtn).toBeInTheDocument();
 
@@ -382,7 +388,7 @@ describe('VersionUpdateHelper', () => {
 
     // Modal confirmation dialog
     const confirmBtn = await screen.findByRole('button', {
-      name: /1-Click Upgrade Server & Mods/i,
+      name: /^Upgrade server & mods$/i,
     });
     expect(confirmBtn).toBeInTheDocument();
 

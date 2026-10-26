@@ -110,13 +110,13 @@ export function PortPoolSettingsCard() {
           <div className="space-y-1">
             <CardTitle className="text-base flex items-center gap-2">
               <Network className="h-4 w-4 text-primary" />
-              Usable Port Pool
+              Port pool
             </CardTitle>
             <CardDescription>
               Configure the pre-forwarded host port pool for your Minecraft servers. MCM will prefill new servers with available ports from this pool and block creating servers on already used ports.
             </CardDescription>
           </div>
-          <Button
+          <Button aria-label="Refresh port status"
             type="button"
             variant="ghost"
             size="sm"
@@ -144,18 +144,18 @@ export function PortPoolSettingsCard() {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-3 gap-3">
-          <div className="rounded-lg border bg-muted/40 p-3">
-            <p className="text-xs font-medium text-muted-foreground">Total In Pool</p>
+          <div className="min-w-0 border-b p-3">
+            <p className="text-xs font-medium text-muted-foreground">Total ports</p>
             <p className="mt-1 text-2xl font-bold">{preview.error ? '—' : preview.count}</p>
           </div>
-          <div className="rounded-lg border bg-muted/40 p-3">
-            <p className="text-xs font-medium text-muted-foreground">Available (Free)</p>
+          <div className="min-w-0 border-b p-3">
+            <p className="text-xs font-medium text-muted-foreground">Available</p>
             <p className="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">
               {loading ? '…' : availablePorts.length}
             </p>
           </div>
-          <div className="rounded-lg border bg-muted/40 p-3">
-            <p className="text-xs font-medium text-muted-foreground">In Use / Assigned</p>
+          <div className="min-w-0 border-b p-3">
+            <p className="text-xs font-medium text-muted-foreground">Assigned</p>
             <p className="mt-1 text-2xl font-bold text-muted-foreground">
               {loading ? '…' : inUseCount}
             </p>
@@ -164,8 +164,8 @@ export function PortPoolSettingsCard() {
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="port-pool-input">Port Pool Specification</Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="port-pool-input">Port range</Label>
               <div className="flex gap-1.5">
                 <button
                   type="button"

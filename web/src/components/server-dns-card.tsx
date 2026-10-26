@@ -151,8 +151,8 @@ export function ServerDNSCard({
         <div className="flex items-center justify-between pb-1 border-b">
           <span className="text-xs font-medium text-muted-foreground">Routing Status:</span>
           {isPublished ? (
-            <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5 py-0.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+            <Badge variant="default" className="bg-primary text-primary-foreground gap-1.5 py-0.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-current " />
               Active SRV
             </Badge>
           ) : isConfigured ? (
@@ -380,8 +380,8 @@ export function ServerDNSCard({
               </div>
               <div>
                 {isPublished ? (
-                  <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5 py-1">
-                    <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
+                  <Badge variant="default" className="bg-primary text-primary-foreground gap-1.5 py-1">
+                    <span className="h-2 w-2 rounded-full bg-current " />
                     Active SRV
                   </Badge>
                 ) : isConfigured ? (

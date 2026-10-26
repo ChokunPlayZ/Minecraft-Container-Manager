@@ -213,7 +213,7 @@ export function ServerSettings({
       <CardContent>
         <div className="space-y-4">
           <div className="flex items-center gap-1 border-b">
-            <button
+            <button aria-pressed={tab === 'general'}
               type="button"
               onClick={() => setTab('general')}
               className={
@@ -224,7 +224,7 @@ export function ServerSettings({
             >
               General
             </button>
-            <button
+            <button aria-pressed={tab === 'advanced'}
               type="button"
               onClick={() => setTab('advanced')}
               className={
@@ -235,7 +235,7 @@ export function ServerSettings({
             >
               Advanced
             </button>
-            <button
+            <button aria-pressed={tab === 'dns'}
               type="button"
               onClick={() => setTab('dns')}
               className={
@@ -256,7 +256,7 @@ export function ServerSettings({
               {server.needs_rebuild && (
                 <div
                   data-testid="settings-rebuild-alert"
-                  className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200 shadow-2xs"
+                  className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200 "
                 >
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
@@ -342,7 +342,7 @@ export function ServerSettings({
                 {hostPort === 0 ? (
                   <div className="flex h-9 items-center justify-between px-3 rounded-lg border border-border bg-muted/40 text-xs font-mono text-muted-foreground">
                     <span>Internal Network: mcm-{server.id}</span>
-                    <span className="text-[10px] text-primary font-sans font-medium">No host port</span>
+                    <span className="text-[11px] text-primary font-sans font-medium">No host port</span>
                   </div>
                 ) : (
                   <Input

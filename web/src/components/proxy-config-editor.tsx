@@ -4,9 +4,7 @@ import {
   Check,
   Code2,
   Copy,
-  ExternalLink,
   Globe,
-  Info,
   Key,
   Lock,
   Plus,
@@ -41,10 +39,6 @@ import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { Textarea } from './ui/textarea';
 
-interface ProxyConfigEditorProps {
-  server: Server;
-}
-
 export function ProxyConfigEditor({ server }: { server: Server }) {
   const isVelocity = server.server_type === 'velocity';
   const defaultTemplate = isVelocity ? DEFAULT_VELOCITY_TOML : DEFAULT_BUNGEE_YAML;
@@ -55,7 +49,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
   const [config, setConfig] = useState<ProxyConfig>(() =>
     isVelocity ? parseVelocityToml(defaultTemplate) : parseBungeeYaml(defaultTemplate)
   );
-  const [loaded, setLoaded] = useState(false);
+  const [, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -267,7 +261,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
   };
 
   return (
-    <Card className="border-border bg-card shadow-sm">
+    <Card className="border-border bg-card ">
       <CardHeader className="border-b border-border/40 pb-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
@@ -275,7 +269,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
               <CardTitle className="text-base font-semibold">
                 Proxy Configuration ({configFileName})
               </CardTitle>
-              <Badge variant="secondary" className="text-[10px] uppercase font-mono tracking-wider">
+              <Badge variant="secondary" className="text-[11px] uppercase font-mono tracking-wider">
                 {isVelocity ? 'Velocity' : 'BungeeCord'}
               </Badge>
             </div>
@@ -292,7 +286,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                 onClick={() => handleModeChange('interactive')}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                   viewMode === 'interactive'
-                    ? 'bg-background text-foreground shadow-sm'
+                    ? 'bg-background text-foreground '
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -303,7 +297,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                 onClick={() => handleModeChange('raw')}
                 className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                   viewMode === 'raw'
-                    ? 'bg-background text-foreground shadow-sm'
+                    ? 'bg-background text-foreground '
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -363,7 +357,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
           <div className="space-y-6">
             {/* Category Sub-tabs */}
             <div className="flex border-b border-border/60 gap-4">
-              <button
+              <button aria-pressed={activeTab === 'servers'}
                 type="button"
                 onClick={() => setActiveTab('servers')}
                 className={`flex items-center gap-1.5 pb-2.5 text-xs font-medium border-b-2 transition-colors ${
@@ -375,7 +369,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                 <ServerIcon className="h-3.5 w-3.5" />
                 Backend Servers ({config.servers.length})
               </button>
-              <button
+              <button aria-pressed={activeTab === 'general'}
                 type="button"
                 onClick={() => setActiveTab('general')}
                 className={`flex items-center gap-1.5 pb-2.5 text-xs font-medium border-b-2 transition-colors ${
@@ -387,7 +381,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                 <Globe className="h-3.5 w-3.5" />
                 Network &amp; MOTD
               </button>
-              <button
+              <button aria-pressed={activeTab === 'security'}
                 type="button"
                 onClick={() => setActiveTab('security')}
                 className={`flex items-center gap-1.5 pb-2.5 text-xs font-medium border-b-2 transition-colors ${
@@ -470,7 +464,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                           onChange={(e) => setNewServerName(e.target.value)}
                           className="text-xs font-mono"
                         />
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-[11px] text-muted-foreground">
                           Used in commands (e.g. <code>/server lobby</code>).
                         </span>
                       </div>
@@ -483,7 +477,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                           onChange={(e) => setNewServerAddress(e.target.value)}
                           className="text-xs font-mono"
                         />
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-[11px] text-muted-foreground">
                           Internal Docker name or hostname:port.
                         </span>
                       </div>
@@ -543,18 +537,18 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                       return (
                         <div
                           key={srv.name}
-                          className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between shadow-xs hover:border-border/80 transition-colors"
+                          className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between  hover:border-border/80 transition-colors"
                         >
                           <div className="space-y-1.5">
                             <div className="flex items-center gap-2">
                               <span className="font-semibold text-sm text-foreground font-mono">{srv.name}</span>
                               {isTryServer && (
-                                <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20">
+                                <Badge variant="outline" className="text-[11px] bg-primary/10 text-primary border-primary/20">
                                   Default / Fallback
                                 </Badge>
                               )}
                               {matchedServer && (
-                                <Badge variant="secondary" className="text-[10px] flex items-center gap-1">
+                                <Badge variant="secondary" className="text-[11px] flex items-center gap-1">
                                   <span>Panel: {matchedServer.name}</span>
                                   <span className="text-muted-foreground capitalize">({matchedServer.server_type})</span>
                                 </Badge>
@@ -563,7 +557,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                             <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground">
                               <span>{srv.address}</span>
                               {containerId && (
-                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
                                   Internal Network Route
                                 </span>
                               )}
@@ -580,6 +574,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                               {isTryServer ? 'Remove from Fallbacks' : 'Set as Fallback'}
                             </Button>
                             <Button
+                              aria-label={`Remove backend ${srv.name}`}
                               size="sm"
                               variant="ghost"
                               onClick={() => handleDeleteServer(srv.name)}
@@ -615,7 +610,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                             key={name}
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-secondary text-foreground text-xs font-mono"
                           >
-                            <span className="text-[10px] text-muted-foreground font-semibold">#{idx + 1}</span>
+                            <span className="text-[11px] text-muted-foreground font-semibold">#{idx + 1}</span>
                             <span>{name}</span>
                           </span>
                         ))
@@ -792,7 +787,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                       <p>
                         In your backend Paper server&apos;s <code>config/paper-global.yml</code>:
                       </p>
-                      <pre className="font-mono text-[10px] bg-muted/60 p-2 rounded mt-1 overflow-x-auto">
+                      <pre className="font-mono text-[11px] bg-muted/60 p-2 rounded mt-1 overflow-x-auto">
 {`proxies:
   velocity:
     enabled: true

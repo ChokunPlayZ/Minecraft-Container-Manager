@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Save,
   Trash2,
+  TextCursorInput,
   Upload,
   X,
 } from 'lucide-react';
@@ -409,6 +410,7 @@ export function FileManager({ server }: { server: Server }) {
     <>
       {dialog}
       <div className="space-y-4">
+      <div><h2 className="section-heading">Files</h2><p className="mt-1 text-sm text-muted-foreground">Browse server files and edit configuration.</p></div>
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -422,7 +424,7 @@ export function FileManager({ server }: { server: Server }) {
             e.target.value = '';
           }}
         />
-        <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={busy}>
+        <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={busy}>
           <Upload className="h-4 w-4" /> Upload
         </Button>
         <Button variant="outline" size="sm" onClick={() => void handleMkdir()} disabled={busy}>
@@ -451,12 +453,14 @@ export function FileManager({ server }: { server: Server }) {
       {showUrlInput && (
         <div className="space-y-2 rounded-md border p-3">
           <Input
+            aria-label="File URL"
             placeholder="https://example.com/file.jar"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
           <div className="flex items-center gap-2">
             <Input
+              aria-label="Download filename"
               placeholder="Optional filename"
               value={urlName}
               onChange={(e) => setUrlName(e.target.value)}
@@ -496,7 +500,7 @@ export function FileManager({ server }: { server: Server }) {
             value={uploadProgress}
             label={
               <span className="flex items-center gap-2 truncate font-medium">
-                <Upload className="h-4 w-4 text-primary animate-bounce shrink-0" />
+                <Upload className="h-4 w-4 text-primary  shrink-0" />
                 <span className="truncate">Uploading {uploadStats?.fileName || 'files'}...</span>
               </span>
             }
@@ -511,11 +515,11 @@ export function FileManager({ server }: { server: Server }) {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className={`grid items-start gap-5 ${editorPath ? 'xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]' : ''}`}>
         {/* Left: browser */}
-        <div className="rounded-lg border">
+        <div className="min-w-0 rounded-lg border bg-card">
           {/* Breadcrumb */}
-          <div className="flex items-center gap-1 border-b px-3 py-2 text-sm">
+          <div className="flex min-w-0 flex-wrap items-center gap-1 border-b px-4 py-3 text-sm">
             <button
               type="button"
               onClick={() => setCwd('')}
@@ -536,7 +540,7 @@ export function FileManager({ server }: { server: Server }) {
               </span>
             ))}
             {(cwd === '' || cwd.includes('/')) && (
-              <Button variant="ghost" size="icon" title="Go up" onClick={goUp} className="ml-1 h-6 w-6">
+              <Button aria-label="Go up" variant="ghost" size="icon" title="Go up" onClick={goUp} className="ml-1 h-6 w-6">
                 <ArrowUp className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -563,9 +567,9 @@ export function FileManager({ server }: { server: Server }) {
           )}
 
           {/* Entry list */}
-          <div className="max-h-[60vh] divide-y overflow-y-auto">
+          <div className="max-h-[65vh] divide-y overflow-y-auto">
             {entries.length === 0 && (
-              <p className="p-4 text-sm text-muted-foreground">This folder is empty.</p>
+              <div className="empty-state"><Folder /><h3 className="section-heading">Empty folder</h3><p>Upload a file or create a folder using the controls above.</p></div>
             )}
             {entries.map((e) => {
               const editable = isEditable(e);
@@ -573,13 +577,14 @@ export function FileManager({ server }: { server: Server }) {
               return (
                 <div
                   key={e.name}
-                  className={`flex items-center justify-between gap-2 p-2 text-sm transition-colors ${
+                  className={`flex flex-col items-stretch gap-3 px-4 py-3 text-sm transition-colors sm:flex-row sm:items-center sm:justify-between ${
                     isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/40'
                   }`}
                 >
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
                     <input
                       type="checkbox"
+                      aria-label={`Select ${e.name}`}
                       checked={isSelected}
                       onChange={() => toggleSelect(e.name)}
                       onClick={(ev) => ev.stopPropagation()}
@@ -599,11 +604,11 @@ export function FileManager({ server }: { server: Server }) {
                       ) : (
                         <File className="h-4 w-4 shrink-0 text-muted-foreground" />
                       )}
-                      <span className="truncate font-medium">{e.name}</span>
+                      <span className="truncate font-medium" title={e.name}>{e.name}</span>
                     </button>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <span className="mr-1 text-xs text-muted-foreground">
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 border-t pt-2 sm:border-0 sm:pt-0">
+                    <span className="mr-auto text-xs text-muted-foreground sm:mr-1">
                       {e.is_directory ? '' : formatSize(e.size_bytes)}
                     </span>
                     {!e.is_directory && (
@@ -650,7 +655,7 @@ export function FileManager({ server }: { server: Server }) {
                       </Button>
                     )}
                     <Button variant="ghost" size="icon" title="Rename" aria-label="Rename" onClick={() => void handleRename(e)}>
-                      <Pencil className="h-4 w-4" />
+                      <TextCursorInput className="h-4 w-4" />
                     </Button>
                     <Button
                       variant="ghost"
@@ -669,7 +674,7 @@ export function FileManager({ server }: { server: Server }) {
         </div>
 
         {/* Right: editor */}
-        <div className="rounded-lg border">
+        {(editorPath !== null || editorBusy) && <div className="min-w-0 rounded-lg border bg-card">
           {editorPath === null && !editorBusy ? (
             <div className="flex h-full min-h-[20rem] flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
               <FileText className="h-10 w-10 text-muted-foreground/40" />
@@ -687,7 +692,7 @@ export function FileManager({ server }: { server: Server }) {
                     </span>
                   )}
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                   <Button
                     size="sm"
                     onClick={() => void saveEditor()}
@@ -716,7 +721,7 @@ export function FileManager({ server }: { server: Server }) {
               </div>
             </div>
           )}
-        </div>
+        </div>}
       </div>
       </div>
     </>

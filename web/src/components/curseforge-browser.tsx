@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
@@ -621,7 +622,7 @@ export function CurseForgeBrowser({
   // State: No API key configured
   if (!apiKey || showKeyConfig) {
     return (
-      <Card className="max-w-xl mx-auto border-orange-500/30 shadow-md">
+      <Card className="max-w-xl mx-auto border-orange-500/30 ">
         <CardContent className="p-6 space-y-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 text-orange-600">
@@ -676,7 +677,7 @@ export function CurseForgeBrowser({
                 size="sm"
                 onClick={handleSaveKey}
                 disabled={!tempKey.trim()}
-                className="text-xs bg-orange-600 hover:bg-orange-700 text-white"
+                className="text-xs bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 Save &amp; Connect
               </Button>
@@ -776,7 +777,7 @@ export function CurseForgeBrowser({
       {notification && (
         <div
           role="status"
-          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-all animate-in fade-in slide-in-from-bottom-2 ${
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-colors animate-in fade-in slide-in-from-bottom-2 ${
             notification.type === 'success'
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-900 dark:text-emerald-200'
               : 'border-destructive/30 bg-destructive/10 text-destructive'
@@ -836,7 +837,7 @@ export function CurseForgeBrowser({
                 className="pl-9 pr-8 text-sm"
               />
               {query && (
-                <button
+                <button aria-label="Close dialog"
                   type="button"
                   onClick={() => setQuery('')}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
@@ -851,7 +852,7 @@ export function CurseForgeBrowser({
                 aria-label="Filter category"
                 value={classId}
                 onChange={(e) => setClassId(Number(e.target.value))}
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-2xs focus:outline-hidden focus:ring-1 focus:ring-ring"
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs  focus:outline-hidden focus:ring-1 focus:ring-ring"
               >
                 <option value={6}>Mods</option>
                 <option value={5}>Bukkit Plugins</option>
@@ -861,7 +862,7 @@ export function CurseForgeBrowser({
                 aria-label="Sort by"
                 value={sortField}
                 onChange={(e) => setSortField(Number(e.target.value))}
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-2xs focus:outline-hidden focus:ring-1 focus:ring-ring"
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs  focus:outline-hidden focus:ring-1 focus:ring-ring"
               >
                 {CF_SORT_OPTIONS.map((opt) => (
                   <option key={opt.id} value={opt.id}>
@@ -981,10 +982,10 @@ export function CurseForgeBrowser({
 
       {/* Version Files Modal */}
       {selectedMod && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in"
+        <DialogBackdrop onDismiss={() => setSelectedMod(null)}
+
+
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4  animate-in fade-in"
         >
           <div className="relative flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-background shadow-2xl">
             <div className="flex items-center justify-between border-b px-6 py-4">
@@ -996,7 +997,7 @@ export function CurseForgeBrowser({
                   Releases for Minecraft {server.version}
                 </p>
               </div>
-              <button
+              <button aria-label="Close dialog"
                 type="button"
                 onClick={() => setSelectedMod(null)}
                 className="rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -1026,7 +1027,7 @@ export function CurseForgeBrowser({
                     <div className="flex items-center gap-2 shrink-0">
                       <Badge
                         variant="outline"
-                        className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
+                        className="shrink-0 border-emerald-500/40 bg-background/60 font-mono text-[11px] text-emerald-600 dark:text-emerald-400"
                       >
                         {selectedInstalledMod.enabled ? 'Enabled' : 'Disabled'}
                       </Badge>
@@ -1087,7 +1088,7 @@ export function CurseForgeBrowser({
                           <span className="font-semibold text-foreground truncate">
                             {fl.displayName || fl.fileName}
                           </span>
-                          <Badge variant="outline" className="text-[10px] uppercase">
+                          <Badge variant="outline" className="text-[11px] uppercase">
                             {fl.releaseType === 1 ? 'Release' : fl.releaseType === 2 ? 'Beta' : 'Alpha'}
                           </Badge>
                         </div>
@@ -1127,7 +1128,7 @@ export function CurseForgeBrowser({
                           size="sm"
                           onClick={() => void handleInstallFile(fl, selectedMod.name)}
                           disabled={installingId === fl.id}
-                          className="h-8 gap-1.5 text-xs bg-orange-600 hover:bg-orange-700 text-white shrink-0"
+                          className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground shrink-0"
                         >
                           <Download className="h-3.5 w-3.5" />
                           Install
@@ -1149,7 +1150,7 @@ export function CurseForgeBrowser({
               </Button>
             </div>
           </div>
-        </div>
+        </DialogBackdrop>
       )}
     </div>
   );

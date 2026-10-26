@@ -287,10 +287,10 @@ export function VersionUpdateHelper({
     const step3Num = report.update_count > 0 ? '3' : '2';
 
     const confirmed = await confirm(
-      `Perform a complete 1-click upgrade of "${server.name}" to Minecraft ${v}?\n\nThis will safely:\n1. Create a full pre-upgrade server backup${modUpdateMsg}\n${step3Num}. Upgrade server software to ${server.server_type} ${v}`,
+      `Upgrade "${server.name}" to Minecraft ${v}?\n\nThis will:\n1. Create a full pre-upgrade server backup${modUpdateMsg}\n${step3Num}. Upgrade server software to ${server.server_type} ${v}`,
       {
-        title: `1-Click Upgrade to Minecraft ${v}`,
-        confirmLabel: `1-Click Upgrade Server & Mods`,
+        title: `Upgrade to Minecraft ${v}`,
+        confirmLabel: `Upgrade server & mods`,
         destructive: true,
       },
     );
@@ -338,9 +338,9 @@ export function VersionUpdateHelper({
       try {
         const freshReport = await api.checkVersionUpgradeCompatibility(server.id, v, true);
         setReport(freshReport);
-      } catch {}
+      } catch { /* Keep the completed upgrade result if the refresh fails. */ }
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : '1-Click upgrade failed.');
+      setError(err instanceof ApiError ? err.detail : 'Upgrade failed.');
     } finally {
       setUpgradingAll(false);
       setOneClickStage('');
@@ -521,11 +521,11 @@ export function VersionUpdateHelper({
 
       <div className="space-y-6">
         {/* Helper Banner / Controls Card */}
-        <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm transition-all sm:p-6">
+        <div className="rounded-2xl border border-primary/20 bg-card p-5  transition-colors sm:p-6">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1.5 min-w-0 flex-1">
               <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-2xs">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary ">
                   <Sparkles className="h-4 w-4" />
                 </span>
                 <h2 className="text-xl font-bold tracking-tight text-foreground">
@@ -533,16 +533,14 @@ export function VersionUpdateHelper({
                 </h2>
               </div>
               <p className="text-sm text-muted-foreground max-w-2xl">
-                Check whether your installed mods &amp; plugins have compatible releases before
-                updating your server to a newer Minecraft version. Avoid crashes and plan safe
-                upgrades with one click.
+                Check mod and plugin compatibility with a target Minecraft version.
               </p>
             </div>
 
             {/* Target Version Selector Pill */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-secondary/40 p-2.5 rounded-xl border border-border/70 shrink-0">
               {/* Current Version */}
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/80 border border-border/50 text-xs shadow-2xs shrink-0">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/80 border border-border/50 text-xs  shrink-0">
                 <span className="text-muted-foreground font-medium">Current:</span>
                 <Badge variant="outline" className="font-mono text-xs px-1.5 py-0">
                   {server.server_type} {server.version || 'unknown'}
@@ -601,7 +599,7 @@ export function VersionUpdateHelper({
                 size="sm"
                 onClick={() => void scanCompatibility(true)}
                 disabled={scanning || !effectiveTargetVersion}
-                className="gap-1.5 text-xs font-semibold shadow-xs shrink-0"
+                className="gap-1.5 text-xs font-semibold  shrink-0"
               >
                 {scanning ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -669,7 +667,7 @@ export function VersionUpdateHelper({
                   <span>{oneClickStage || 'Upgrading server & compatible mods...'}</span>
                 </span>
               }
-              subtext={`1-Click Full Upgrade to Minecraft ${effectiveTargetVersion}`}
+              subtext={`Upgrade server & mods to Minecraft ${effectiveTargetVersion}`}
               value={undefined}
               size="md"
             />
@@ -678,7 +676,7 @@ export function VersionUpdateHelper({
 
         {/* Scanning in-progress progress bar card */}
         {scanning && (
-          <div className="rounded-2xl border border-primary/30 bg-gradient-to-br from-card via-card to-primary/5 p-5 sm:p-6 space-y-4 shadow-sm animate-fadeIn">
+          <div className="rounded-2xl border border-primary/30 bg-card p-5 sm:p-6 space-y-4  animate-fadeIn">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary shrink-0">
@@ -741,7 +739,7 @@ export function VersionUpdateHelper({
             <Button
               size="sm"
               onClick={() => void scanCompatibility(true)}
-              className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+              className="h-7 text-xs bg-primary hover:bg-primary/90 text-primary-foreground shrink-0"
             >
               Scan {effectiveTargetVersion}
             </Button>
@@ -776,16 +774,14 @@ export function VersionUpdateHelper({
                 <div className="space-y-1">
                   <h3 className="font-bold text-base tracking-tight">
                     {report.ready_to_update
-                      ? `All mods are compatible with Minecraft ${effectiveTargetVersion}!`
+                      ? `Compatible releases found for Minecraft ${effectiveTargetVersion}`
                       : `${report.not_available_count} ${
                           report.not_available_count === 1 ? 'mod is' : 'mods are'
                         } not yet ready for Minecraft ${effectiveTargetVersion}`}
                   </h3>
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     {report.ready_to_update
-                      ? `Your server has ${report.total_mods} installed ${
-                          server.server_type === 'paper' ? 'plugins' : 'mods'
-                        }, and all of them are ready for MC ${effectiveTargetVersion}. You can safely update your mods and upgrade the server jar.`
+                      ? `Compatible releases are available for all ${report.total_mods} installed ${server.server_type === 'paper' ? 'plugins' : 'mods'}.`
                       : `Upgrading your server now may cause crashes or disable the ${report.not_available_count} missing mods. We recommend waiting for mod authors to release updates or disabling these mods before upgrading.`}
                   </p>
                 </div>
@@ -798,15 +794,15 @@ export function VersionUpdateHelper({
                     size="sm"
                     onClick={() => void handleOneClickUpgrade()}
                     disabled={upgradingAll || updatingBatch || upgradingServerJar || scanning}
-                    className="h-9 gap-2 text-xs font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-xs"
-                    title="Creates pre-upgrade backup, updates compatible mods, and upgrades server jar in one click"
+                    className="h-9 gap-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground "
+                    title="Creates a backup, updates compatible mods, and upgrades server software"
                   >
                     {upgradingAll ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Sparkles className="h-4 w-4" />
                     )}
-                    <span>1-Click Full Upgrade to MC {effectiveTargetVersion}</span>
+                    <span>Upgrade server &amp; mods to MC {effectiveTargetVersion}</span>
                   </Button>
                 )}
 
@@ -815,7 +811,7 @@ export function VersionUpdateHelper({
                     size="sm"
                     onClick={() => void handleBatchUpdate()}
                     disabled={updatingBatch || upgradingAll || scanning}
-                    className="h-9 gap-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                    className="h-9 gap-2 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground "
                   >
                     {updatingBatch ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -832,7 +828,7 @@ export function VersionUpdateHelper({
                     variant="outline"
                     onClick={() => void handleUpgradeServerJar()}
                     disabled={upgradingServerJar || scanning || updatingBatch}
-                    className="h-9 gap-1.5 text-xs font-semibold border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 shadow-xs"
+                    className="h-9 gap-1.5 text-xs font-semibold border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 "
                   >
                     <RotateCw className="h-3.5 w-3.5" />
                     <span>Upgrade Server Jar Only</span>
@@ -851,9 +847,9 @@ export function VersionUpdateHelper({
                     prev === 'already_compatible' ? 'all' : 'already_compatible',
                   )
                 }
-                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-colors ${
                   filterStatus === 'already_compatible'
-                    ? 'border-emerald-500 bg-emerald-500/10 shadow-xs'
+                    ? 'border-emerald-500 bg-emerald-500/10 '
                     : 'border-border/70 bg-card hover:border-border hover:bg-secondary/30'
                 }`}
               >
@@ -879,9 +875,9 @@ export function VersionUpdateHelper({
                     prev === 'update_available' ? 'all' : 'update_available',
                   )
                 }
-                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-colors ${
                   filterStatus === 'update_available'
-                    ? 'border-amber-500 bg-amber-500/10 shadow-xs'
+                    ? 'border-amber-500 bg-amber-500/10 '
                     : 'border-border/70 bg-card hover:border-border hover:bg-secondary/30'
                 }`}
               >
@@ -889,7 +885,7 @@ export function VersionUpdateHelper({
                   <span className="text-xs font-medium text-muted-foreground">
                     Updates Available
                   </span>
-                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                  <span className="h-2 w-2 rounded-full bg-amber-500 " />
                 </div>
                 <div className="mt-2 text-2xl font-bold tracking-tight text-amber-600 dark:text-amber-400">
                   {report.update_count}
@@ -907,9 +903,9 @@ export function VersionUpdateHelper({
                     prev === 'not_available' ? 'all' : 'not_available',
                   )
                 }
-                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-colors ${
                   filterStatus === 'not_available'
-                    ? 'border-destructive bg-destructive/10 shadow-xs'
+                    ? 'border-destructive bg-destructive/10 '
                     : 'border-border/70 bg-card hover:border-border hover:bg-secondary/30'
                 }`}
               >
@@ -935,9 +931,9 @@ export function VersionUpdateHelper({
                     prev === 'untracked' ? 'all' : 'untracked',
                   )
                 }
-                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-all ${
+                className={`flex flex-col items-start p-4 rounded-xl border text-left transition-colors ${
                   filterStatus === 'untracked'
-                    ? 'border-slate-500 bg-slate-500/10 shadow-xs'
+                    ? 'border-slate-500 bg-slate-500/10 '
                     : 'border-border/70 bg-card hover:border-border hover:bg-secondary/30'
                 }`}
               >
@@ -968,7 +964,7 @@ export function VersionUpdateHelper({
               </div>
               <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
                 <div
-                  className={`h-full transition-all duration-500 ${
+                  className={`h-full transition-colors duration-500 ${
                     readinessPercent === 100
                       ? 'bg-emerald-500'
                       : readinessPercent >= 75
@@ -984,45 +980,45 @@ export function VersionUpdateHelper({
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
               {/* Filter tabs */}
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-                <button
+                <button aria-pressed={filterStatus === 'all'}
                   type="button"
                   onClick={() => setFilterStatus('all')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
                     filterStatus === 'all'
-                      ? 'bg-primary text-primary-foreground shadow-2xs'
+                      ? 'bg-primary text-primary-foreground '
                       : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                   }`}
                 >
                   All ({report.total_mods})
                 </button>
-                <button
+                <button aria-pressed={filterStatus === 'update_available'}
                   type="button"
                   onClick={() => setFilterStatus('update_available')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
                     filterStatus === 'update_available'
-                      ? 'bg-amber-600 text-white shadow-2xs'
+                      ? 'bg-primary text-primary-foreground '
                       : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                   }`}
                 >
                   Updates ({report.update_count})
                 </button>
-                <button
+                <button aria-pressed={filterStatus === 'not_available'}
                   type="button"
                   onClick={() => setFilterStatus('not_available')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
                     filterStatus === 'not_available'
-                      ? 'bg-destructive text-destructive-foreground shadow-2xs'
+                      ? 'bg-destructive text-destructive-foreground '
                       : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                   }`}
                 >
                   Missing ({report.not_available_count})
                 </button>
-                <button
+                <button aria-pressed={filterStatus === 'already_compatible'}
                   type="button"
                   onClick={() => setFilterStatus('already_compatible')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
                     filterStatus === 'already_compatible'
-                      ? 'bg-emerald-600 text-white shadow-2xs'
+                      ? 'bg-primary text-primary-foreground '
                       : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                   }`}
                 >
@@ -1103,9 +1099,9 @@ export function VersionUpdateHelper({
                   return (
                     <div
                       key={item.mod_name}
-                      className={`flex flex-col md:flex-row md:items-center md:justify-between gap-3.5 rounded-xl border p-4 shadow-2xs transition-all ${
+                      className={`flex flex-col md:flex-row md:items-center md:justify-between gap-3.5 rounded-xl border p-4  transition-colors ${
                         item.status === 'update_available'
-                          ? 'border-amber-500/40 bg-card hover:border-amber-500/70 hover:shadow-xs'
+                          ? 'border-amber-500/40 bg-card hover:border-amber-500/70 '
                           : item.status === 'not_available'
                           ? 'border-destructive/30 bg-card hover:border-destructive/60'
                           : item.status === 'already_compatible'
@@ -1157,7 +1153,7 @@ export function VersionUpdateHelper({
                           {item.provider && (
                             <Badge
                               variant="outline"
-                              className="text-[10px] px-1.5 py-0 uppercase font-mono text-muted-foreground"
+                              className="text-[11px] px-1.5 py-0 uppercase font-mono text-muted-foreground"
                             >
                               {item.provider}
                             </Badge>
@@ -1166,7 +1162,7 @@ export function VersionUpdateHelper({
                           {item.release_type && (
                             <Badge
                               variant="secondary"
-                              className="text-[10px] px-1.5 py-0 uppercase"
+                              className="text-[11px] px-1.5 py-0 uppercase"
                             >
                               {item.release_type}
                             </Badge>
@@ -1186,7 +1182,7 @@ export function VersionUpdateHelper({
                               {item.mod_file}
                             </span>
                             {item.current_version && (
-                              <Badge variant="outline" className="text-[10px] px-1 py-0">
+                              <Badge variant="outline" className="text-[11px] px-1 py-0">
                                 {item.current_version}
                               </Badge>
                             )}
@@ -1208,7 +1204,7 @@ export function VersionUpdateHelper({
                                 </span>
                                 <Badge
                                   variant="outline"
-                                  className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px] px-1 py-0 shrink-0 font-mono"
+                                  className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[11px] px-1 py-0 shrink-0 font-mono"
                                 >
                                   {item.compatible_version}
                                 </Badge>
@@ -1248,7 +1244,7 @@ export function VersionUpdateHelper({
                           <Button
                             size="sm"
                             onClick={() => void handleUpdateSingleMod(item)}
-                            className="h-8 gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+                            className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold "
                           >
                             <DownloadCloud className="h-3.5 w-3.5" />
                             <span>Update Jar</span>
@@ -1326,7 +1322,7 @@ export function VersionUpdateHelper({
               size="sm"
               onClick={() => void scanCompatibility(true)}
               disabled={!effectiveTargetVersion}
-              className="gap-1.5 text-xs font-semibold shadow-xs"
+              className="gap-1.5 text-xs font-semibold "
             >
               <RefreshCw className="h-3.5 w-3.5" />
               <span>Check Compatibility Now</span>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Download, Loader2, Package, Sparkles } from 'lucide-react';
 import { api } from '../api/client';
 import type { ServerState, TaskProgress } from '../api/types';
@@ -97,17 +97,17 @@ export function ServerInstallProgress({
   return (
     <div
       data-testid="server-install-progress-hero"
-      className={`mb-6 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 sm:p-5 shadow-xs transition-all ${className}`}
+      className={`mb-6 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 sm:p-5  transition-colors ${className}`}
     >
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/20 text-blue-600 dark:text-blue-400">
             {isBuilding ? (
-              <Sparkles className="h-5 w-5 animate-pulse" />
+              <Sparkles className="h-5 w-5 " />
             ) : progress?.operation === 'modpack_install' ? (
-              <Package className="h-5 w-5 animate-bounce" />
+              <Package className="h-5 w-5 " />
             ) : (
-              <Download className="h-5 w-5 animate-bounce" />
+              <Download className="h-5 w-5 " />
             )}
           </div>
           <div>
@@ -116,7 +116,7 @@ export function ServerInstallProgress({
                 {title}
               </h3>
               {progress?.stage_index && progress?.stage_total ? (
-                <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:text-blue-300">
+                <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:text-blue-300">
                   Stage {progress.stage_index} of {progress.stage_total}
                 </span>
               ) : null}

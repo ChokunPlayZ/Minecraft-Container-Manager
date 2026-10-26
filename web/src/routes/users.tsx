@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { Trash2 } from 'lucide-react';
+import { ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { User } from '../api/types';
 import { AppShell } from '../components/app-shell';
@@ -111,10 +111,10 @@ function UsersRoute() {
       {dialog}
       <RequireAuth>
       <AppShell>
-        <div className="mb-6 flex items-end justify-between gap-4">
+        <div className="page-heading">
           <div>
-            <h1 className="text-2xl font-semibold">Users</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="page-title">Users</h1>
+            <p className="page-description">
               Manage panel accounts. Everyone with an account is an admin.
             </p>
           </div>
@@ -126,9 +126,9 @@ function UsersRoute() {
           </div>
         )}
 
-        <Card className="mb-6 max-w-2xl">
+        <Card className="mb-8 max-w-3xl">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Add user</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base"><UserPlus className="h-4 w-4 text-primary" />Add user</CardTitle>
             <CardDescription>Create a new panel account.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -154,13 +154,14 @@ function UsersRoute() {
                 />
               </div>
             </div>
-            <Button className="mt-4" onClick={() => void handleCreate()} disabled={creating}>
+            <Button className="mt-4" onClick={() => void handleCreate()} disabled={creating || !createEmail.trim() || createPassword.length < 8}>
               {creating ? 'Creating…' : 'Create user'}
             </Button>
           </CardContent>
         </Card>
 
-        <div className="space-y-3">
+        <div className="max-w-3xl space-y-3">
+          <h2 className="section-heading mb-4 flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" />Administrators <span className="text-xs font-normal text-muted-foreground">({users.length})</span></h2>
           {loading && <p className="text-sm text-muted-foreground">Loading users…</p>}
           {!loading && users.length === 0 && (
             <p className="text-sm text-muted-foreground">No users yet.</p>
@@ -223,7 +224,8 @@ function UsersRoute() {
                       </Button>
                       <Button
                         size="sm"
-                        variant="destructive"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => void removeUser(u)}
                         disabled={busy[u.id]}
                         aria-label={`Delete ${u.email}`}

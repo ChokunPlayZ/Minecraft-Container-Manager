@@ -391,14 +391,10 @@ describe('Mod Dependencies Resolution Engine', () => {
         categories: [{ id: 1, gameId: 432, name: 'Library', slug: 'library', url: '', iconUrl: '' }],
         authors: [],
         logo: { id: 1, modId: 600, title: '', description: '', thumbnailUrl: '', url: '' },
-        mainFileId: 2001,
         latestFiles: [],
         dateCreated: '',
         dateModified: '',
         dateReleased: '',
-        allowModDistribution: true,
-        gamePopularityRank: 1,
-        isAvailable: true,
       };
 
       const depFile: CurseForgeFile = {

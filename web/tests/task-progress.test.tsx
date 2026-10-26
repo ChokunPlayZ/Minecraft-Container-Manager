@@ -3,7 +3,7 @@ import { act, render, screen } from '@testing-library/react';
 import { ModpackInstallDialog } from '../src/components/modpack-install-dialog';
 import { FileManager } from '../src/components/file-manager';
 import { api } from '../src/api/client';
-import type { ModpackManifest, Server, TaskProgress } from '../src/api/types';
+import type { InstalledModpack, ModpackManifest, Server, TaskProgress } from '../src/api/types';
 
 const mockServer: Server = {
   id: 'srv-test-1',
@@ -40,12 +40,12 @@ const mockManifest: ModpackManifest = {
 describe('Task Progress Display', () => {
   it('subscribes to task events and displays stage progress in ModpackInstallDialog', async () => {
     let subscriberCallback: ((p: TaskProgress) => void) | null = null;
-    vi.spyOn(api, 'subscribeTaskEvents').mockImplementation((serverId, onProgress) => {
+    vi.spyOn(api, 'subscribeTaskEvents').mockImplementation((_serverId, onProgress) => {
       subscriberCallback = onProgress;
       return () => {};
     });
 
-    let resolveRemote: () => void;
+    let resolveRemote: (value: InstalledModpack) => void;
     vi.spyOn(api, 'installModpackRemote').mockImplementation(
       () => new Promise((resolve) => { resolveRemote = resolve; })
     );
@@ -109,20 +109,21 @@ describe('Task Progress Display', () => {
 
     // Finish remote install
     await act(async () => {
-      resolveRemote!();
+      resolveRemote!({ ...mockManifest, installed_at: new Date().toISOString(), source: 'modrinth', installed_files: [] });
     });
   });
 
   it('displays real progress percentage and filename in FileManager when archive task runs', async () => {
     let subscriberCallback: ((p: TaskProgress) => void) | null = null;
-    vi.spyOn(api, 'subscribeTaskEvents').mockImplementation((serverId, onProgress) => {
+    vi.spyOn(api, 'subscribeTaskEvents').mockImplementation((_serverId, onProgress) => {
       subscriberCallback = onProgress;
       return () => {};
     });
 
     vi.spyOn(api, 'listFiles').mockResolvedValue({
+      path: '',
       entries: [
-        { name: 'world', is_dir: true, size: 0, updated_at: new Date().toISOString() },
+        { name: 'world', is_directory: true, size_bytes: 0, modified_at: new Date().toISOString() },
       ],
     });
 

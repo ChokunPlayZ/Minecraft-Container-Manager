@@ -567,13 +567,13 @@ describe('Mod Update Tool & Jar Picker', () => {
       const batchUpdateSpy = vi.spyOn(api, 'batchUpdateMods').mockResolvedValue({
         updated: 1,
         failed: 0,
-        skipped: 0,
+        target_version: '1.21.1',
         total: 1,
-        results: [
+        items: [
           {
             mod_name: 'fabric-api',
-            status: 'updated',
-            old_jar: 'fabric-api-0.100.0.jar',
+            success: true,
+            original: 'fabric-api-0.100.0.jar',
             new_jar: 'fabric-api-0.105.0.jar',
           },
         ],

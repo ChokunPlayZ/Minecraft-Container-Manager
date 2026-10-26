@@ -1,3 +1,4 @@
+import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useState } from 'react';
 import {
   AlertTriangle,
@@ -125,14 +126,14 @@ export function ModpackInstallDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+    <DialogBackdrop onDismiss={() => { if (!installing) onClose(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60  p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !installing) onClose();
       }}
     >
       <div
-        className="w-full max-w-lg rounded-2xl border border-border/90 bg-card p-6 shadow-2xl transition-all"
+        className="w-full max-w-lg rounded-2xl border border-border/90 bg-card p-6 shadow-2xl transition-colors"
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-3 border-b border-border/70 pb-4">
@@ -141,7 +142,7 @@ export function ModpackInstallDialog({
               <img
                 src={manifest.icon_url}
                 alt={manifest.name}
-                className="h-12 w-12 rounded-xl object-cover border border-border shadow-xs"
+                className="h-12 w-12 rounded-xl object-cover border border-border "
               />
             ) : (
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 text-primary">
@@ -153,11 +154,11 @@ export function ModpackInstallDialog({
                 <h2 className="text-lg font-bold text-foreground leading-tight">
                   {manifest.name}
                 </h2>
-                <Badge variant="outline" className="text-[10px] font-semibold uppercase">
+                <Badge variant="outline" className="text-[11px] font-semibold uppercase">
                   {manifest.format}
                 </Badge>
                 {isUpdate && (
-                  <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20 text-[10px] font-semibold uppercase">
+                  <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20 text-[11px] font-semibold uppercase">
                     Update
                   </Badge>
                 )}
@@ -168,7 +169,7 @@ export function ModpackInstallDialog({
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="Close dialog"
             type="button"
             onClick={onClose}
             disabled={installing}
@@ -189,21 +190,21 @@ export function ModpackInstallDialog({
           {/* Specs Grid */}
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
             <div className="rounded-xl border border-border/70 bg-secondary/20 p-2.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block">
                 Loader
               </span>
               <span className="font-bold text-foreground capitalize mt-0.5 block">
                 {manifest.loader || 'Fabric'}
               </span>
               {manifest.loader_version && (
-                <span className="text-[10px] text-muted-foreground truncate block">
+                <span className="text-[11px] text-muted-foreground truncate block">
                   v{manifest.loader_version}
                 </span>
               )}
             </div>
 
             <div className="rounded-xl border border-border/70 bg-secondary/20 p-2.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block">
                 Game Version
               </span>
               <span className="font-bold text-foreground mt-0.5 block">
@@ -212,19 +213,19 @@ export function ModpackInstallDialog({
             </div>
 
             <div className="rounded-xl border border-border/70 bg-secondary/20 p-2.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider block">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block">
                 Mods to Install
               </span>
               <span className="font-bold text-foreground mt-0.5 block">
                 {manifest.server_files > 0 ? manifest.server_files : manifest.total_files}
               </span>
               {manifest.client_only_files > 0 && (
-                <span className="text-[10px] text-muted-foreground block">
+                <span className="text-[11px] text-muted-foreground block">
                   ({manifest.client_only_files} client-only skipped)
                 </span>
               )}
               {manifest.user_required_files && manifest.user_required_files.length > 0 && (
-                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium block">
+                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium block">
                   ({manifest.user_required_files.length} manual required)
                 </span>
               )}
@@ -241,7 +242,7 @@ export function ModpackInstallDialog({
                     Manual Mods Required ({manifest.user_required_files.length})
                   </span>
                   <p className="mt-1 text-muted-foreground text-[11px] leading-relaxed">
-                    Some mods cannot be downloaded automatically due to creator licensing or distribution policies. You will need to provide these files manually in the server's <code className="bg-muted px-1 py-0.5 rounded font-mono text-[10px]">mods/</code> folder:
+                    Some mods cannot be downloaded automatically due to creator licensing or distribution policies. You will need to provide these files manually in the server's <code className="bg-muted px-1 py-0.5 rounded font-mono text-[11px]">mods/</code> folder:
                   </p>
                   <div className="mt-2 max-h-28 overflow-y-auto space-y-1 rounded-lg border border-amber-500/20 bg-background/60 p-2 font-mono text-[11px] text-amber-950 dark:text-amber-100">
                     {manifest.user_required_files.map((file, idx) => (
@@ -359,7 +360,7 @@ export function ModpackInstallDialog({
             size="sm"
             onClick={() => void handleInstall()}
             disabled={installing || success}
-            className="gap-1.5 bg-primary text-primary-foreground shadow-xs font-semibold"
+            className="gap-1.5 bg-primary text-primary-foreground  font-semibold"
           >
             {installing ? (
               <>
@@ -375,6 +376,6 @@ export function ModpackInstallDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </DialogBackdrop>
   );
 }

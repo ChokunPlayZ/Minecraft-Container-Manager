@@ -40,21 +40,25 @@ function SettingsRoute() {
   return (
     <RequireAuth>
       <AppShell>
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage your account security, panel network configurations, and integrations.
-          </p>
+        <div className="page-heading">
+          <div><h1 className="page-title">Settings</h1>
+          <p className="page-description">
+            Manage account security, DNS, and port allocation.
+          </p></div>
         </div>
 
         {/* Tab navigation */}
-        <div className="mb-6 flex items-center gap-1 border-b">
+        <div className="workspace-tabs" role="tablist" aria-label="Settings sections">
           <button
             type="button"
             onClick={() => setTab('account')}
+            role="tab"
+            aria-selected={activeTab === 'account'}
+            aria-controls="settings-panel"
+            id="settings-tab-account"
             className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
               activeTab === 'account'
-                ? 'border-primary text-foreground'
+                ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -64,9 +68,13 @@ function SettingsRoute() {
           <button
             type="button"
             onClick={() => setTab('dns')}
+            role="tab"
+            aria-selected={activeTab === 'dns'}
+            aria-controls="settings-panel"
+            id="settings-tab-dns"
             className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
               activeTab === 'dns'
-                ? 'border-primary text-foreground'
+                ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -76,9 +84,13 @@ function SettingsRoute() {
           <button
             type="button"
             onClick={() => setTab('ports')}
+            role="tab"
+            aria-selected={activeTab === 'ports'}
+            aria-controls="settings-panel"
+            id="settings-tab-ports"
             className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
               activeTab === 'ports'
-                ? 'border-primary text-foreground'
+                ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -87,8 +99,9 @@ function SettingsRoute() {
           </button>
         </div>
 
+        <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${activeTab}`}>
         {activeTab === 'account' ? (
-          <div className="max-w-2xl space-y-6">
+          <div className="grid max-w-5xl items-start gap-6 xl:grid-cols-2 [&>*:first-child]:row-span-2">
             <ProfileCard email={user?.email ?? ''} userId={user?.id ?? ''} onSaved={() => void refresh()} />
             <TOTPCard />
             <PasskeyCard />
@@ -102,6 +115,7 @@ function SettingsRoute() {
             <PortPoolSettingsCard />
           </div>
         )}
+        </div>
       </AppShell>
     </RequireAuth>
   );

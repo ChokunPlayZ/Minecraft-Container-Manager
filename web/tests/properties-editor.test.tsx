@@ -52,7 +52,7 @@ describe('PropertiesEditor', () => {
     });
 
     // Check that MOTD designer live preview is present
-    expect(screen.getByText(/Live Minecraft Server Browser Preview/i)).toBeInTheDocument();
+    expect(screen.getByText(/Server list preview/i)).toBeInTheDocument();
     expect(screen.getByText('Test Survival World')).toBeInTheDocument();
 
     // Check mapped fields exist
@@ -90,7 +90,7 @@ describe('PropertiesEditor', () => {
     const interactiveButton = screen.getByRole('button', { name: /Interactive/i });
     await user.click(interactiveButton);
 
-    expect(screen.getByText(/Live Minecraft Server Browser Preview/i)).toBeInTheDocument();
+    expect(screen.getByText(/Server list preview/i)).toBeInTheDocument();
   });
 
   it('updates a property and saves updated content', async () => {
