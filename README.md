@@ -141,6 +141,10 @@ The panel container mounts `/var/run/docker.sock` so it can manage Minecraft ser
 - `MCM_DATA_DIR_HOST`: Host directory (default `${PWD}/data` next to `docker-compose.yml`) mounted into the panel container at `/data` for the SQLite database and server data. This is also the host-side path MCM binds into each Minecraft server container.
 - `PUID` / `PGID`: Set to match your host user (e.g. `1000:1000` or `501:20` on macOS) so all files written to the data volume remain owned by your user. The image entrypoint adjusts data-directory permissions before the panel starts.
 
+New Minecraft containers inherit the panel process's UID/GID. Their startup step prepares required tools and repairs ownership of `/data` as root, then drops privileges before running server installers or Java. This keeps automatically generated mod configs editable in the panel. Set `PUID` to a nonzero UID to use this behavior. Custom server images must provide `su-exec` or `gosu`, or an Alpine/Debian package manager to install one.
+
+After upgrading from a version that ran Minecraft as root, use **Rebuild container** for each existing server. Rebuilding preserves its data, replaces the old container, and applies the ownership repair at its next start. Restarting the old container alone does not update its startup settings. This runs Minecraft as a non-root user; running the Docker daemon itself in rootless mode is a separate host configuration.
+
 ### Port Exposure & Multi-Server Networking
 
 - **Direct Connections**: Each server container can publish its game port directly to the host network within `MCM_PORT_RANGE` (default `25565-25665`).

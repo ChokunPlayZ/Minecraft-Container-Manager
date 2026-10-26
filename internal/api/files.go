@@ -3,9 +3,11 @@ package api
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/mcm-panel/mcm/internal/servers"
 )
@@ -21,7 +23,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	rel := normalizeRel(r.URL.Query().Get("path"))
 	res, err := s.servers.ListFiles(r.PathValue("id"), rel)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -32,14 +34,14 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 	rel := normalizeRel(r.URL.Query().Get("path"))
 	handle, name, err := s.servers.OpenFileForDownload(r.PathValue("id"), rel)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	defer handle.Close()
 
 	info, err := handle.Stat()
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(name)+"\"")
@@ -51,7 +53,7 @@ func (s *Server) handleReadFileContent(w http.ResponseWriter, r *http.Request) {
 	rel := normalizeRel(r.URL.Query().Get("path"))
 	content, err := s.servers.ReadFileContent(r.PathValue("id"), rel)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"path": rel, "content": content})
@@ -70,7 +72,7 @@ func (s *Server) handleWriteFileContent(w http.ResponseWriter, r *http.Request) 
 	}
 	entry, err := s.servers.WriteFileContent(r.PathValue("id"), normalizeRel(in.Path), in.Content)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)
@@ -102,7 +104,7 @@ func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		entry, uerr := s.servers.UploadFile(r.PathValue("id"), dir, fh.Filename, file)
 		_ = file.Close()
 		if uerr != nil {
-			s.writeFileErr(w, uerr)
+			s.writeFileErr(w, r, uerr)
 			return
 		}
 		entries = append(entries, entry)
@@ -132,7 +134,7 @@ func (s *Server) handleArchiveFile(w http.ResponseWriter, r *http.Request) {
 	}
 	entry, err := s.servers.ArchiveMultiple(r.PathValue("id"), sources, in.Dir, in.Name)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)
@@ -150,7 +152,7 @@ func (s *Server) handleUnzipFile(w http.ResponseWriter, r *http.Request) {
 	}
 	count, err := s.servers.Unzip(r.PathValue("id"), in.Archive, in.Dest)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": count})
@@ -174,7 +176,7 @@ func (s *Server) handleDownloadFromURL(w http.ResponseWriter, r *http.Request) {
 				"Couldn't download from that URL. Check the link and try again.")
 			return
 		}
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)
@@ -184,7 +186,7 @@ func (s *Server) handleDownloadFromURL(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	rel := normalizeRel(r.URL.Query().Get("path"))
 	if err := s.servers.DeleteFile(r.PathValue("id"), rel); err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -201,7 +203,7 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 	entry, err := s.servers.Mkdir(r.PathValue("id"), in.Path)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)
@@ -219,23 +221,39 @@ func (s *Server) handleRenameFile(w http.ResponseWriter, r *http.Request) {
 	}
 	entry, err := s.servers.Rename(r.PathValue("id"), in.Path, in.Name)
 	if err != nil {
-		s.writeFileErr(w, err)
+		s.writeFileErr(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, entry)
 }
 
-// writeFileErr maps file-operation errors to friendly HTTP responses.
-func (s *Server) writeFileErr(w http.ResponseWriter, err error) {
+// writeFileErr logs the underlying failure before mapping it to a friendly
+// response. Filesystem paths and low-level details stay in the backend logs.
+func (s *Server) writeFileErr(w http.ResponseWriter, r *http.Request, err error) {
+	if s.logger != nil {
+		s.logger.Printf("file operation failed server=%q method=%s path=%q err=%q",
+			r.PathValue("id"), r.Method, r.URL.Path, err.Error())
+	}
 	switch {
 	case errors.Is(err, servers.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "server not found")
 	case errors.Is(err, servers.ErrInvalidPath):
 		writeError(w, http.StatusBadRequest, "invalid_path", "That path isn't valid.")
-	case errors.Is(err, servers.ErrPathNotFound):
+	case errors.Is(err, servers.ErrPathNotFound), errors.Is(err, fs.ErrNotExist):
 		writeError(w, http.StatusNotFound, "not_found", "That file or folder doesn't exist.")
-	case errors.Is(err, servers.ErrIsDirectory):
+	case errors.Is(err, servers.ErrIsDirectory), errors.Is(err, syscall.EISDIR):
 		writeError(w, http.StatusBadRequest, "is_directory", "That entry is a folder, not a file.")
+	case errors.Is(err, syscall.ENOTDIR):
+		writeError(w, http.StatusBadRequest, "invalid_path", "A folder in that path is a file.")
+	case errors.Is(err, fs.ErrPermission):
+		writeError(w, http.StatusForbidden, "permission_denied",
+			"MCM doesn't have permission to access this file or folder. Check its ownership and permissions.")
+	case errors.Is(err, syscall.EROFS):
+		writeError(w, http.StatusInternalServerError, "read_only_filesystem",
+			"The server's storage is read-only. Mount it with write access and try again.")
+	case errors.Is(err, syscall.ENOSPC), errors.Is(err, syscall.EDQUOT):
+		writeError(w, http.StatusInsufficientStorage, "insufficient_storage",
+			"The server's storage is full or its disk quota has been reached. Free up space and try again.")
 	case errors.Is(err, servers.ErrInvalidArchive):
 		writeError(w, http.StatusBadRequest, "invalid_archive", "That file isn't a valid zip archive.")
 	case errors.Is(err, servers.ErrReadTooLarge):

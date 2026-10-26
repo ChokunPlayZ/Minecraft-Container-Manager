@@ -2,12 +2,16 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 )
 
@@ -21,6 +25,7 @@ type fakeDaemon struct {
 	pullCount       atomic.Int32
 	createCount     atomic.Int32
 	failFirstCreate atomic.Bool
+	createdConfig   container.Config
 }
 
 // RoundTrip implements http.RoundTripper over the Docker Engine API.
@@ -41,6 +46,9 @@ func (d *fakeDaemon) RoundTrip(req *http.Request) (*http.Response, error) {
 {"status":"Status: Downloaded newer image for `+testImage+`"}
 `)
 	case strings.HasSuffix(p, "/containers/create"):
+		if err := json.NewDecoder(req.Body).Decode(&d.createdConfig); err != nil {
+			return nil, err
+		}
 		d.createCount.Add(1)
 		if d.failFirstCreate.Load() && d.createCount.Load() == 1 {
 			return d.response(http.StatusNotFound, `{"message":"No such image: `+testImage+`"}`)
@@ -125,6 +133,64 @@ func TestCreateSkipsPullWhenImagePresent(t *testing.T) {
 	if d.pullCount.Load() != 0 {
 		t.Fatalf("expected no pull when image present, got %d", d.pullCount.Load())
 	}
+}
+
+func TestCreateRunsServerAsPanelUser(t *testing.T) {
+	d := &fakeDaemon{}
+	d.haveImage.Store(true)
+	m := newFakeManager(d)
+	if _, err := m.Create(context.Background(), CreateOpts{ID: "owner", DataDir: "/tmp/data", ServerType: "forge"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{fmt.Sprintf("MCM_UID=%d", os.Geteuid()), fmt.Sprintf("MCM_GID=%d", os.Getegid())} {
+		if !containsStr(d.createdConfig.Env, want) {
+			t.Errorf("server environment missing %q: %v", want, d.createdConfig.Env)
+		}
+	}
+	entry := d.createdConfig.Entrypoint
+	if len(entry) != 5 || entry[0] != "sh" || entry[1] != "-c" || entry[2] != serverBootstrapScript || entry[4] != DefaultEntryScript {
+		t.Fatalf("server must bootstrap ownership and drop privileges before its main script: %v", entry)
+	}
+}
+
+func TestExecUserForContainer(t *testing.T) {
+	cases := []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"legacy defaults", nil, "1000:1000"},
+		{"legacy itzg", []string{"UID=2001", "GID=2002"}, "2001:2002"},
+		{"panel user wins", []string{"MCM_UID=1001", "MCM_GID=1002", "UID=2001", "GID=2002"}, "1001:1002"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cli, err := client.NewClientWithOpts(
+				client.WithHost("tcp://fake"), client.WithVersion("1.44"),
+				client.WithHTTPClient(&http.Client{Transport: inspectConfigTransport{env: tc.env}}),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cli.Close() })
+			m := &Manager{client: cli}
+			if got := m.execUserForContainer(context.Background(), "id"); got != tc.want {
+				t.Fatalf("exec user = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+type inspectConfigTransport struct {
+	env []string
+}
+
+func (tr inspectConfigTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body, err := json.Marshal(map[string]any{"Id": "id", "Config": container.Config{Env: tr.env}})
+	if err != nil {
+		return nil, err
+	}
+	return (&fakeDaemon{}).response(http.StatusOK, string(body))
 }
 
 func TestCreateRetriesAfterStaleCreateFailure(t *testing.T) {

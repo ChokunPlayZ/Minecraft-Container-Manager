@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"os"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -423,6 +424,8 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	cPort, _ := primaryContainerPort(opts.ServerType)
 
 	env := []string{
+		fmt.Sprintf("MCM_UID=%d", os.Geteuid()),
+		fmt.Sprintf("MCM_GID=%d", os.Getegid()),
 		fmt.Sprintf("RAM_MB=%d", opts.RAMMB),
 		fmt.Sprintf("SERVER_PORT=%d", cPort),
 		"MCM_DATA_DIR=" + containerData,
@@ -441,7 +444,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	cfg := &container.Config{
 		Image:        img,
 		WorkingDir:   containerData,
-		Entrypoint:   []string{"sh", "-c", DefaultEntryScript},
+		Entrypoint:   []string{"sh", "-c", serverBootstrapScript, "mcm-entrypoint", DefaultEntryScript},
 		Env:          env,
 		ExposedPorts: exposedPortsFor(opts.ServerType, opts.ExtraPorts),
 		OpenStdin:    true,
@@ -832,7 +835,6 @@ func (m *Manager) Inspect(ctx context.Context, containerID string) (ContainerSta
 	}, nil
 }
 
-
 // Exists reports whether a container with the given id is present on the
 // daemon. A missing container (e.g. one deleted manually outside MCM) is not an
 // error; it returns (false, nil) so callers can recreate it.
@@ -965,8 +967,8 @@ func (m *Manager) execConsole(ctx context.Context, containerID, helper, command 
 }
 
 // execUserForContainer returns the `uid:gid` the server process runs as, so the
-// console-send helper can be exec'd as that same user. The itzg image names the
-// runtime user via its UID/GID environment variables; it falls back to 1000:1000
+// console-send helper can be exec'd as that same user. MCM records the runtime
+// user in MCM_UID/MCM_GID; older itzg containers use UID/GID. It falls back to 1000:1000
 // (the image default) when they are absent or the container cannot be inspected.
 func (m *Manager) execUserForContainer(ctx context.Context, containerID string) string {
 	uid, gid := "1000", "1000"
@@ -988,6 +990,18 @@ func (m *Manager) execUserForContainer(ctx context.Context, containerID string) 
 			if v != "" {
 				gid = v
 			}
+		}
+	}
+	for _, e := range insp.Config.Env {
+		k, v, ok := strings.Cut(e, "=")
+		if !ok || v == "" {
+			continue
+		}
+		switch k {
+		case "MCM_UID":
+			uid = v
+		case "MCM_GID":
+			gid = v
 		}
 	}
 	return uid + ":" + gid
