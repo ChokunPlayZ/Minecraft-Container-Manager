@@ -83,6 +83,20 @@ load_state() {
     [[ -n "$SOURCE_DIR" ]] || die "Installation metadata is incomplete: $STATE"
 }
 
+command_source_dir() {
+    local directory
+    directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || return 1
+    [[ -f "$directory/Dockerfile" && -f "$directory/go.mod" && -f "$directory/mcmctl" ]] || return 1
+    printf '%s' "$directory"
+}
+
+save_state() {
+    local temp
+    temp=$(mktemp "$CONFIG_DIR/.install.XXXXXX")
+    printf 'SOURCE_DIR=%s\n' "$SOURCE_DIR" > "$temp"
+    mv -f -- "$temp" "$STATE"
+}
+
 check_config_paths() {
     local data_dir db_path db_dir
     data_dir=$(setting MCM_DATA_DIR)
@@ -300,8 +314,7 @@ install_app() {
         esac
         shift
     done
-    SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-    [[ -f "$SOURCE_DIR/Dockerfile" ]] || load_state
+    SOURCE_DIR=$(command_source_dir) || load_state
     ENGINE="${requested_engine:-$(setting MCM_CONTAINER_RUNTIME)}"
     if [[ -z "$ENGINE" ]]; then
         if command -v podman >/dev/null 2>&1; then ENGINE=podman; else ENGINE=docker; fi
@@ -331,7 +344,7 @@ install_app() {
     cp -- "$SOURCE_DIR/mcmctl" "$STAGING/mcmctl"
     chmod 755 "$STAGING/mcmctl"
     mv -f -- "$STAGING/mcmctl" "$BIN_DIR/mcmctl"
-    printf 'SOURCE_DIR=%s\n' "$SOURCE_DIR" > "$STATE"
+    save_state
     write_unit
     systemctl --user daemon-reload
     systemctl --user reset-failed mcm.service
@@ -357,18 +370,25 @@ update_source() {
     if [[ -n "$remote" && -n "$merge" ]]; then
         git -C "$SOURCE_DIR" pull --ff-only
     else
+        git -C "$SOURCE_DIR" remote get-url origin >/dev/null 2>&1 ||
+            die "No origin remote exists in $SOURCE_DIR. Run ./mcmctl update from your source checkout, or correct SOURCE_DIR in $STATE. Use --local only to build this source without pulling."
         say "No upstream configured for $branch; using origin/$branch."
         git -C "$SOURCE_DIR" pull --ff-only origin "refs/heads/$branch"
     fi
 }
 
 update_app() {
-    local local_build=false
+    local local_build=false command_source
     if (($#)); then
         [[ $# == 1 && "$1" == --local ]] || die "Usage: mcmctl update [--local]"
         local_build=true
     fi
     load_state
+    command_source=$(command_source_dir) || command_source=""
+    if [[ -n "$command_source" && "$command_source" != "$SOURCE_DIR" ]]; then
+        say "Using source checkout: $command_source (replacing recorded path: $SOURCE_DIR)"
+        SOURCE_DIR="$command_source"
+    fi
     ENGINE=$(setting MCM_CONTAINER_RUNTIME)
     check_config_paths
     prepare_engine
@@ -392,6 +412,7 @@ update_app() {
     cp -- "$SOURCE_DIR/mcmctl" "$STAGING/mcmctl"
     chmod 755 "$STAGING/mcmctl"
     mv -f -- "$STAGING/mcmctl" "$BIN_DIR/mcmctl"
+    save_state
     say 'Update complete. Existing settings and server files were preserved.'
 }
 

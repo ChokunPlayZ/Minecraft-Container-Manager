@@ -73,6 +73,7 @@ elif name == 'git':
     if 'config' in args:
         if os.environ.get('MCM_TEST_NO_UPSTREAM'): sys.exit(1)
         print('origin' if args[-1].endswith('.remote') else 'refs/heads/main')
+    if 'remote' in args and os.environ.get('MCM_TEST_NO_ORIGIN'): sys.exit(2)
     if 'status' in args and os.environ.get('MCM_TEST_STATUS_FAIL'): sys.exit(128)
     if 'status' in args and os.environ.get('MCM_TEST_DIRTY'): print(' M local-file')
     if 'pull' in args and os.environ.get('MCM_TEST_PULL_FAIL'): sys.exit(1)
@@ -89,6 +90,7 @@ class ManagerTests(unittest.TestCase):
         self.source.mkdir()
         shutil.copy(ROOT / 'mcmctl', self.source / 'mcmctl')
         shutil.copy(ROOT / 'Dockerfile', self.source / 'Dockerfile')
+        shutil.copy(ROOT / 'go.mod', self.source / 'go.mod')
         self.stubbin = self.root / 'stubs'
         self.stubbin.mkdir()
         for name in ('uname', 'id', 'flock', 'loginctl', 'podman', 'docker', 'systemctl', 'curl', 'git', 'sleep', 'journalctl'):
@@ -120,9 +122,9 @@ class ManagerTests(unittest.TestCase):
         self.socket_dir.cleanup()
         self.temp.cleanup()
 
-    def run_manager(self, *args, ok=True, **extra_env):
+    def run_manager(self, *args, ok=True, script=None, cwd=None, **extra_env):
         result = subprocess.run(
-            ['bash', str(self.source / 'mcmctl'), *args],
+            ['bash', str(script or self.source / 'mcmctl'), *args], cwd=cwd,
             env={**self.env, **extra_env}, text=True, capture_output=True,
         )
         if ok:
@@ -158,7 +160,7 @@ class ManagerTests(unittest.TestCase):
             'GIT_TERMINAL_PROMPT': '0',
         })
         self.git(self.source, 'init', '--initial-branch=main')
-        self.git(self.source, 'add', 'mcmctl', 'Dockerfile')
+        self.git(self.source, 'add', 'mcmctl', 'Dockerfile', 'go.mod')
         self.git(self.source, 'commit', '-m', 'Initial source')
         self.remote = self.root / 'remote.git'
         self.remote.mkdir()
@@ -472,6 +474,70 @@ class ManagerTests(unittest.TestCase):
         self.assertIn('Updating source checkout: ' + str(recorded_source), result.stdout)
         self.assertEqual(self.git(recorded_source, 'rev-parse', 'HEAD'), expected)
         self.assertIn('version: two', self.binary.read_text())
+
+    @unittest.skipUnless(REAL_GIT, 'git is required')
+    def test_update_repairs_stale_nested_source_path(self):
+        self.prepare_real_git()
+        expected = self.advance_remote()
+        nested = self.source / self.source.name
+        nested.mkdir()
+        self.git(nested, 'init', '--initial-branch=main')
+        # The saved nested repository has no origin; the invoked checkout does.
+        with (self.source / '.git/info/exclude').open('a') as exclude:
+            exclude.write('\n/' + nested.name + '/\n')
+        state = self.config.parent / 'install.conf'
+        state.write_text('SOURCE_DIR=' + str(nested) + '\n')
+        result = self.run_manager('update', MCM_TEST_VERSION='two')
+        self.assertIn('replacing recorded path: ' + str(nested), result.stdout)
+        self.assertEqual(self.git(self.source, 'rev-parse', 'HEAD'), expected)
+        self.assertEqual(state.read_text(), 'SOURCE_DIR=' + str(self.source) + '\n')
+        self.assertIn('version: two', self.binary.read_text())
+        self.assertFalse(any(call[:3] == ['git', '-C', str(nested)] for call in self.calls()))
+        # The installed command must use the repaired path on subsequent runs.
+        result = self.run_manager('update', script=self.binary.parent / 'mcmctl')
+        self.assertIn('Updating source checkout: ' + str(self.source), result.stdout)
+
+    @unittest.skipUnless(REAL_GIT, 'git is required')
+    def test_installed_update_uses_recorded_source_from_another_checkout(self):
+        self.prepare_real_git()
+        expected = self.advance_remote()
+        self.run_manager('update', script=self.binary.parent / 'mcmctl', cwd=self.writer)
+        self.assertEqual(self.git(self.source, 'rev-parse', 'HEAD'), expected)
+        self.assertIn(['git', '-C', str(self.source), 'pull', '--ff-only', 'origin', 'refs/heads/main'], self.calls())
+
+    def test_local_update_builds_invoked_checkout_and_repairs_missing_source(self):
+        self.run_manager('install')
+        state = self.config.parent / 'install.conf'
+        state.write_text('SOURCE_DIR=' + str(self.root / 'missing checkout') + '\n')
+        self.clear_calls()
+        self.run_manager('update', '--local')
+        builds = [call for call in self.calls() if call[:2] == ['podman', 'build']]
+        self.assertEqual(builds[0][-1], str(self.source))
+        self.assertFalse(any(call[0] == 'git' for call in self.calls()))
+        self.assertEqual(state.read_text(), 'SOURCE_DIR=' + str(self.source) + '\n')
+
+    def test_failed_update_does_not_save_replacement_source(self):
+        self.run_manager('install')
+        state = self.config.parent / 'install.conf'
+        original = 'SOURCE_DIR=' + str(self.root / 'previous checkout') + '\n'
+        state.write_text(original)
+        for failure in ('MCM_TEST_BUILD_FAIL', 'MCM_TEST_UNREADY_VERSION'):
+            with self.subTest(failure=failure):
+                self.run_manager('update', '--local', ok=False, MCM_TEST_VERSION='two',
+                                 **{failure: 'version: two'})
+                self.assertEqual(state.read_text(), original)
+                self.assertIn('version: one', self.binary.read_text())
+                self.assertTrue((self.root / 'active').exists())
+
+    @unittest.skipUnless(REAL_GIT, 'git is required')
+    def test_missing_origin_reports_source_repair_without_build_or_stop(self):
+        self.prepare_real_git()
+        self.git(self.source, 'remote', 'remove', 'origin')
+        result = self.run_manager('update', ok=False)
+        self.assertIn('No origin remote exists in ' + str(self.source), result.stderr)
+        self.assertIn('correct SOURCE_DIR in ' + str(self.config.parent / 'install.conf'), result.stderr)
+        self.assertFalse(any('pull' in call or call[:2] == ['podman', 'build'] for call in self.calls()))
+        self.assertNotIn(['systemctl', '--user', 'stop', 'mcm.service'], self.calls())
 
     @unittest.skipUnless(REAL_GIT, 'git is required')
     def test_real_git_respects_custom_upstream_remote_and_branch(self):

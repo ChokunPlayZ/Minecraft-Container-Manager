@@ -154,22 +154,28 @@ the data path and let MCM recreate them in the new engine.
 ./mcmctl update
 ```
 
-The command fast-forwards the current branch of the original source checkout,
+The command fast-forwards the current branch of the selected source checkout,
 builds the new binary and frontend, stops the panel briefly, snapshots the
 installed version, settings, and SQLite database, then starts the update.
 A failed build leaves the current panel running. A failed startup or readiness
 check restores the saved version, settings, and database automatically and
 reports that the update failed. Minecraft server containers stay running.
 
-The command prints the source checkout it updates, read from
-`~/.config/mcm/install.conf`. This may differ from your current directory.
-It uses the branch's configured upstream; without one, it explicitly pulls
+Running `./mcmctl update` from a source checkout uses the checkout containing
+that script. The installed `mcmctl` command uses the source path saved in
+`~/.config/mcm/install.conf`, regardless of your current directory. A successful
+update saves its source path so running from the correct checkout also repairs
+a stale recorded path. A failed build or startup keeps the previous saved path.
+
+The command prints the source checkout it updates. It uses the branch's
+configured upstream; without one, it explicitly pulls
 the same branch from `origin` (for example, `origin/main`). To select another
 upstream, configure it in the printed source checkout. Updates always require
 a fast-forward; a missing remote branch or diverged history stops the update
 before building or stopping the panel.
 
-Keep the source checkout at its recorded path. The command refuses to pull
+Keep the source checkout at its recorded path, or run `./mcmctl update` from
+its new location to record the move. The command refuses to pull
 over local edits. Commit or stash those edits before updating. To deliberately
 build the current local checkout without fetching or changing Git files:
 
@@ -237,6 +243,7 @@ journalctl --user -u mcm.service -n 50 --no-pager
 | Podman socket missing or unavailable | Check `systemctl --user status podman.socket --no-pager -l` and `podman info` as the service user. |
 | `unable to parse docker host` followed by `/run/user/.../podman.sock` | The endpoint is a bare path. Current builds accept it; with an older binary, set `MCM_CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock` in `~/.config/mcm/mcm.env`, using your actual UID, then restart the service. |
 | `There is no tracking information for the current branch` on update | Current builds fall back to the same branch on `origin`. For older versions, check `SOURCE_DIR` in `~/.config/mcm/install.conf`, then run `git -C /that/source/path branch --set-upstream-to=origin/main main`. Configuring another checkout does not fix the recorded one. |
+| Update prints an unexpected nested source path or says `origin` is not a repository while a manual pull works | Run `./mcmctl update` using the script in the checkout you successfully pulled; current versions use and remember that checkout. For older versions, correct `SOURCE_DIR` in `~/.config/mcm/install.conf` to that checkout's absolute path before updating. |
 | Build failed | Resolve the reported image-download or build error and retry; an update has not stopped the installed version yet. |
 | Update refused because of local changes | Commit/stash them, or intentionally use `update --local`. |
 | Panel cannot become ready | Check the printed journal, configured port, data permissions, container API, and runtime image. HTTPS installations need a certificate trusted by the host and valid for the configured listen host. |
