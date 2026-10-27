@@ -84,11 +84,21 @@ load_state() {
 }
 
 check_config_paths() {
-    local data_dir db_path
+    local data_dir db_path db_dir
     data_dir=$(setting MCM_DATA_DIR)
     absolute_path "$data_dir"
     db_path=$(setting MCM_DB_PATH)
-    [[ -z "$db_path" ]] || absolute_path "$db_path"
+    [[ -n "$db_path" ]] || db_path="$data_dir/mcm.db"
+    absolute_path "$db_path"
+    if ! mkdir -p -- "$data_dir" || [[ ! -w "$data_dir" || ! -x "$data_dir" ]]; then
+        die "MCM_DATA_DIR is not writable: $data_dir. Choose a writable absolute directory in $CONFIG."
+    fi
+    db_dir=$(dirname -- "$db_path")
+    # SQLite also writes journal/WAL files beside the database.
+    if ! mkdir -p -- "$db_dir" || [[ ! -w "$db_dir" || ! -x "$db_dir" ]] ||
+        [[ -e "$db_path" && ( ! -f "$db_path" || ! -r "$db_path" || ! -w "$db_path" ) ]]; then
+        die "Cannot write the SQLite database at $db_path. Edit $CONFIG: leave MCM_DB_PATH empty to use MCM_DATA_DIR/mcm.db, or set a writable absolute database path."
+    fi
 }
 
 lock_installation() {
@@ -142,10 +152,7 @@ prepare_config() {
         [[ ${#secret} == 64 ]] || die "Could not create a session secret."
         set_setting MCM_SESSION_SECRET "$secret"
     fi
-    data_dir=$(setting MCM_DATA_DIR)
     check_config_paths
-    mkdir -p -- "$data_dir"
-    [[ -w "$data_dir" ]] || die "Your user cannot write to $data_dir."
 }
 
 build_app() {
@@ -337,6 +344,24 @@ install_app() {
     say "Server data: $(setting MCM_DATA_DIR)"
 }
 
+update_source() {
+    local changes branch remote merge
+    need git
+    say "Updating source checkout: $SOURCE_DIR"
+    changes=$(git -C "$SOURCE_DIR" status --porcelain) || die "Cannot inspect the source checkout: $SOURCE_DIR"
+    [[ -z "$changes" ]] || die "The checkout has local changes. Commit or stash them, or use mcmctl update --local to build them."
+    branch=$(git -C "$SOURCE_DIR" symbolic-ref --quiet --short HEAD) ||
+        die "The source checkout has a detached HEAD. Check out a branch in $SOURCE_DIR, or use mcmctl update --local."
+    remote=$(git -C "$SOURCE_DIR" config --get "branch.$branch.remote" || true)
+    merge=$(git -C "$SOURCE_DIR" config --get "branch.$branch.merge" || true)
+    if [[ -n "$remote" && -n "$merge" ]]; then
+        git -C "$SOURCE_DIR" pull --ff-only
+    else
+        say "No upstream configured for $branch; using origin/$branch."
+        git -C "$SOURCE_DIR" pull --ff-only origin "refs/heads/$branch"
+    fi
+}
+
 update_app() {
     local local_build=false
     if (($#)); then
@@ -348,9 +373,7 @@ update_app() {
     check_config_paths
     prepare_engine
     if [[ "$local_build" == false ]]; then
-        need git
-        [[ -z $(git -C "$SOURCE_DIR" status --porcelain) ]] || die "The checkout has local changes. Commit or stash them, or use mcmctl update --local to build them."
-        git -C "$SOURCE_DIR" pull --ff-only
+        update_source
     fi
     ensure_runtime_image
     build_app

@@ -154,6 +154,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid %s %q: expected docker or podman", EnvContainerRuntime, cfg.ContainerRuntime)
 	}
 	cfg.DockerHost = containerHost(cfg.ContainerRuntime)
+	// Socket paths copied from systemctl/Podman need a transport for the client.
+	if filepath.IsAbs(cfg.DockerHost) {
+		cfg.DockerHost = "unix://" + cfg.DockerHost
+	}
 	cfg.LoginMaxAttempts, err = parseIntEnv(EnvLoginMaxAttempts, defaultLoginMaxAttempts)
 	if err != nil {
 		return nil, err

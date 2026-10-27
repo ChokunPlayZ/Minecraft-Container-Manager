@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	"github.com/mcm-panel/mcm/internal/config"
 )
 
 // podmanDaemon exercises the Docker-compatible API at Podman's baseline version,
@@ -229,5 +232,49 @@ func TestPodmanInfoFailureStopsCreation(t *testing.T) {
 func TestNewRejectsUnknownRuntime(t *testing.T) {
 	if _, err := NewWithRuntime("containerd", "unix:///unused.sock", ""); err == nil {
 		t.Fatal("expected unsupported runtime error")
+	}
+}
+
+func TestPodmanBareSocketEndpoint(t *testing.T) {
+	// Keep the socket below the Unix path length limit, including on macOS.
+	dir, err := os.MkdirTemp("", "mcm-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socketPath := filepath.Join(dir, "podman.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_ping" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("API-Version", "1.40")
+		_, _ = io.WriteString(w, "OK")
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	t.Setenv(config.EnvContainerRuntime, "podman")
+	t.Setenv(config.EnvContainerHost, socketPath)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := NewWithRuntime(cfg.ContainerRuntime, cfg.DockerHost, cfg.ServerImage)
+	if err != nil {
+		t.Fatalf("create client from bare socket path: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ping, err := mgr.client.Ping(ctx)
+	if err != nil {
+		t.Fatalf("connect to configured socket: %v", err)
+	}
+	if ping.APIVersion != "1.40" {
+		t.Fatalf("API version = %q, want 1.40", ping.APIVersion)
 	}
 }

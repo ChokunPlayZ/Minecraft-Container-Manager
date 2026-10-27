@@ -58,7 +58,11 @@ Then install with `--data-dir` pointing at its `/data` mount's host directory.
 Keep the same container engine and user account so MCM can still find existing
 Minecraft containers. Stop any other panel process using the database. The
 installer does not import the Compose `.env`; copy any additional settings you
-need into the managed configuration. Users and servers are retained in the
+need into the managed configuration. Leave `MCM_DB_PATH` and
+`MCM_DATA_DIR_HOST` empty for native installation so both the database and
+server mounts use the host directory selected with `--data-dir`. An explicit
+`MCM_DB_PATH` overrides that directory; keep it only if your existing database
+is stored separately at that host path. Users and servers are retained in the
 existing database; a new session secret requires signing in again.
 
 ### Automatic startup
@@ -124,11 +128,20 @@ MCM_PORT_RANGE=25565-25665
 MCM_CONTAINER_RUNTIME=podman
 MCM_CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock
 MCM_DATA_DIR=/home/chokun/.local/share/mcm
+MCM_DB_PATH=
+MCM_DATA_DIR_HOST=
 ```
 
 The installer writes the socket and data paths for your actual account. Keep
 the generated `MCM_SESSION_SECRET` in the file. Available application settings
 are listed in the [configuration reference](../README.md#configuration-reference).
+
+An empty `MCM_DB_PATH` uses `MCM_DATA_DIR/mcm.db`. The earlier `.env.example`
+set it to `/data/mcm.db`, a path inside the panel container. Copying that value
+into a native service overrides its host data directory and can cause
+`open database: mkdir /data: permission denied`. Clear the override to use
+the configured data directory. The manager checks data and database write
+permissions before building or stopping the installed panel.
 
 Changing engines is a migration: stop servers first, change both
 `MCM_CONTAINER_RUNTIME` and `MCM_CONTAINER_HOST`, then re-run `install` with
@@ -147,6 +160,14 @@ installed version, settings, and SQLite database, then starts the update.
 A failed build leaves the current panel running. A failed startup or readiness
 check restores the saved version, settings, and database automatically and
 reports that the update failed. Minecraft server containers stay running.
+
+The command prints the source checkout it updates, read from
+`~/.config/mcm/install.conf`. This may differ from your current directory.
+It uses the branch's configured upstream; without one, it explicitly pulls
+the same branch from `origin` (for example, `origin/main`). To select another
+upstream, configure it in the printed source checkout. Updates always require
+a fast-forward; a missing remote branch or diverged history stops the update
+before building or stopping the panel.
 
 Keep the source checkout at its recorded path. The command refuses to pull
 over local edits. Commit or stash those edits before updating. To deliberately
@@ -212,7 +233,10 @@ journalctl --user -u mcm.service -n 50 --no-pager
 | `Failed to load environment files` | Re-run `./mcmctl install --runtime podman` from the updated checkout. It creates the required settings before starting. |
 | `203/EXEC` or missing executable | Re-run `install`; it builds and installs the complete binary and rewrites the user unit. |
 | `EnvironmentFile= path is not absolute` or `WorkingDirectory= path is not absolute` with a quoted absolute path | An earlier installer put literal quote characters around these directives. Remove those wrapping quotes, reload the unit, and restart using the commands below. |
+| `open database: mkdir /data: permission denied` | The native service has a container path in its settings. Set `MCM_DATA_DIR` to the actual host data directory and leave `MCM_DB_PATH` empty to use its `mcm.db`. Leave `MCM_DATA_DIR_HOST` empty as well. Restart the service; no rebuild is needed. |
 | Podman socket missing or unavailable | Check `systemctl --user status podman.socket --no-pager -l` and `podman info` as the service user. |
+| `unable to parse docker host` followed by `/run/user/.../podman.sock` | The endpoint is a bare path. Current builds accept it; with an older binary, set `MCM_CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock` in `~/.config/mcm/mcm.env`, using your actual UID, then restart the service. |
+| `There is no tracking information for the current branch` on update | Current builds fall back to the same branch on `origin`. For older versions, check `SOURCE_DIR` in `~/.config/mcm/install.conf`, then run `git -C /that/source/path branch --set-upstream-to=origin/main main`. Configuring another checkout does not fix the recorded one. |
 | Build failed | Resolve the reported image-download or build error and retry; an update has not stopped the installed version yet. |
 | Update refused because of local changes | Commit/stash them, or intentionally use `update --local`. |
 | Panel cannot become ready | Check the printed journal, configured port, data permissions, container API, and runtime image. HTTPS installations need a certificate trusted by the host and valid for the configured listen host. |

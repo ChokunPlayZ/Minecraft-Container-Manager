@@ -300,9 +300,10 @@ Java then run as the panel's UID/GID.
 To override the endpoint, set `MCM_CONTAINER_HOST`. The resolution order is
 `MCM_CONTAINER_HOST`, `DOCKER_HOST`, then (in Podman mode) `CONTAINER_HOST`, followed
 by the runtime's default socket. Clear an existing `DOCKER_HOST` when switching
-to Podman's default. Endpoints must use a transport supported by the Docker
-client, such as `unix://` or `tcp://`; use a locally forwarded socket for an SSH
-connection.
+to Podman's default. Absolute socket paths such as
+`/run/user/1000/podman/podman.sock` are automatically prefixed with `unix://`.
+Other endpoints must use a transport supported by the Docker client, such as
+`unix://` or `tcp://`; use a locally forwarded socket for an SSH connection.
 
 For a Linux user service, use the [managed installation](#install-manage-and-update-linux)
 above. It builds and installs the binary, creates the required environment file,
