@@ -4,6 +4,86 @@ MCM is a modern, high-performance, self-hosted Minecraft server management panel
 
 Each Minecraft server container runs with MCM's custom native lifecycle entrypoint script (`DefaultEntryScript`), providing interactive console FIFO pipes, graceful shutdown traps (`SIGTERM`/`SIGINT`), headless Java configuration, and automated installer execution for Forge and NeoForge. MCM supports both direct host-port publication (for zero-proxy overhead, raw performance, and UDP/TCP support) and private container networking (`mcm-network`) with optional host ports for seamless multi-server proxy setups (e.g., Velocity or BungeeCord).
 
+## Install, manage, and update (Linux)
+
+Use the included `mcmctl` command on a Linux host with systemd. Run it as your
+normal user. It builds the complete panel with Podman or Docker, creates its
+configuration and session secret, installs a user service, and starts the app.
+Go, Node.js, and pnpm are supplied by the build image.
+
+On Debian/Ubuntu, install the host dependencies:
+
+```sh
+sudo apt update
+sudo apt install -y podman uidmap slirp4netns fuse-overlayfs git curl util-linux
+```
+
+On Fedora:
+
+```sh
+sudo dnf install -y podman git curl util-linux
+```
+
+Then install MCM:
+
+```sh
+git clone https://github.com/ChokunPlayZ/Minecraft-Container-Manager.git
+cd Minecraft-Container-Manager
+./mcmctl install --runtime podman
+```
+
+Open `http://YOUR_SERVER_IP:8080` and complete onboarding. Open port 8080 and
+any published Minecraft ports in the host firewall if you connect remotely.
+For a host already running Docker, use `./mcmctl install --runtime docker` with
+an account that can access its Docker daemon.
+
+Already have this checkout or a failed `mcm.service` from the earlier setup?
+Run `./mcmctl install --runtime podman` from the updated project directory.
+It creates the previously missing `~/.config/mcm/mcm.env` and replaces the user
+service with the managed installation. Existing settings and session secrets
+are preserved. If your server data is elsewhere, include its actual path:
+
+```sh
+./mcmctl install --runtime podman --data-dir /absolute/path/to/existing/data
+```
+
+Keep using the same engine for existing Minecraft containers. If moving from a
+Compose panel, stop that panel first and pass its existing host data directory
+with `--data-dir`; run only one panel against that directory.
+
+### Everyday commands
+
+From the checkout, use:
+
+| Task | Command |
+| --- | --- |
+| Check status | `./mcmctl status` |
+| Follow logs | `./mcmctl logs` |
+| Start / stop / restart | `./mcmctl start` / `./mcmctl stop` / `./mcmctl restart` |
+| Edit settings | `./mcmctl config`, then `./mcmctl restart` |
+| Download and install updates | `./mcmctl update` |
+| Build local changes | `./mcmctl update --local` |
+| Back up panel settings and database | `./mcmctl backup` |
+| Restore the last panel backup and version | `./mcmctl rollback` |
+| Enable / disable automatic startup | `./mcmctl enable` / `./mcmctl disable` |
+| Uninstall while keeping data | `./mcmctl uninstall` |
+
+The command is also installed at `~/.local/bin/mcmctl` for use outside the
+checkout. Updates build before stopping the panel, save the installed version
+and panel database, and restore them if the new version cannot become ready.
+Minecraft containers continue running during a panel update.
+
+Settings live in `~/.config/mcm/mcm.env`; the default database and server files
+live in `~/.local/share/mcm`. The installer enables the user service and tries
+to enable lingering so it starts at boot and continues after logout. If your
+host requires administrator authorization, it prints the one command to finish
+that step. Keep the source checkout: `update` uses its current Git branch.
+
+See [installation and operations](docs/operations.md) for prerequisites,
+configuration, updates, backups, rollback, and troubleshooting. The Compose
+instructions below are alternatives for people who want to run the panel in
+a container.
+
 ---
 
 ## Key Features
@@ -109,7 +189,7 @@ Each Minecraft server container runs with MCM's custom native lifecycle entrypoi
 
 ---
 
-## Quickstart (Docker Compose)
+## Alternative: Docker Compose
 
 1. **Copy the environment template and configure a session secret**:
 
@@ -154,7 +234,7 @@ After upgrading from a version that ran Minecraft as root, use **Rebuild contain
 
 ---
 
-## Podman
+## Alternative: Podman Compose and direct use
 
 Select Podman with `MCM_CONTAINER_RUNTIME=podman`. MCM uses Podman's
 [Docker-compatible API](https://docs.podman.io/en/latest/markdown/podman-system-service.1.html)
@@ -224,49 +304,10 @@ to Podman's default. Endpoints must use a transport supported by the Docker
 client, such as `unix://` or `tcp://`; use a locally forwarded socket for an SSH
 connection.
 
-For a systemd installation, use `deploy/mcm-podman.service` as a **user** unit
-instead of the Docker-specific system unit. This unit launches the installed
-`/usr/local/bin/mcm` binary and requires `~/.config/mcm/mcm.env` to exist before
-startup. From the project directory on the Linux host, run:
-
-```sh
-# Build and install the native binary (requires Go and pnpm).
-make build
-sudo install -m 0755 ./mcm /usr/local/bin/mcm
-
-install -d ~/.config/systemd/user
-install -d -m 0700 ~/.config/mcm
-# Create a persistent session secret on first install; preserve existing config.
-if [ ! -e "$HOME/.config/mcm/mcm.env" ]; then
-  (umask 077
-   printf 'MCM_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" > "$HOME/.config/mcm/mcm.env")
-fi
-
-install -m 0644 deploy/mcm-podman.service ~/.config/systemd/user/mcm.service
-systemctl --user enable --now podman.socket
-systemctl --user daemon-reload
-systemctl --user reset-failed mcm.service
-systemctl --user enable --now mcm.service
-```
-
-The unit stores data in `~/.local/share/mcm`. Enable user lingering with
-`loginctl enable-linger "$USER"` if it should continue running after logout.
-Add overrides to `~/.config/mcm/mcm.env` as needed. Use literal absolute paths
-there: systemd environment files do not expand shell variables such as `$HOME`.
-If moving an existing installation, set `MCM_DATA_DIR` to its existing data path.
-
-If startup fails, inspect the unit and its journal:
-
-```sh
-systemctl --user status mcm.service --no-pager -l
-journalctl --user -u mcm.service -n 50 --no-pager
-```
-
-`Failed to load environment files` points to a missing or unreadable
-`~/.config/mcm/mcm.env`; create it using the block above. `status=203/EXEC` points
-to the executable: confirm `/usr/local/bin/mcm` is installed and executable on
-this host. A failure in `podman.socket` should be checked with
-`systemctl --user status podman.socket --no-pager -l`.
+For a Linux user service, use the [managed installation](#install-manage-and-update-linux)
+above. It builds and installs the binary, creates the required environment file,
+and enables the socket and service automatically. Do not also start a Compose
+panel against the same data directory.
 
 ### macOS and remote hosts
 
@@ -295,27 +336,17 @@ engine. Start only one panel against a given database/data directory.
 
 ---
 
-## Bare Metal / LXC Deployment
+## Bare metal and LXC
 
-For hosts running MCM directly outside of Docker:
+Use `./mcmctl install --runtime podman` or `./mcmctl install --runtime docker`
+on Linux with systemd. The panel runs directly as your user; Minecraft servers
+run through the selected container engine. Container engines inside LXC require
+host support for the necessary namespaces, mounts, and cgroups.
 
-```sh
-# Install the mcm binary and the systemd unit
-sudo install -m 0755 ./mcm /usr/local/bin/mcm
-sudo install -d /etc/mcm /var/lib/mcm
-sudo install -m 0640 deploy/mcm.service /etc/systemd/system/mcm.service
-
-# Create runtime user and configure environment
-sudo useradd --system --home /var/lib/mcm --shell /usr/sbin/nologin mcm
-sudo install -m 0640 .env.example /etc/mcm/mcm.env
-# Edit /etc/mcm/mcm.env: configure MCM_SESSION_SECRET, paths, and settings
-
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable --now mcm
-```
-
-The unit runs the binary as the `mcm` user with `WorkingDirectory=/var/lib/mcm` and reads configuration from `/etc/mcm/mcm.env`. Ensure `docker.service` is active and accessible via `/var/run/docker.sock`.
+If LXC prevents Podman or Docker from running, resolve that at the LXC host
+before installing MCM. Check the chosen engine's `info` command as the same
+user who will run the panel. See [operations](docs/operations.md) for the complete
+service lifecycle and recovery commands.
 
 ---
 
@@ -564,7 +595,8 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 │   │   ├── routes/         # TanStack Router page routes (Dashboard, Server Detail, Settings, Users)
 │   │   └── styles/         # CSS design system and theme tokens
 │   └── tests/              # Vitest test suite for web components and utilities
-├── deploy/                 # Systemd service unit for bare metal / LXC installs
+├── deploy/                 # Service examples and installer regression tests
+├── mcmctl                  # Linux install, service management, update, and recovery
 ├── Dockerfile              # Multi-stage production build (Node -> Go -> Final Alpine)
 └── docker-compose.yml      # Docker Compose configuration
 ```
@@ -575,7 +607,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 
 ### Backend (Go)
 
-Ensure Go 1.23+ is installed:
+Ensure Go 1.26+ is installed (see `go.mod`):
 
 ```sh
 # Build binary

@@ -83,6 +83,14 @@ load_state() {
     [[ -n "$SOURCE_DIR" ]] || die "Installation metadata is incomplete: $STATE"
 }
 
+check_config_paths() {
+    local data_dir db_path
+    data_dir=$(setting MCM_DATA_DIR)
+    absolute_path "$data_dir"
+    db_path=$(setting MCM_DB_PATH)
+    [[ -z "$db_path" ]] || absolute_path "$db_path"
+}
+
 lock_installation() {
     need flock
     mkdir -p "$CONFIG_DIR"
@@ -135,7 +143,7 @@ prepare_config() {
         set_setting MCM_SESSION_SECRET "$secret"
     fi
     data_dir=$(setting MCM_DATA_DIR)
-    absolute_path "$data_dir"
+    check_config_paths
     mkdir -p -- "$data_dir"
     [[ -w "$data_dir" ]] || die "Your user cannot write to $data_dir."
 }
@@ -183,7 +191,7 @@ write_unit() {
 }
 
 wait_ready() {
-    local address port host scheme=http attempt
+    local address port host scheme=http attempt ready_count=0
     address=$(setting MCM_ADDR)
     port="${address##*:}"
     host="${address%:*}"
@@ -192,8 +200,13 @@ wait_ready() {
     for ((attempt=0; attempt<30; attempt++)); do
         if systemctl --user is-active --quiet mcm.service &&
             curl --noproxy '*' --fail --silent --max-time 2 "$scheme://$host:$port/readyz" >/dev/null; then
-            say "MCM is ready at $scheme://$host:$port"
-            return 0
+            ready_count=$((ready_count + 1))
+            if ((ready_count >= 2)); then
+                say "MCM is ready at $scheme://$host:$port"
+                return 0
+            fi
+        else
+            ready_count=0
         fi
         sleep 1
     done
@@ -203,7 +216,7 @@ wait_ready() {
 
 snapshot() {
     local backup db_path suffix
-    backup=$(mktemp -d "$CONFIG_DIR/backups/update-$(date +%Y%m%d-%H%M%S)-XXXXXX")
+    backup=$(mktemp -d "$CONFIG_DIR/backups/update-$(date +%Y%m%d-%H%M%S)-XXXXXX") || return 1
     cp -p -- "$CONFIG" "$backup/mcm.env" || return 1
     for suffix in mcm mcmctl; do
         [[ ! -f "$BIN_DIR/$suffix" ]] || cp -p -- "$BIN_DIR/$suffix" "$backup/$suffix" || return 1
@@ -264,7 +277,12 @@ install_app() {
         case "$flag" in
             --runtime) requested_engine="$1" ;;
             --data-dir) data_dir="$1"; absolute_path "$data_dir" ;;
-            --port) port="$1"; [[ "$port" =~ ^[0-9]+$ && "$port" -gt 1023 && "$port" -le 65535 ]] || die "Port must be between 1024 and 65535." ;;
+            --port)
+                port="$1"
+                [[ "$port" =~ ^[0-9]{1,5}$ ]] || die "Port must be between 1024 and 65535."
+                port=$((10#$port))
+                [[ "$port" -gt 1023 && "$port" -le 65535 ]] || die "Port must be between 1024 and 65535."
+                ;;
             *) die "Unknown option: $flag" ;;
         esac
         shift
@@ -280,13 +298,21 @@ install_app() {
         die "Config uses $(setting MCM_CONTAINER_RUNTIME). Change MCM_CONTAINER_RUNTIME and MCM_CONTAINER_HOST in $CONFIG before switching engines."
     fi
     prepare_engine
+    if [[ $("$ENGINE" inspect --format '{{.State.Running}}' mcm 2>/dev/null || true) == true ]]; then
+        die "A panel container named mcm is running. Stop it with '$ENGINE stop mcm', then retry with --data-dir pointing to its existing host data directory."
+    fi
     prepare_config "$data_dir" "$port"
     ensure_runtime_image
     build_app
     mkdir -p "$CONFIG_DIR/backups"
     # Capture the stopped database, including any residual SQLite WAL.
-    systemctl --user stop mcm.service 2>/dev/null || true
-    if [[ -f "$BIN_DIR/mcm" ]]; then snapshot; fi
+    if [[ -f "$UNIT" ]] || systemctl --user is-active --quiet mcm.service; then
+        systemctl --user stop mcm.service
+    fi
+    if [[ -f "$BIN_DIR/mcm" ]] && ! snapshot; then
+        systemctl --user start mcm.service || true
+        die 'Could not back up the installed version. Installation stopped.'
+    fi
     [[ ! -f "$UNIT" ]] || cp -p -- "$UNIT" "$CONFIG_DIR/previous.service"
     mv -f -- "$STAGING/mcm" "$BIN_DIR/mcm"
     cp -- "$SOURCE_DIR/mcmctl" "$STAGING/mcmctl"
@@ -313,6 +339,7 @@ update_app() {
     fi
     load_state
     ENGINE=$(setting MCM_CONTAINER_RUNTIME)
+    check_config_paths
     prepare_engine
     if [[ "$local_build" == false ]]; then
         need git
@@ -323,7 +350,10 @@ update_app() {
     build_app
     mkdir -p "$CONFIG_DIR/backups"
     systemctl --user stop mcm.service
-    snapshot
+    if ! snapshot; then
+        systemctl --user start mcm.service || true
+        die 'Could not back up the installed version. Update stopped.'
+    fi
     mv -f -- "$STAGING/mcm" "$BIN_DIR/mcm"
     if ! systemctl --user start mcm.service || ! wait_ready; then
         say "The update did not become ready. Restoring the previous binary, config, and panel database."
@@ -360,6 +390,7 @@ case "$command" in
     disable) systemctl --user disable mcm.service ;;
     backup)
         load_state
+        check_config_paths
         mkdir -p "$CONFIG_DIR/backups"
         was_active=false
         systemctl --user is-active --quiet mcm.service && was_active=true

@@ -29,7 +29,9 @@ elif name in ('podman', 'docker'):
         if os.environ.get('MCM_TEST_BUILD_FAIL'): sys.exit(1)
         (root / 'built-version').write_text(os.environ.get('MCM_TEST_VERSION', 'one'))
     elif args[0] == 'create': print('build-container')
+    elif args[0] == 'inspect' and os.environ.get('MCM_TEST_PANEL_CONTAINER'): print('true')
     elif args[0] == 'cp':
+        if os.environ.get('MCM_TEST_COPY_FAIL'): sys.exit(1)
         pathlib.Path(args[-1]).write_text('#!/bin/sh\n# version: ' + (root / 'built-version').read_text() + '\n')
     elif args[:2] == ['image', 'inspect']:
         sys.exit(0 if (root / 'runtime-image').exists() else 1)
@@ -50,6 +52,9 @@ elif name == 'systemctl':
             sys.exit(1)
         active.touch()
 elif name == 'curl':
+    if os.environ.get('MCM_TEST_UNREADY_VERSION'):
+        binary = pathlib.Path(os.environ['MCM_BIN_DIR']) / 'mcm'
+        if os.environ['MCM_TEST_UNREADY_VERSION'] in binary.read_text(): sys.exit(22)
     sys.exit(0 if (root / 'active').exists() and (root / 'runtime-image').exists() else 22)
 elif name == 'git':
     if 'status' in args and os.environ.get('MCM_TEST_DIRTY'): print(' M local-file')
@@ -62,7 +67,7 @@ elif name == 'journalctl': print('test service journal')
 class ManagerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='mcm manager ')
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.source = self.root / 'checkout with spaces'
         self.source.mkdir()
         shutil.copy(ROOT / 'mcmctl', self.source / 'mcmctl')
@@ -142,6 +147,14 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(self.config.read_text(), original_config)
         self.assertEqual(database.read_text(), 'existing users and servers')
 
+    def test_repairs_legacy_unit_with_missing_environment_file(self):
+        self.unit.parent.mkdir(parents=True)
+        self.unit.write_text('[Service]\nExecStart=/usr/local/bin/mcm\nEnvironmentFile=%h/.config/mcm/mcm.env\n')
+        self.run_manager('install', '--runtime', 'podman')
+        self.assertTrue(self.config.is_file())
+        self.assertIn(str(self.binary), self.unit.read_text())
+        self.assertIn('ExecStart=/usr/local/bin/mcm', (self.config.parent / 'previous.service').read_text())
+
     def test_custom_existing_data_and_port(self):
         data = self.root / 'existing worlds'
         self.run_manager('install', '--data-dir', str(data), '--port', '9090')
@@ -163,6 +176,43 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(self.binary.read_bytes(), old_binary)
         self.assertTrue((self.root / 'active').exists())
         self.assertNotIn(['systemctl', '--user', 'stop', 'mcm.service'], self.calls())
+
+    def test_binary_extraction_failure_leaves_running_version_untouched(self):
+        self.run_manager('install')
+        old_binary = self.binary.read_bytes()
+        self.clear_calls()
+        self.run_manager('update', '--local', ok=False, MCM_TEST_COPY_FAIL='1')
+        self.assertEqual(self.binary.read_bytes(), old_binary)
+        self.assertNotIn(['systemctl', '--user', 'stop', 'mcm.service'], self.calls())
+        self.assertIn(['podman', 'rm', '-f', 'build-container'], self.calls())
+
+    def test_failed_readiness_restores_running_version(self):
+        self.run_manager('install')
+        result = self.run_manager('update', '--local', ok=False, MCM_TEST_VERSION='two', MCM_TEST_UNREADY_VERSION='version: two')
+        self.assertIn('previous version is running', result.stderr)
+        self.assertIn('version: one', self.binary.read_text())
+        self.assertTrue((self.root / 'active').exists())
+
+    def test_backup_preserves_stopped_state_and_sqlite_sidecars(self):
+        self.run_manager('install')
+        database = self.root / 'data/mcm/mcm.db'
+        database.write_text('database')
+        Path(str(database) + '-wal').write_text('wal')
+        self.run_manager('stop')
+        self.run_manager('backup')
+        self.assertFalse((self.root / 'active').exists())
+        backup = Path((self.config.parent / 'last-backup').read_text().strip())
+        self.assertEqual((backup / 'database-wal').read_text(), 'wal')
+
+    def test_invalid_port_does_not_start_or_stop_services(self):
+        self.run_manager('install', '--port', 'not-a-port', ok=False)
+        self.assertFalse(any(call[0] == 'systemctl' for call in self.calls()))
+
+    def test_existing_panel_container_requires_explicit_migration(self):
+        result = self.run_manager('install', ok=False, MCM_TEST_PANEL_CONTAINER='1')
+        self.assertIn('existing host data directory', result.stderr)
+        self.assertFalse(self.binary.exists())
+        self.assertFalse(self.config.exists())
 
     def test_update_preserves_config_and_supports_rollback(self):
         self.run_manager('install')

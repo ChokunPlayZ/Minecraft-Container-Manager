@@ -1,4 +1,4 @@
-.PHONY: dev build test lint tidy
+.PHONY: dev build test test-deploy lint tidy
 
 # Build the backend, embedding the frontend build if it exists.
 build:
@@ -16,6 +16,9 @@ dev:
 
 test:
 	go test ./...
+
+test-deploy:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/tests -v
 
 lint:
 	go vet ./...

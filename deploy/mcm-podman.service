@@ -4,13 +4,14 @@ After=podman.socket
 Requires=podman.socket
 
 [Service]
-ExecStart=/usr/local/bin/mcm
-# Required: create this file before starting the unit (see README systemd setup).
+# Example only. ./mcmctl install creates this unit and all required files.
+ExecStart=%h/.local/bin/mcm
+# Created by the managed installer; see docs/operations.md.
 EnvironmentFile=%h/.config/mcm/mcm.env
 Environment=MCM_CONTAINER_RUNTIME=podman
 Environment=MCM_DATA_DIR=%h/.local/share/mcm
 WorkingDirectory=%h
-Restart=always
+Restart=on-failure
 RestartSec=5
 
 [Install]
