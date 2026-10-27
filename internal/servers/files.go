@@ -2,6 +2,7 @@ package servers
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,40 @@ type FileEntry struct {
 	IsDir      bool      `json:"is_directory"`
 	SizeBytes  int64     `json:"size_bytes"`
 	ModifiedAt time.Time `json:"modified_at"`
+	Revision   string    `json:"revision,omitempty"`
+}
+
+// FileContent ties the editor's text to the exact bytes read from disk.
+// An empty revision represents a file that does not exist, not an empty file.
+type FileContent struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Revision string `json:"revision"`
+	Exists   bool   `json:"exists"`
+}
+
+type FileConflictError struct {
+	Current FileContent
+}
+
+func (e *FileConflictError) Error() string { return "file changed since it was opened" }
+
+func fileRevision(content string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+}
+
+func (s *Store) readFileSnapshot(id, rel string) (FileContent, error) {
+	content, err := s.ReadFileContent(id, rel)
+	if err != nil {
+		return FileContent{}, err
+	}
+	return FileContent{Path: rel, Content: content, Revision: fileRevision(content), Exists: true}, nil
+}
+
+func (s *Store) ReadFileSnapshot(id, rel string) (FileContent, error) {
+	s.fileEditMu.Lock()
+	defer s.fileEditMu.Unlock()
+	return s.readFileSnapshot(id, rel)
 }
 
 // FileListResult is a directory listing for a server data directory.
@@ -656,8 +691,12 @@ func (s *Store) ReadFileContent(id, rel string) (string, error) {
 }
 
 // WriteFileContent writes text content to a file inside the server data dir,
-// creating any missing parent directories. It is also used to create new files.
-func (s *Store) WriteFileContent(id, rel, content string) (FileEntry, error) {
+// creating any missing parent directories. When expectedRevision is supplied,
+// reject a changed/deleted file; an empty revision requires a new file.
+// Serializing editor saves prevents two MCM writers accepting the same revision.
+func (s *Store) WriteFileContent(id, rel, content string, expectedRevision ...string) (FileEntry, error) {
+	s.fileEditMu.Lock()
+	defer s.fileEditMu.Unlock()
 	if rel == "" || rel == "." || rel == ".." {
 		return FileEntry{}, ErrInvalidPath
 	}
@@ -672,13 +711,26 @@ func (s *Store) WriteFileContent(id, rel, content string) (FileEntry, error) {
 	if target == s.dataPath(id) {
 		return FileEntry{}, ErrInvalidPath
 	}
+	if len(expectedRevision) > 0 {
+		current, err := s.readFileSnapshot(id, clean)
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrPathNotFound) {
+			current = FileContent{Path: clean}
+		} else if err != nil {
+			return FileEntry{}, err
+		}
+		if current.Revision != expectedRevision[0] {
+			return FileEntry{}, &FileConflictError{Current: current}
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return FileEntry{}, err
 	}
 	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 		return FileEntry{}, err
 	}
-	return statEntry(target, filepath.Base(target))
+	entry, err := statEntry(target, filepath.Base(target))
+	entry.Revision = fileRevision(content)
+	return entry, err
 }
 
 // statEntry produces a FileEntry for a path on disk.

@@ -342,8 +342,8 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | --- | --- | --- |
 | `GET` | `/api/servers/:id/files` | List files and directories in server volume. |
 | `GET` | `/api/servers/:id/files/download` | Download file from server. |
-| `GET` | `/api/servers/:id/files/content` | Read text file content for inline editing. |
-| `PUT` | `/api/servers/:id/files/content` | Save edited text file content. |
+| `GET` | `/api/servers/:id/files/content` | Read text file content and its revision for inline editing. |
+| `PUT` | `/api/servers/:id/files/content` | Save edited text; pass `expected_revision` from the read response to check for changes. An empty revision requires a new file. A `409 file_changed` response includes the current file in `current` for comparison. |
 | `POST` | `/api/servers/:id/files/upload` | Upload one or more files. |
 | `POST` | `/api/servers/:id/files/archive` | Create a zip archive of selected files/folders. |
 | `POST` | `/api/servers/:id/files/unzip` | Extract a zip archive in place. |

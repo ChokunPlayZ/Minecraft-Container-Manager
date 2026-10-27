@@ -21,8 +21,9 @@ import {
   X,
 } from 'lucide-react';
 import { ProgressBar } from './ui/progress';
-import { api, ApiError } from '../api/client';
-import type { FileEntry, Server } from '../api/types';
+import { api, ApiError, FileConflictError } from '../api/client';
+import type { FileContent, FileEntry, Server } from '../api/types';
+import { FileConflictDialog } from './file-conflict-dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
@@ -99,6 +100,9 @@ export function FileManager({ server }: { server: Server }) {
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [editorBusy, setEditorBusy] = useState(false);
+  const [editorRevision, setEditorRevision] = useState<string | null>(null);
+  const [editorConflict, setEditorConflict] = useState<FileContent | null>(null);
+  const editorRequest = useRef(0);
   const { confirm, prompt, dialog } = useModal();
 
   useEffect(() => {
@@ -182,32 +186,46 @@ export function FileManager({ server }: { server: Server }) {
   }
 
   async function closeEditor() {
+    if (editorBusy) return;
     if (editorDirty && !(await confirm('Discard unsaved changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
     setEditorPath(null);
     setEditorContent('');
     setEditorDirty(false);
     setEditorError(null);
+    setEditorRevision(null);
+    setEditorConflict(null);
+    editorRequest.current++;
   }
 
   async function openEditor(path: string) {
-    if (editorDirty && editorPath !== path && !(await confirm('Discard unsaved changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
+    if (editorBusy) return;
+    if (editorDirty && !(await confirm('Discard unsaved changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
     setEditorBusy(true);
     setEditorError(null);
     setEditorPath(path);
+    setEditorContent('');
+    setEditorDirty(false);
+    setEditorRevision(null);
+    setEditorConflict(null);
+    const request = ++editorRequest.current;
     try {
       const res = await api.readFileContent(server.id, path);
+      if (request !== editorRequest.current) return;
       setEditorContent(res.content);
+      setEditorRevision(res.revision);
       setEditorDirty(false);
     } catch (err) {
+      if (request !== editorRequest.current) return;
       setEditorContent('');
       setEditorDirty(false);
       setEditorError(err instanceof ApiError ? err.detail : 'Failed to load file');
     } finally {
-      setEditorBusy(false);
+      if (request === editorRequest.current) setEditorBusy(false);
     }
   }
 
   async function newFile() {
+    if (editorBusy) return;
     const name = await prompt('New file name (e.g. ops.json):', 'new-file.txt', { title: 'New file' });
     if (!name || !name.trim()) return;
     const base = cwd ? `${cwd}/${name.trim()}` : name.trim();
@@ -216,21 +234,40 @@ export function FileManager({ server }: { server: Server }) {
     setEditorContent('');
     setEditorDirty(true);
     setEditorError(null);
+    setEditorRevision('');
+    setEditorConflict(null);
+    editorRequest.current++;
   }
 
-  async function saveEditor() {
-    if (!editorPath) return;
+  async function saveEditor(expectedRevision = editorRevision) {
+    if (!editorPath || editorBusy || expectedRevision === null) return;
     setEditorBusy(true);
     setEditorError(null);
     try {
-      await api.writeFileContent(server.id, editorPath, editorContent);
+      const saved = await api.writeFileContent(server.id, editorPath, editorContent, expectedRevision);
+      setEditorRevision(saved.revision);
+      setEditorConflict(null);
       setEditorDirty(false);
       await load();
     } catch (err) {
-      setEditorError(err instanceof ApiError ? err.detail : 'Failed to save file');
+      if (err instanceof FileConflictError) {
+        setEditorConflict(err.current);
+        setEditorError(editorConflict ? 'The file changed again. Review the updated comparison before saving.' : null);
+      } else {
+        setEditorError(err instanceof ApiError ? err.detail : 'Failed to save file');
+      }
     } finally {
       setEditorBusy(false);
     }
+  }
+
+  function useServerVersion() {
+    if (!editorConflict || editorBusy) return;
+    setEditorContent(editorConflict.content);
+    setEditorRevision(editorConflict.revision);
+    setEditorDirty(false);
+    setEditorError(null);
+    setEditorConflict(null);
   }
 
   async function handleUpload(files: File[]) {
@@ -409,6 +446,16 @@ export function FileManager({ server }: { server: Server }) {
   return (
     <>
       {dialog}
+      {editorConflict && <FileConflictDialog
+        key={editorConflict.revision}
+        current={editorConflict}
+        content={editorContent}
+        busy={editorBusy}
+        error={editorError}
+        onCancel={() => { setEditorConflict(null); setEditorError(null); }}
+        onReload={useServerVersion}
+        onOverwrite={() => void saveEditor(editorConflict.revision)}
+      />}
       <div className="space-y-4">
       <div><h2 className="section-heading">Files</h2><p className="mt-1 text-sm text-muted-foreground">Browse server files and edit configuration.</p></div>
       {/* Toolbar */}
@@ -430,7 +477,7 @@ export function FileManager({ server }: { server: Server }) {
         <Button variant="outline" size="sm" onClick={() => void handleMkdir()} disabled={busy}>
           <FolderPlus className="h-4 w-4" /> New folder
         </Button>
-        <Button variant="outline" size="sm" onClick={() => void newFile()} disabled={busy}>
+        <Button variant="outline" size="sm" onClick={() => void newFile()} disabled={busy || editorBusy}>
           <FilePlus2 className="h-4 w-4" /> New file
         </Button>
         <Button variant="outline" size="sm" onClick={() => setShowUrlInput((v) => !v)} disabled={busy}>
@@ -696,17 +743,19 @@ export function FileManager({ server }: { server: Server }) {
                   <Button
                     size="sm"
                     onClick={() => void saveEditor()}
-                    disabled={editorBusy || !editorPath}
+                    disabled={editorBusy || !editorPath || editorRevision === null}
                   >
                     <Save className="h-4 w-4" /> {editorBusy ? 'Saving...' : 'Save'}
                   </Button>
-                  <Button variant="ghost" size="icon" onClick={() => void closeEditor()} title="Close" aria-label="Close editor">
+                  <Button variant="ghost" size="icon" disabled={editorBusy} onClick={() => void closeEditor()} title="Close" aria-label="Close editor">
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
-              {editorError && <p className="border-b px-3 py-2 text-sm text-destructive">{editorError}</p>}
+              {editorError && !editorConflict && <p role="alert" className="border-b px-3 py-2 text-sm text-destructive">{editorError}</p>}
               <Textarea
+                aria-label="File content"
+                disabled={editorBusy || editorRevision === null}
                 className="min-h-[26rem] flex-1 resize-none rounded-none border-0 bg-transparent font-mono text-xs leading-relaxed whitespace-pre focus-visible:ring-0"
                 value={editorContent}
                 spellCheck={false}

@@ -53,12 +53,24 @@ import type {
 export class ApiError extends Error {
   status: number;
   detail: string;
+  code?: string;
 
-  constructor(status: number, message: string, detail?: string) {
+  constructor(status: number, message: string, detail?: string, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail ?? message;
+    this.code = code;
+  }
+}
+
+export class FileConflictError extends ApiError {
+  current: FileContent;
+
+  constructor(message: string, current: FileContent) {
+    super(409, message);
+    this.name = 'FileConflictError';
+    this.current = current;
   }
 }
 
@@ -575,17 +587,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
-    let detail = `Request failed (${res.status})`;
-    let code = '';
-    try {
-      const body = await res.json();
-      code = body?.error?.code ?? '';
-      detail = body?.error?.message ?? body?.message ?? detail;
-    } catch {
-      /* non-JSON error body */
-    }
-
-    if (res.status === 403 && (code === 'csrf_missing' || detail.toLowerCase().includes('csrf'))) {
+    const error = await responseError(res);
+    if (res.status === 403 && (error.code === 'csrf_missing' || error.detail.toLowerCase().includes('csrf'))) {
       const freshToken = await ensureCsrf(true);
       if (freshToken) {
         headers['X-CSRF-Token'] = freshToken;
@@ -598,14 +601,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
           if (retryRes.status === 204) return undefined as T;
           return readResponse<T>(retryRes);
         }
+        throw await responseError(retryRes);
       }
     }
 
-    throw new ApiError(res.status, detail, detail);
+    throw error;
   }
 
   if (res.status === 204) return undefined as T;
   return readResponse<T>(res);
+}
+
+async function responseError(response: Response): Promise<ApiError> {
+  let detail = `Request failed (${response.status})`;
+  let body;
+  try {
+    body = await response.json();
+    detail = body?.error?.message ?? body?.message ?? detail;
+  } catch {
+    /* non-JSON error body */
+  }
+  if (response.status === 409 && body?.error?.code === 'file_changed' && body.current) {
+    return new FileConflictError(detail, body.current);
+  }
+  return new ApiError(response.status, detail, detail, body?.error?.code);
 }
 
 
@@ -1187,10 +1206,10 @@ export const api = {
   readFileContent: (serverId: string, path: string) =>
     request<FileContent>(`/api/servers/${serverId}/files/content?path=${encodeURIComponent(path)}`),
 
-  writeFileContent: (serverId: string, path: string, content: string) =>
-    request<FileEntry>(`/api/servers/${serverId}/files/content`, {
+  writeFileContent: (serverId: string, path: string, content: string, expectedRevision: string) =>
+    request<FileEntry & { revision: string }>(`/api/servers/${serverId}/files/content`, {
       method: 'PUT',
-      body: JSON.stringify({ path, content }),
+      body: JSON.stringify({ path, content, expected_revision: expectedRevision }),
     }),
 
   deleteFile: (serverId: string, path: string) =>

@@ -449,6 +449,8 @@ export interface FileList {
 export interface FileContent {
   path: string;
   content: string;
+  revision: string;
+  exists: boolean;
 }
 
 export interface ServerLogFile {

@@ -51,27 +51,41 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
 // handleReadFileContent returns a file's text content for the web editor.
 func (s *Server) handleReadFileContent(w http.ResponseWriter, r *http.Request) {
 	rel := normalizeRel(r.URL.Query().Get("path"))
-	content, err := s.servers.ReadFileContent(r.PathValue("id"), rel)
+	content, err := s.servers.ReadFileSnapshot(r.PathValue("id"), rel)
 	if err != nil {
 		s.writeFileErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"path": rel, "content": content})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, content)
 }
 
 // handleWriteFileContent saves text content to a file in the server data dir,
 // creating the file and any parent directories as needed.
 func (s *Server) handleWriteFileContent(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path             string  `json:"path"`
+		Content          string  `json:"content"`
+		ExpectedRevision *string `json:"expected_revision"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	entry, err := s.servers.WriteFileContent(r.PathValue("id"), normalizeRel(in.Path), in.Content)
+	var expected []string
+	if in.ExpectedRevision != nil {
+		expected = append(expected, *in.ExpectedRevision)
+	}
+	entry, err := s.servers.WriteFileContent(r.PathValue("id"), normalizeRel(in.Path), in.Content, expected...)
 	if err != nil {
+		var conflict *servers.FileConflictError
+		if errors.As(err, &conflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   map[string]string{"code": "file_changed", "message": "This file changed on the server. Compare the versions before saving."},
+				"current": conflict.Current,
+			})
+			return
+		}
 		s.writeFileErr(w, r, err)
 		return
 	}

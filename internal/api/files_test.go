@@ -9,10 +9,73 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/servers"
 )
+
+func TestFileContentRevisionAPI(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.Open(filepath.Join(dir, "files.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	store := servers.NewStore(database, nil, nil, 25565, 25575, dir, "")
+	s := &Server{servers: store}
+	if _, err := store.WriteFileContent("id", "config.txt", "opened"); err != nil {
+		t.Fatal(err)
+	}
+	read := httptest.NewRequest(http.MethodGet, "/?path=config.txt", nil)
+	read.SetPathValue("id", "id")
+	rr := httptest.NewRecorder()
+	s.handleReadFileContent(rr, read)
+	var opened servers.FileContent
+	if err := json.Unmarshal(rr.Body.Bytes(), &opened); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != http.StatusOK || opened.Revision == "" || !opened.Exists || rr.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("read snapshot: %d %s", rr.Code, rr.Body.String())
+	}
+	save := func(content, revision string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(map[string]string{"path": "config.txt", "content": content, "expected_revision": revision})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(body))
+		req.SetPathValue("id", "id")
+		res := httptest.NewRecorder()
+		s.handleWriteFileContent(res, req)
+		return res
+	}
+	if _, err := store.WriteFileContent("id", "config.txt", "external change"); err != nil {
+		t.Fatal(err)
+	}
+	conflict := save("my edits", opened.Revision)
+	var body struct {
+		Error   struct{ Code string } `json:"error"`
+		Current servers.FileContent   `json:"current"`
+	}
+	if err := json.Unmarshal(conflict.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.Code != http.StatusConflict || body.Error.Code != "file_changed" || body.Current.Content != "external change" || body.Current.Revision == opened.Revision {
+		t.Fatalf("conflict: %d %s", conflict.Code, conflict.Body.String())
+	}
+	accepted := save("my edits", body.Current.Revision)
+	var entry servers.FileEntry
+	if err := json.Unmarshal(accepted.Body.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Code != http.StatusCreated || entry.Revision == "" || entry.Revision == body.Current.Revision {
+		t.Fatalf("accepted save: %d %s", accepted.Code, accepted.Body.String())
+	}
+}
 
 func TestWriteFileErrReportsFilesystemFailures(t *testing.T) {
 	cases := []struct {

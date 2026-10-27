@@ -337,6 +337,7 @@ type Store struct {
 
 	serverLocksMu sync.Mutex
 	serverLocks   map[string]*sync.Mutex
+	fileEditMu    sync.Mutex
 
 	proxyMu         sync.Mutex
 	proxy           *proxy.Service
@@ -2018,4 +2019,3 @@ func matchesCustomExclude(rel, name string, customExcludes []string) bool {
 	}
 	return false
 }
-
