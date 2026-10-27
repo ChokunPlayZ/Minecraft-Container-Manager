@@ -40,6 +40,7 @@ import { InstallPanel } from '../components/install-panel';
 import { LogBrowser } from '../components/log-browser';
 import { ModsPanel } from '../components/mods-panel';
 import { PlayersPanel } from '../components/players-panel';
+import { PerformancePanel } from '../components/performance-panel';
 import { PropertiesEditor } from '../components/properties-editor';
 import { ServerInstallProgress } from '../components/server-install-progress';
 import { ServerSettings } from '../components/server-settings';
@@ -62,7 +63,7 @@ export const Route = createFileRoute('/servers/$id')({
   component: ServerDetailRoute,
 });
 
-type ServerTab = 'console' | 'logs' | 'players' | 'files' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
+type ServerTab = 'console' | 'performance' | 'logs' | 'players' | 'files' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
 
 export function ServerDetailRoute() {
   const { id } = Route.useParams();
@@ -280,6 +281,7 @@ export function ServerDetailRoute() {
 
   const TABS: { id: ServerTab; label: string; icon: typeof Terminal }[] = [
     { id: 'console', label: 'Console', icon: Terminal },
+    { id: 'performance', label: 'Performance', icon: Activity },
     { id: 'logs', label: 'Logs', icon: FileText },
     { id: 'players', label: 'Players', icon: Users },
     { id: 'files', label: 'Files', icon: FolderOpen },
@@ -585,6 +587,7 @@ export function ServerDetailRoute() {
           {/* Tab Panes */}
           <div id="server-workspace-panel" role="tabpanel" aria-labelledby={`server-tab-${effectiveTab}`} tabIndex={0} className="outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg">
           {effectiveTab === 'schedules' && <SchedulesPanel key={server.id} serverId={server.id} />}
+          {effectiveTab === 'performance' && <PerformancePanel key={server.id} serverId={server.id} isRunning={isRunning} />}
           {effectiveTab === 'console' && (
             <ConsoleViewer serverId={server.id} running={isRunning} />
           )}

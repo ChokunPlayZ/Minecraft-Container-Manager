@@ -927,6 +927,19 @@ func (m *Manager) Logs(ctx context.Context, containerID string, follow bool) (io
 	return rc, nil
 }
 
+// LogsSince streams only newly emitted output, for collecting asynchronous
+// command responses when a server does not write a shared latest.log file.
+func (m *Manager) LogsSince(ctx context.Context, containerID string, since time.Time) (io.ReadCloser, error) {
+	rc, err := m.client.ContainerLogs(ctx, containerID, container.LogsOptions{
+		ShowStdout: true, ShowStderr: true, Follow: true,
+		Since: since.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stream command output: %w", err)
+	}
+	return rc, nil
+}
+
 // SendConsole writes a command to a running server's console without requiring
 // RCON. It first tries writing directly to the named console pipe (/tmp/console.in)
 // created in lightweight containers. If that is unavailable, it falls back

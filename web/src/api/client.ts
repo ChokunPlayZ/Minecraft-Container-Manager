@@ -7,6 +7,9 @@ import type {
   Me,
   Server,
   ServerStats,
+  PerformanceHistory,
+  PerformanceRange,
+  SparkReport,
   HostCapacity,
   ServerStatus,
   ServerType,
@@ -159,9 +162,44 @@ let mockDNSRecords: DNSRecord[] = [
 ];
 
 let mockSchedules: ScheduledTask[] = [];
+const mockSparkReports: Record<string, SparkReport> = {};
 
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
+
+  const performancePath = path.match(/^\/api\/servers\/([^/]+)\/performance(?:\?range=(1h|6h|24h|7d))?$/);
+  if (performancePath) {
+    const [, serverId, range = '1h'] = performancePath;
+    const hours = { '1h': 1, '6h': 6, '24h': 24, '7d': 168 }[range] ?? 1;
+    const resolution = { '1h': 30, '6h': 60, '24h': 300, '7d': 1800 }[range] ?? 30;
+    const count = hours * 3600 / resolution;
+    const end = Date.now();
+    const start = end - hours * 3600000;
+    // Illustrative history is confined to the explicitly labeled demo mode.
+    return {
+      start: new Date(start).toISOString(), end: new Date(end).toISOString(),
+      resolution_seconds: resolution, interval_seconds: 30, retention_days: 7,
+      spark: { available: true, source: 'bundled' }, report: mockSparkReports[serverId] ?? null,
+      samples: Array.from({ length: count }, (_, index) => {
+        const phase = index * 120 / count;
+        const spike = phase > 70 && phase < 82;
+        return {
+          timestamp: new Date(start + index * resolution * 1000).toISOString(), online: true,
+          cpu_percent: 18 + 8 * Math.sin(phase / 8) + (spike ? 24 : 0),
+          memory_bytes: (1.6 + phase / 500 + 0.1 * Math.sin(phase / 5)) * 1024 ** 3,
+          players: Math.max(0, Math.round(9 + 6 * Math.sin(phase / 24))),
+          tps: spike ? 17.8 : 20,
+          tick_ms: 12 + 4 * Math.sin(phase / 6) + (spike ? 43 : 0),
+        };
+      }),
+    } as T;
+  }
+  const sparkPath = path.match(/^\/api\/servers\/([^/]+)\/performance\/spark$/);
+  if (sparkPath && init.method === 'POST') {
+    const report: SparkReport = { id: crypto.randomUUID(), status: 'failed', started_at: new Date().toISOString(), existing: false, error: 'Demo mode cannot capture a real spark report.' };
+    mockSparkReports[sparkPath[1]] = report;
+    return report as T;
+  }
 
   if (path === '/api/system/capacity') {
     return { runtime: 'docker', cpu_cores: 8, memory_total_bytes: 32 * 1024 ** 3 } as T;
@@ -709,6 +747,12 @@ export const api = {
   recreateServer: (id: string) => request<Server>(`/api/servers/${id}/recreate`, { method: 'POST' }),
 
   serverStatus: (id: string) => request<ServerStatus>(`/api/servers/${id}/status`),
+
+  performanceHistory: (id: string, range: PerformanceRange = '1h') =>
+    request<PerformanceHistory>(`/api/servers/${id}/performance?range=${range}`),
+
+  captureSparkReport: (id: string) =>
+    request<SparkReport>(`/api/servers/${id}/performance/spark`, { method: 'POST' }),
 
   serverStats: (id: string) => {
     if (isMock()) {

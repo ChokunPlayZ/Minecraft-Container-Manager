@@ -129,6 +129,8 @@ a container.
   - **Block / Disk I/O**: Real-time disk read and write bytes.
 - **Server Uptime Tracking**: Tracks server start timestamps (`started_at`) and displays live, human-readable uptime (e.g., `3d 4h 12m`) on dashboard cards and server headers.
 - **ServerStatsGrid**: Clean, visual metrics dashboard available directly on the server overview and management pages.
+- **Performance History**: The server's Performance tab charts CPU, memory, connected players, TPS, and median tick time. Background samples are stored in SQLite every 30 seconds and retained for 7 days, with 1-hour, 6-hour, 24-hour, and 7-day views. Longer windows average resource/tick readings and show peak player counts. Missing readings appear as gaps; history starts when the updated panel runs.
+- **Spark Reports**: Detects enabled spark plugins/mods from their metadata or filenames, and bundled spark on Paper 1.21.1+. Capture a 60-second profile and open its returned link, or open a profiler that is already running. Capture progress and the latest result survive navigation. TPS and median tick duration require spark; player/tick commands use the shared server log or fresh container output, with RCON as a fallback. Reports are uploaded by spark to its viewer when requested.
 
 ### 🌐 Proxy Networks & Multi-Server Architecture
 - **Dedicated Container Network (`mcm-network`)**: Sibling containers join an isolated Docker bridge network where each container is addressable by its internal hostname (`mcm-<server-id>`).

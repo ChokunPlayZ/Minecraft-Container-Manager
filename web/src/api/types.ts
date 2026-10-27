@@ -117,6 +117,38 @@ export interface ServerStats {
   net_tx_bytes: number;
 }
 
+export type PerformanceRange = '1h' | '6h' | '24h' | '7d';
+
+export interface PerformanceSample {
+  timestamp: string;
+  online: boolean;
+  cpu_percent: number | null;
+  memory_bytes: number | null;
+  players: number | null;
+  tps: number | null;
+  tick_ms: number | null;
+}
+
+export interface SparkReport {
+  id: string;
+  status: 'capturing' | 'completed' | 'failed';
+  started_at: string;
+  url?: string;
+  error?: string;
+  existing: boolean;
+}
+
+export interface PerformanceHistory {
+  samples: PerformanceSample[];
+  start: string;
+  end: string;
+  resolution_seconds: number;
+  interval_seconds: number;
+  retention_days: number;
+  spark: { available: boolean; source: 'bundled' | 'plugin' | 'mod' | 'unavailable' };
+  report: SparkReport | null;
+}
+
 export interface ConsoleLine {
   timestamp: string;
   level?: string;
