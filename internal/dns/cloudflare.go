@@ -61,8 +61,8 @@ type cfSRVRecord struct {
 	Data cfSRVData `json:"data"`
 }
 
-// cfZoneInfo contains zone metadata returned by Cloudflare.
-type cfZoneInfo struct {
+// zoneInfo contains zone metadata returned by Cloudflare.
+type zoneInfo struct {
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
@@ -136,12 +136,12 @@ func (c *cfClient) findSRVRecord(ctx context.Context, name string) (string, erro
 }
 
 // verifyZone verifies that the configured API token has access to the zone.
-func (c *cfClient) verifyZone(ctx context.Context) (*cfZoneInfo, error) {
+func (c *cfClient) verifyZone(ctx context.Context) (*zoneInfo, error) {
 	raw, err := c.do(ctx, http.MethodGet, "/zones/"+c.zone, nil)
 	if err != nil {
 		return nil, err
 	}
-	var zone cfZoneInfo
+	var zone zoneInfo
 	if err := json.Unmarshal(raw, &zone); err != nil {
 		return nil, fmt.Errorf("decode zone result: %w", err)
 	}
@@ -214,7 +214,7 @@ func (c *cfClient) do(ctx context.Context, method, path string, body []byte) (js
 				msg = strings.Join(errMsgs, ", ")
 			}
 		}
-		return nil, fmt.Errorf("cloudflare API (%d): %s", resp.StatusCode, msg)
+		return nil, &providerError{resp.StatusCode, fmt.Sprintf("cloudflare API (%d): %s", resp.StatusCode, msg)}
 	}
 	if envelope.Result == nil {
 		return json.RawMessage("null"), nil

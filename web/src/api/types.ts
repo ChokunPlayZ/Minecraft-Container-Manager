@@ -215,6 +215,7 @@ export interface DiscordSettingsInput {
 }
 
 export interface DNSRecord {
+  provider?: string;
   server_id: string;
   record_id: string;
   name: string;
@@ -229,6 +230,8 @@ export interface DNSRecord {
 }
 
 export interface DNSConfig {
+  provider: string;
+  configured: boolean;
   publish: boolean;
   domain: string;
   zone: string;
@@ -248,6 +251,8 @@ export interface DNSStatusResponse {
 }
 
 export interface ServerDNSResponse {
+  subdomain?: string;
+  provider?: string;
   record: DNSRecord | null;
   configured: boolean;
   domain: string;

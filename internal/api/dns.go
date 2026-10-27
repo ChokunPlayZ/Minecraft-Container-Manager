@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/mcm-panel/mcm/internal/dns"
 )
@@ -24,7 +23,7 @@ func (s *Server) handleListDNS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg, _ := s.dns.GetConfig(r.Context())
-	configured := cfg != nil && cfg.Publish && cfg.HasToken && cfg.Domain != "" && cfg.Zone != ""
+	configured := cfg != nil && cfg.Configured
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"records":    records,
@@ -47,21 +46,31 @@ func (s *Server) handleGetServerDNS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg, _ := s.dns.GetConfig(r.Context())
-	configured := cfg != nil && cfg.Publish && cfg.HasToken && cfg.Domain != "" && cfg.Zone != ""
+	configured := cfg != nil && cfg.Configured
 
 	rec, _ := s.dns.GetRecord(r.Context(), id)
+	subdomain, err := s.dns.GetSubdomain(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "could not read DNS preference")
+		return
+	}
+	if subdomain == "" && rec != nil {
+		subdomain = rec.Subdomain
+	}
+	if cfg == nil {
+		writeError(w, http.StatusInternalServerError, "internal", "could not read DNS settings")
+		return
+	}
 
 	var joinAddress string
-	if rec != nil && cfg != nil && cfg.Domain != "" {
-		if rec.Subdomain == "@" || rec.Subdomain == "" {
-			joinAddress = cfg.Domain
-		} else {
-			joinAddress = rec.Subdomain + "." + cfg.Domain
-		}
+	if rec != nil {
+		joinAddress = rec.JoinAddress()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"record":       rec,
+		"subdomain":    subdomain,
+		"provider":     cfg.Provider,
 		"configured":   configured,
 		"domain":       cfg.Domain,
 		"server_id":    srv.ID,
@@ -123,14 +132,9 @@ func (s *Server) handlePublishDNS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, _ := s.dns.GetConfig(r.Context())
 	var joinAddress string
-	if rec != nil && cfg != nil && cfg.Domain != "" {
-		if rec.Subdomain == "@" || rec.Subdomain == "" {
-			joinAddress = cfg.Domain
-		} else {
-			joinAddress = rec.Subdomain + "." + cfg.Domain
-		}
+	if rec != nil {
+		joinAddress = rec.JoinAddress()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -154,20 +158,14 @@ func (s *Server) handleRemoveDNS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-type testDNSRequest struct {
-	APIToken string `json:"api_token"`
-	Zone     string `json:"zone"`
-	Domain   string `json:"domain"`
-}
-
-// handleTestDNS verifies Cloudflare credentials and reports connectivity.
+// handleTestDNS verifies DNS provider credentials and reports connectivity.
 func (s *Server) handleTestDNS(w http.ResponseWriter, r *http.Request) {
 	if s.dns == nil {
 		writeError(w, http.StatusNotFound, "not_found", "DNS publishing is not enabled")
 		return
 	}
 
-	var req testDNSRequest
+	var req dns.VerifyOptions
 	if r.Body != nil {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
 		if len(bodyBytes) > 0 {
@@ -175,7 +173,7 @@ func (s *Server) handleTestDNS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.dns.Verify(r.Context(), strings.TrimSpace(req.APIToken), strings.TrimSpace(req.Zone), strings.TrimSpace(req.Domain))
+	result, err := s.dns.VerifyWithOptions(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return

@@ -216,12 +216,12 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
 - **Archive Operations**: Create zip archives and extract zip files in place.
 - **Remote Download**: Fetch remote files or datapacks directly from an external URL.
 
-### 🌐 Cloudflare SRV DNS Routing & Port Management
-- **RFC 2782 DNS SRV Management**: Automatically registers, updates, and removes `_minecraft._tcp` SRV records via Cloudflare API v4.
+### 🌐 SRV DNS Routing & Port Management
+- **RFC 2782 DNS SRV Management**: Automatically registers, updates, and removes `_minecraft._tcp` SRV records via Cloudflare, Porkbun, DigitalOcean, or Amazon Route 53.
 - **Custom Subdomains & Apex Routing**: Route players through custom subdomains (e.g., `survival.example.com`) or apex root domains (`@` -> `example.com`) without exposing non-standard port numbers.
 - **One-Click Direct Join Badge**: Displays active join addresses on the server overview with instant clipboard copying.
 - **Port Pool Management**: Configure and validate host port allocation ranges (`MCM_PORT_RANGE`), monitor available vs. allocated ports, and prevent port collision conflicts.
-- **Automatic Lifecycle Cleanup**: Removing a server automatically deregisters its DNS record on Cloudflare.
+- **Automatic Lifecycle Cleanup**: Removing a server automatically deregisters its DNS record with the original provider. Custom SRV names persist across stop/start cycles, record removal, and server renames.
 
 ### 📦 S3-Compatible Backups & Scheduling
 - **Dedicated Backup Manager**: Open Backups to select a server, manage archives, search by name, filter by local or S3 storage, and save its automatic backup interval. The server's Backups tab remains available.
@@ -449,14 +449,24 @@ Configurable via the panel Settings UI or `PUT /api/settings`:
 
 | Setting Key | Default | Description |
 | --- | --- | --- |
-| `dns_publish` | `false` | Master toggle to enable Cloudflare SRV DNS management. |
+| `dns_provider` | `cloudflare` | `cloudflare`, `porkbun`, `digitalocean`, or `route53`. Credentials are retained separately for each provider. |
+| `dns_publish` | `false` | Master toggle to enable SRV DNS management. |
 | `dns_domain` | *(empty)* | Apex zone domain name (e.g. `example.com`). |
 | `dns_zone` | *(empty)* | Cloudflare Zone ID (32-character hexadecimal string). |
-| `dns_api_token` | *(empty)* | Cloudflare API token with `Zone.DNS:Edit` permissions. |
+| `dns_api_token` | *(empty)* | Cloudflare API token with `Zone:Read` and `DNS:Edit` permissions. |
+| `dns_porkbun_api_token` | *(empty)* | Porkbun API key. Enable API access for the domain. |
+| `dns_porkbun_api_secret` | *(empty)* | Porkbun secret API key. |
+| `dns_porkbun_zone` | `dns_domain` | Registered zone domain, e.g. `example.com`; can differ from a base domain such as `games.example.com`. |
+| `dns_digitalocean_api_token` | *(empty)* | DigitalOcean token with domain read/create/update/delete permissions. |
+| `dns_digitalocean_zone` | `dns_domain` | Zone domain in DigitalOcean Networking. |
+| `dns_route53_api_token` | *(empty)* | AWS access key ID. |
+| `dns_route53_api_secret` | *(empty)* | AWS secret access key. |
+| `dns_route53_session_token` | *(empty)* | Optional STS session token for temporary AWS credentials. |
+| `dns_route53_zone` | *(empty)* | Public hosted zone ID. IAM permissions: `route53:GetHostedZone`, `route53:ListResourceRecordSets`, and `route53:ChangeResourceRecordSets`. |
 | `dns_host` | *(empty)* | Target A/AAAA host pointing to the panel host IP (falls back to `dns_domain`). |
 | `dns_service` | `_minecraft` | Service name according to RFC 2782. |
 | `dns_proto` | `_tcp` | Protocol name according to RFC 2782. |
-| `dns_ttl` | `1` | DNS record TTL in seconds (`1` = Auto). |
+| `dns_ttl` | `120` | DNS record TTL in seconds (`1` = Auto on Cloudflare). Clamped to 600 on Porkbun and 30 on DigitalOcean. |
 | `port_range_start` | `25565` | Start of the port allocation pool range. |
 | `port_range_end` | `25665` | End of the port allocation pool range. |
 
@@ -613,11 +623,16 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `GET` | `/api/backups/:backupId/download` | Download backup archive file from storage. |
 | `DELETE` | `/api/backups/:backupId` | Delete a backup archive from storage. |
 
-### Cloudflare SRV DNS
+### SRV DNS
+
+Choose the provider under **Settings → DNS Providers** and use **Test Connection** before enabling publishing. Provider API references: [Cloudflare](https://developers.cloudflare.com/api/resources/dns/subresources/records/), [Porkbun](https://porkbun.com/api/json/v3/documentation), [DigitalOcean](https://docs.digitalocean.com/reference/api/reference/domain-records/), [Route 53](https://docs.aws.amazon.com/Route53/latest/APIReference/API_ChangeResourceRecordSets.html). Route 53 supports simple SRV records in public hosted zones on the global AWS endpoint.
+
+`POST /api/dns/test` accepts optional `provider`, `api_token`, `api_secret`, `session_token`, `zone`, and `domain` fields. Missing credentials use that provider's saved values. `GET /api/servers/{id}/dns` includes the saved `subdomain` even when no record is published. Use `@` for the apex domain. Removing the published record preserves this address preference; deleting the server removes it.
+
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/dns` | List all active DNS records and Cloudflare connection status. |
-| `POST` | `/api/dns/test` | Test Cloudflare credentials and zone connectivity. |
+| `GET` | `/api/dns` | List all active DNS records and DNS provider connection status. |
+| `POST` | `/api/dns/test` | Test saved or supplied DNS provider credentials and zone connectivity (also works while publishing is disabled). |
 | `GET` | `/api/servers/:id/dns` | Get DNS record status and join address for a server. |
 | `POST` | `/api/servers/:id/dns` | Publish or update an SRV record for a server. |
 | `DELETE` | `/api/servers/:id/dns` | Remove an SRV record for a server. |
@@ -652,7 +667,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 │   ├── backups/            # S3 client, archive engine, and background backup scheduler
 │   ├── config/             # Environment variable parsing and defaults
 │   ├── db/                 # SQLite connection and migration runner
-│   ├── dns/                # Cloudflare API v4 integration for RFC 2782 SRV records
+│   ├── dns/                # Cloudflare, Porkbun, DigitalOcean, and Route 53 SRV records
 │   ├── docker/             # Docker engine client, container provisioning, and resource metrics
 │   ├── jars/               # Version and build metadata resolution for 22 server platforms
 │   ├── ports/              # Host port allocation pool manager and validator

@@ -37,7 +37,7 @@ export function ServerDNSCard({
       const res = await api.getServerDNS(server.id);
       setData(res);
       if (res.record) {
-        setSubdomain(res.record.subdomain ?? '');
+        setSubdomain(res.subdomain || res.record.subdomain || '');
         setTargetHost(res.record.target !== res.domain ? res.record.target : '');
         setPriority(res.record.priority ?? 0);
         setWeight(res.record.weight ?? 5);
@@ -47,7 +47,7 @@ export function ServerDNSCard({
       } else {
         // Suggest clean server name label if none exists
         const defaultSub = server.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-        setSubdomain(defaultSub);
+        setSubdomain(res.subdomain || defaultSub);
       }
       setError(null);
     } catch (e) {
@@ -85,7 +85,7 @@ export function ServerDNSCard({
         priority,
         weight,
       });
-      setSuccess('SRV record successfully published to Cloudflare!');
+      setSuccess('SRV record successfully published!');
       if (onDnsChanged && res.join_address) {
         onDnsChanged(res.join_address);
       }
@@ -99,7 +99,7 @@ export function ServerDNSCard({
 
   async function handleRemove() {
     const ok = await confirm(
-      `Remove the Cloudflare SRV record for "${server.name}"? Players will no longer be able to join via ${data?.join_address || previewJoin}.`,
+      `Remove the SRV record for "${server.name}"? Players will no longer be able to join via ${data?.join_address || previewJoin}.`,
       { title: 'Remove DNS Record', confirmLabel: 'Remove Record', destructive: true },
     );
     if (!ok) return;
@@ -109,7 +109,7 @@ export function ServerDNSCard({
     setSuccess(null);
     try {
       await api.removeServerDNS(server.id);
-      setSuccess('SRV record removed from Cloudflare.');
+      setSuccess('SRV record removed.');
       if (onDnsChanged) {
         onDnsChanged('');
       }
@@ -134,7 +134,7 @@ export function ServerDNSCard({
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Globe className="h-4 w-4 text-primary" />
-            Cloudflare SRV Routing
+            DNS SRV Routing
           </CardTitle>
           <CardDescription>Loading DNS configuration…</CardDescription>
         </CardHeader>
@@ -183,10 +183,10 @@ export function ServerDNSCard({
           {!isConfigured && (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm space-y-2">
               <p className="font-medium text-amber-800 dark:text-amber-300">
-                Cloudflare SRV publishing is not fully configured.
+                SRV publishing is not fully configured.
               </p>
               <p className="text-muted-foreground text-xs leading-relaxed">
-                To route domain names to your Minecraft servers automatically, configure your Cloudflare API Token, Zone ID, and Domain in the global panel settings.
+                To route domain names to your Minecraft servers automatically, configure your DNS provider, credentials, and domain in the global panel settings.
               </p>
               <Button asChild size="sm" variant="outline" className="mt-2 text-xs">
                 <Link to="/settings" search={{ tab: 'dns' }}>
@@ -372,7 +372,7 @@ export function ServerDNSCard({
               <div className="space-y-1">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Globe className="h-4 w-4 text-primary" />
-                  Cloudflare SRV Routing
+                  DNS SRV Routing
                 </CardTitle>
                 <CardDescription>
                   Allow Minecraft players to join using a clean domain name without typing the port.

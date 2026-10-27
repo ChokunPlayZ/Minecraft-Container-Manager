@@ -246,4 +246,21 @@ func TestHandlePublishAndGetAndRemoveDNS(t *testing.T) {
 	if delRec.Code != http.StatusOK {
 		t.Fatalf("DELETE /api/servers/srv-demo/dns code = %d, want 200", delRec.Code)
 	}
+
+	// Stopping/removing a record must still return the chosen label to the UI.
+	afterReq := httptest.NewRequest(http.MethodGet, "/api/servers/srv-demo/dns", nil)
+	afterReq.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	after := httptest.NewRecorder()
+	handler.ServeHTTP(after, afterReq)
+	var stopped struct {
+		Subdomain   string      `json:"subdomain"`
+		Record      *dns.Record `json:"record"`
+		JoinAddress string      `json:"join_address"`
+	}
+	if err := json.Unmarshal(after.Body.Bytes(), &stopped); err != nil {
+		t.Fatal(err)
+	}
+	if after.Code != http.StatusOK || stopped.Subdomain != "smp" || stopped.Record != nil || stopped.JoinAddress != "" {
+		t.Fatalf("lost saved DNS name: %s", after.Body.String())
+	}
 }

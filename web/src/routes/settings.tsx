@@ -11,7 +11,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { useModal } from '../components/ui/modal';
-import { CloudflareDNSSettingsCard } from '../components/cloudflare-dns-settings';
+import { DNSSettingsCard } from '../components/dns-settings';
 import { PortPoolSettingsCard } from '../components/port-pool-settings';
 import { DiscordNotificationSettings } from '../components/discord-notification-settings';
 import { UpdateCheckerSettings } from '../components/update-checker-settings';
@@ -82,7 +82,7 @@ function SettingsRoute() {
             }`}
           >
             <Globe className="h-4 w-4" />
-            Cloudflare DNS
+            DNS Providers
           </button>
           <button
             type="button"
@@ -123,7 +123,7 @@ function SettingsRoute() {
           </div>
         ) : activeTab === 'dns' ? (
           <div className="max-w-3xl">
-            <CloudflareDNSSettingsCard />
+            <DNSSettingsCard />
           </div>
         ) : activeTab === 'updates' ? (
           <div className="max-w-3xl"><UpdateCheckerSettings /></div>

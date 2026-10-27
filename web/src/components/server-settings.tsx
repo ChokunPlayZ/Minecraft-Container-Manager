@@ -206,7 +206,7 @@ export function ServerSettings({
         <CardTitle className="text-base">Settings</CardTitle>
         <CardDescription>
           {tab === 'dns'
-            ? 'Configure Cloudflare SRV records and domain routing.'
+            ? 'Configure SRV records and domain routing.'
             : 'Update the server name, resources, backups, and published ports.'}
         </CardDescription>
       </CardHeader>

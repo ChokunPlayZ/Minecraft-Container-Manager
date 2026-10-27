@@ -17,10 +17,17 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Select } from './ui/select';
+import { dnsProviders, isDNSProvider, type DNSProvider } from '../lib/dns-providers';
 import { Switch } from './ui/switch';
 import { useModal } from './ui/modal';
 
-export function CloudflareDNSSettingsCard() {
+export function DNSSettingsCard() {
+  const [provider, setProvider] = useState<DNSProvider>('cloudflare');
+  const [providerSettings, setProviderSettings] = useState<Record<string, string>>({});
+  const [apiSecret, setApiSecret] = useState('');
+  const [sessionToken, setSessionToken] = useState('');
+  const providerInfo = dnsProviders[provider];
   const [publish, setPublish] = useState(false);
   const [domain, setDomain] = useState('');
   const [zone, setZone] = useState('');
@@ -56,15 +63,14 @@ export function CloudflareDNSSettingsCard() {
       const s = settingsRes.settings || {};
       setPublish(s.dns_publish === 'true');
       setDomain(s.dns_domain ?? '');
-      setZone(s.dns_zone ?? '');
+      setProviderSettings(s);
+      applyProvider(isDNSProvider(s.dns_provider ?? '') ? s.dns_provider as DNSProvider : 'cloudflare', s);
       setTargetHost(s.dns_host ?? '');
       setService(s.dns_service || '_minecraft');
       setProto(s.dns_proto || '_tcp');
       setTtl(Number(s.dns_ttl) || 120);
       setPriority(Number(s.dns_priority) || 0);
-      setWeight(Number(s.dns_weight) || 5);
-      setHasStoredToken(Boolean(s.dns_api_token));
-      setApiToken(s.dns_api_token ?? '');
+      setWeight(Number(s.dns_weight ?? 5));
 
       setRecords(dnsRes.records ?? []);
       setError(null);
@@ -79,6 +85,34 @@ export function CloudflareDNSSettingsCard() {
     void load();
   }, []);
 
+  function applyProvider(next: DNSProvider, settings: Record<string, string>) {
+    const info = dnsProviders[next];
+    setProvider(next);
+    setZone(settings[info.zoneKey] ?? '');
+    setApiToken(settings[info.tokenKey] ?? '');
+    setHasStoredToken(Boolean(settings[info.tokenKey]));
+    setApiSecret(info.secretKey ? settings[info.secretKey] ?? '' : '');
+    setSessionToken(info.sessionKey ? settings[info.sessionKey] ?? '' : '');
+  }
+
+  function currentCredentials(): Record<string, string> {
+    return {
+      [providerInfo.zoneKey]: zone.trim(),
+      [providerInfo.tokenKey]: apiToken.trim(),
+      ...(providerInfo.secretKey ? { [providerInfo.secretKey]: apiSecret.trim() } : {}),
+      ...(providerInfo.sessionKey ? { [providerInfo.sessionKey]: sessionToken.trim() } : {}),
+    };
+  }
+
+  function changeProvider(value: string) {
+    if (!isDNSProvider(value)) return;
+    const settings = { ...providerSettings, ...currentCredentials() };
+    setProviderSettings(settings);
+    applyProvider(value, settings);
+    setTestResult(null);
+    setSavedMsg(null);
+  }
+
   async function onSave(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -88,7 +122,7 @@ export function CloudflareDNSSettingsCard() {
       const payload: Record<string, string> = {
         dns_publish: publish ? 'true' : 'false',
         dns_domain: domain.trim(),
-        dns_zone: zone.trim(),
+        dns_provider: provider,
         dns_host: targetHost.trim(),
         dns_service: service.trim() || '_minecraft',
         dns_proto: proto.trim() || '_tcp',
@@ -96,12 +130,16 @@ export function CloudflareDNSSettingsCard() {
         dns_priority: String(priority),
         dns_weight: String(weight),
       };
-      if (apiToken.trim()) {
-        payload.dns_api_token = apiToken.trim();
+      // Keep each provider's credentials separate when switching services.
+      for (const info of Object.values(dnsProviders)) {
+        for (const key of [info.tokenKey, info.secretKey, info.sessionKey, info.zoneKey]) {
+          if (key && providerSettings[key] !== undefined) payload[key] = providerSettings[key];
+        }
       }
+      Object.assign(payload, currentCredentials());
 
       await api.putSettings(payload);
-      setSavedMsg('Cloudflare DNS settings saved.');
+      setSavedMsg('DNS settings saved.');
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : 'Failed to save settings');
@@ -116,8 +154,11 @@ export function CloudflareDNSSettingsCard() {
     setError(null);
     try {
       const res = await api.testDNS({
+        provider,
+        api_secret: apiSecret.trim() || undefined,
+        session_token: sessionToken.trim() || undefined,
         api_token: apiToken.trim() || undefined,
-        zone: zone.trim() || undefined,
+        zone: zone.trim() || ((provider === 'porkbun' || provider === 'digitalocean') ? domain.trim() : undefined),
         domain: domain.trim() || undefined,
       });
       setTestResult(res);
@@ -153,9 +194,9 @@ export function CloudflareDNSSettingsCard() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Globe className="h-4 w-4 text-primary" />
-            Cloudflare SRV Integration
+            DNS SRV Integration
           </CardTitle>
-          <CardDescription>Loading Cloudflare configuration…</CardDescription>
+          <CardDescription>Loading DNS configuration…</CardDescription>
         </CardHeader>
       </Card>
     );
@@ -170,11 +211,11 @@ export function CloudflareDNSSettingsCard() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2">
                 <Globe className="h-4 w-4 text-primary" />
-                Cloudflare SRV Records
+                DNS SRV Records
               </CardTitle>
             </div>
             <CardDescription>
-              Automatically publish and synchronize Minecraft SRV records using Cloudflare DNS.
+              Automatically publish and synchronize Minecraft SRV records with your DNS provider.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -215,10 +256,10 @@ export function CloudflareDNSSettingsCard() {
               <div className="flex items-center justify-between rounded-xl border p-4 bg-muted/20">
                 <div className="space-y-0.5 pr-4">
                   <Label htmlFor="dns-master-switch" className="text-sm font-semibold cursor-pointer">
-                    Enable Cloudflare SRV Publishing
+                    Enable SRV Publishing
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    When enabled, MCM publishes and cleans up SRV records in your Cloudflare zone as servers start, stop, or update.
+                    When enabled, MCM publishes and cleans up SRV records in your DNS zone as servers start, stop, or update.
                   </p>
                 </div>
                 <Switch
@@ -231,14 +272,23 @@ export function CloudflareDNSSettingsCard() {
               {/* Core Credentials & Config */}
               <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="dns-api-token">Cloudflare API Token</Label>
+                  <Label htmlFor="dns-provider">DNS Provider</Label>
+                  <Select id="dns-provider" value={provider} onValueChange={changeProvider} disabled={saving || testing}>
+                    {Object.entries(dnsProviders).map(([value, info]) => (
+                      <option key={value} value={value}>{info.name}</option>
+                    ))}
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Credentials are saved separately for each provider.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="dns-api-token">{providerInfo.tokenLabel}</Label>
                   <div className="relative">
                     <Input
                       id="dns-api-token"
                       type={showToken ? 'text' : 'password'}
                       value={apiToken}
                       onChange={(e) => setApiToken(e.target.value)}
-                      placeholder={hasStoredToken ? '••••••••••••••••••••••••' : 'Cloudflare API Token'}
+                      placeholder={hasStoredToken ? '••••••••••••••••••••••••' : providerInfo.tokenLabel}
                       autoComplete="off"
                       className="pr-10 font-mono text-sm"
                     />
@@ -252,22 +302,38 @@ export function CloudflareDNSSettingsCard() {
                     </button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Create an API token in Cloudflare with <span className="font-semibold">Zone.DNS:Edit</span> permissions for your zone.
+                    {providerInfo.help}
                   </p>
                 </div>
 
+                {providerInfo.secretKey && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="dns-api-secret">{providerInfo.secretLabel}</Label>
+                    <Input id="dns-api-secret" type={showToken ? 'text' : 'password'} value={apiSecret}
+                      onChange={(e) => setApiSecret(e.target.value)} autoComplete="off" />
+                  </div>
+                )}
+                {providerInfo.sessionKey && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="dns-session-token">AWS Session Token (optional)</Label>
+                    <Input id="dns-session-token" type={showToken ? 'text' : 'password'} value={sessionToken}
+                      onChange={(e) => setSessionToken(e.target.value)} autoComplete="off" />
+                    <p className="text-xs text-muted-foreground">Required when using temporary AWS credentials.</p>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="dns-zone">Cloudflare Zone ID</Label>
+                    <Label htmlFor="dns-zone">{providerInfo.zoneLabel}</Label>
                     <Input
                       id="dns-zone"
                       value={zone}
                       onChange={(e) => setZone(e.target.value)}
-                      placeholder="e.g. 023e105f4ecef8ad9ca31a8372d0c353"
+                      placeholder={providerInfo.zonePlaceholder}
                       className="font-mono text-sm"
                     />
                     <p className="text-xs text-muted-foreground">
-                      Found in the right sidebar of your domain overview on Cloudflare.
+                      {providerInfo.zoneHelp}
                     </p>
                   </div>
 
@@ -389,7 +455,7 @@ export function CloudflareDNSSettingsCard() {
               )}
 
               <div className="flex flex-wrap items-center gap-3 pt-2">
-                <Button type="submit" disabled={saving}>
+                <Button type="submit" disabled={saving || testing}>
                   {saving ? (
                     <>
                       <RefreshCw className="h-4 w-4 mr-1.5 animate-spin" />
@@ -403,7 +469,7 @@ export function CloudflareDNSSettingsCard() {
                   type="button"
                   variant="outline"
                   onClick={() => void onTest()}
-                  disabled={testing || (!apiToken && !hasStoredToken) || !zone}
+                  disabled={testing || saving || !apiToken.trim() || !domain.trim() || (!!providerInfo.secretKey && !apiSecret.trim()) || ((provider === 'cloudflare' || provider === 'route53') && !zone.trim())}
                 >
                   {testing ? (
                     <>
@@ -413,7 +479,7 @@ export function CloudflareDNSSettingsCard() {
                   ) : (
                     <>
                       <ShieldCheck className="h-4 w-4 mr-1.5 text-primary" />
-                      Test Cloudflare Connection
+                      Test {providerInfo.name} Connection
                     </>
                   )}
                 </Button>
@@ -457,10 +523,7 @@ export function CloudflareDNSSettingsCard() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {records.map((r) => {
-                      const joinAddr =
-                        r.subdomain && r.subdomain !== '@'
-                          ? `${r.subdomain}.${domain || 'domain'}`
-                          : domain || 'apex';
+                      const joinAddr = r.name.split('.').slice(2).join('.');
                       return (
                         <tr key={r.server_id} className="hover:bg-muted/20 transition-colors">
                           <td className="px-4 py-3 font-medium">

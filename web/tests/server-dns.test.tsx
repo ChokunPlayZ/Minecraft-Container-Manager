@@ -29,6 +29,17 @@ describe('ServerDNSCard', () => {
     vi.clearAllMocks();
   });
 
+  it.each(['play', '@'])('keeps saved label %s while the record is unpublished and the server is renamed', async (subdomain) => {
+    vi.spyOn(api, 'getServerDNS').mockResolvedValue({
+      record: null, subdomain, provider: 'porkbun', configured: true,
+      domain: 'example.com', server_id: mockServer.id, server_name: 'Renamed Server',
+      host_port: 25565, join_address: '',
+    });
+    render(<ServerDNSCard server={{ ...mockServer, name: 'Renamed Server', state: 'stopped' }} />);
+    await waitFor(() => expect(screen.getByLabelText(/Subdomain Label/i)).toHaveValue(subdomain));
+    expect(screen.getByRole('button', { name: 'Publish SRV Record' })).toBeEnabled();
+  });
+
   it('renders server DNS card and shows published record', async () => {
     vi.spyOn(api, 'getServerDNS').mockResolvedValue({
       record: {
@@ -55,7 +66,7 @@ describe('ServerDNSCard', () => {
     render(<ServerDNSCard server={mockServer} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Cloudflare SRV Routing')).toBeInTheDocument();
+      expect(screen.getByText('DNS SRV Routing')).toBeInTheDocument();
     });
 
     // Check active badge
@@ -119,7 +130,7 @@ describe('ServerDNSCard', () => {
           port: 25565,
         }),
       );
-      expect(screen.getByText('SRV record successfully published to Cloudflare!')).toBeInTheDocument();
+      expect(screen.getByText('SRV record successfully published!')).toBeInTheDocument();
     });
   });
 });

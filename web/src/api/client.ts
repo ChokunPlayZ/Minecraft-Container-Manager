@@ -1,3 +1,4 @@
+import { dnsProviders, isDNSProvider } from '../lib/dns-providers';
 import type {
   UpdateCheckerStatus,
   DiscordSettings,
@@ -166,6 +167,17 @@ let mockDNSRecords: DNSRecord[] = [
   },
 ];
 
+const mockDNSPreferences: Record<string, string> = { demo: 'demo' };
+
+function mockDNSConfig() {
+  const provider = isDNSProvider(mockDNSSettings.dns_provider ?? '') ? mockDNSSettings.dns_provider as keyof typeof dnsProviders : 'cloudflare';
+  const info = dnsProviders[provider];
+  const token = mockDNSSettings[info.tokenKey];
+  const secret = info.secretKey ? mockDNSSettings[info.secretKey] : true;
+  const zone = mockDNSSettings[info.zoneKey] || ((provider === 'porkbun' || provider === 'digitalocean') ? mockDNSSettings.dns_domain : '');
+  return { provider, zone, has_token: !!token, configured: mockDNSSettings.dns_publish === 'true' && !!token && !!secret && !!zone && !!mockDNSSettings.dns_domain };
+}
+
 let mockSchedules: ScheduledTask[] = [];
 let mockDiscordSettings: DiscordSettings = {
   enabled: false, configured: false,
@@ -296,10 +308,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     return {
       records: mockDNSRecords,
       config: {
+        ...mockDNSConfig(),
         publish: mockDNSSettings.dns_publish === 'true',
         domain: mockDNSSettings.dns_domain || 'example.com',
-        zone: mockDNSSettings.dns_zone || 'zone-123456789',
-        has_token: !!mockDNSSettings.dns_api_token,
         host: mockDNSSettings.dns_host || 'mc-node1.example.com',
         service: mockDNSSettings.dns_service || '_minecraft',
         proto: mockDNSSettings.dns_proto || '_tcp',
@@ -307,7 +318,7 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
         priority: Number(mockDNSSettings.dns_priority) || 0,
         weight: Number(mockDNSSettings.dns_weight) || 5,
       },
-      configured: mockDNSSettings.dns_publish === 'true' && !!mockDNSSettings.dns_api_token,
+      configured: mockDNSConfig().configured,
     } as T;
   }
 
@@ -318,7 +329,7 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
       return { ok: true } as T;
     }
     if (init.method === 'POST') {
-      let sub = 'demo';
+      let sub = mockDNSPreferences[serverId] || 'demo';
       let target = mockDNSSettings.dns_host || 'mc-node1.example.com';
       let port = 25565;
       let priority = 0;
@@ -339,7 +350,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
       const cleanSub = sub === '@' ? '' : sub;
       const recName = cleanSub ? `_minecraft._tcp.${cleanSub}.${domain}` : `_minecraft._tcp.${domain}`;
       const joinAddress = cleanSub ? `${cleanSub}.${domain}` : domain;
+      mockDNSPreferences[serverId] = sub;
       const rec: DNSRecord = {
+        provider: mockDNSConfig().provider,
         server_id: serverId,
         record_id: `cf-rec-${serverId}`,
         name: recName,
@@ -357,10 +370,12 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     }
     const rec = mockDNSRecords.find((r) => r.server_id === serverId) || null;
     const domain = mockDNSSettings.dns_domain || 'example.com';
-    const joinAddress = rec ? (rec.subdomain && rec.subdomain !== '@' ? `${rec.subdomain}.${domain}` : domain) : '';
+    const joinAddress = rec ? rec.name.split('.').slice(2).join('.') : '';
     return {
       record: rec,
-      configured: mockDNSSettings.dns_publish === 'true' && !!mockDNSSettings.dns_api_token,
+      subdomain: mockDNSPreferences[serverId] || rec?.subdomain || '',
+      provider: mockDNSConfig().provider,
+      configured: mockDNSConfig().configured,
       domain,
       server_id: serverId,
       server_name: 'Mega SMP Server',
@@ -912,7 +927,7 @@ export const api = {
 
   getDNS: () => request<DNSStatusResponse>('/api/dns'),
 
-  testDNS: (creds?: { api_token?: string; zone?: string; domain?: string }) =>
+  testDNS: (creds?: { provider?: string; api_token?: string; api_secret?: string; session_token?: string; zone?: string; domain?: string }) =>
     request<DNSTestResult>('/api/dns/test', {
       method: 'POST',
       body: JSON.stringify(creds ?? {}),
