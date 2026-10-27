@@ -66,18 +66,27 @@ func TestHostCapacityEndpoint(t *testing.T) {
 			if response.Code != http.StatusOK {
 				t.Fatalf("capacity = %d: %s", response.Code, response.Body)
 			}
-			var capacity docker.HostCapacity
+			var capacity servers.HostResources
 			if err := json.Unmarshal(response.Body.Bytes(), &capacity); err != nil {
 				t.Fatal(err)
 			}
 			if capacity.Runtime != runtime || capacity.CPUCores != 16 || capacity.MemoryTotalBytes != 64<<30 {
 				t.Fatalf("capacity = %+v", capacity)
 			}
+			if capacity.Disk == nil || capacity.Disk.TotalBytes == 0 || capacity.Usage == nil || capacity.Usage.MemoryBytes != 0 {
+				t.Fatalf("missing disk or idle-server usage: %+v", capacity)
+			}
 			fail.Store(true)
 			response = httptest.NewRecorder()
 			handler.ServeHTTP(response, req)
-			if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "capacity_unavailable") {
+			if response.Code != http.StatusOK {
 				t.Fatalf("unavailable capacity = %d: %s", response.Code, response.Body)
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &capacity); err != nil {
+				t.Fatal(err)
+			}
+			if capacity.RuntimeError == "" || capacity.Usage != nil || capacity.Disk == nil {
+				t.Fatalf("runtime failure should preserve disk space: %+v", capacity)
 			}
 		})
 	}
@@ -87,8 +96,11 @@ func TestHostCapacityEndpoint(t *testing.T) {
 		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)
-		if response.Code != http.StatusServiceUnavailable {
+		if serverStore == nil && response.Code != http.StatusServiceUnavailable {
 			t.Fatalf("missing runtime = %d: %s", response.Code, response.Body)
+		}
+		if serverStore != nil && (response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "runtime_error")) {
+			t.Fatalf("disk-only response = %d: %s", response.Code, response.Body)
 		}
 	}
 }

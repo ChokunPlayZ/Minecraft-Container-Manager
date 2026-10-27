@@ -61,7 +61,7 @@ export function DashboardRoute() {
         <div><dt className="sr-only">Allocated memory</dt><dd><strong>{(allocatedRam / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} GB</strong> allocated RAM</dd></div>
         {attention > 0 && <div><dt className="sr-only">Needs attention</dt><dd className="text-amber-800 dark:text-amber-300"><strong>{attention}</strong> need attention</dd></div>}
       </dl>}
-      <HostCapacity servers={servers} />
+      <HostCapacity />
       <div className="overflow-hidden rounded-lg border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b p-4 sm:px-6 sm:py-5">
           <div className="relative w-full sm:max-w-xs"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input aria-label="Search servers" placeholder="Search servers…" value={query} onChange={(e) => setQuery(e.target.value)} className="pl-9 pr-9" />{query && <button type="button" aria-label="Clear server search" className="absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted" onClick={() => setQuery('')}><X className="h-4 w-4" /></button>}</div>

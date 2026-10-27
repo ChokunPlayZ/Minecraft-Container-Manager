@@ -448,14 +448,6 @@ func (s *Store) DockerStatus(ctx context.Context) docker.RuntimeStatus {
 	return s.docker.RuntimeStatus(ctx)
 }
 
-// HostCapacity returns CPU and memory totals from the selected container host.
-func (s *Store) HostCapacity(ctx context.Context) (docker.HostCapacity, error) {
-	if isDockerNil(s.docker) {
-		return docker.HostCapacity{}, errors.New("container runtime is unavailable")
-	}
-	return s.docker.HostCapacity(ctx)
-}
-
 // Pool exposes the underlying port pool for the available-ports endpoint.
 func (s *Store) Pool() *ports.Pool {
 	return s.ports

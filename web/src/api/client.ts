@@ -202,7 +202,11 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   }
 
   if (path === '/api/system/capacity') {
-    return { runtime: 'docker', cpu_cores: 8, memory_total_bytes: 32 * 1024 ** 3 } as T;
+    return {
+      runtime: 'docker', cpu_cores: 8, memory_total_bytes: 32 * 1024 ** 3,
+      usage: { cpu_percent: 14.8, memory_bytes: 3.2 * 1024 ** 3, net_rx_bytes: 12582912, net_tx_bytes: 34603008, active_servers: 1 },
+      disk: { path: '/data', total_bytes: 500 * 1024 ** 3, used_bytes: 180 * 1024 ** 3, available_bytes: 310 * 1024 ** 3 },
+    } as T;
   }
 
   const schedulePath = path.match(/^\/api\/servers\/([^/]+)\/schedules(?:\/([^/]+))?$/);

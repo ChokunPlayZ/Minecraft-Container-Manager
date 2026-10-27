@@ -96,9 +96,25 @@ export interface ServerStatus {
 }
 
 export interface HostCapacity {
-  runtime: 'docker' | 'podman';
+  runtime: 'docker' | 'podman' | '';
   cpu_cores: number;
   memory_total_bytes: number;
+  usage: {
+    cpu_percent: number | null;
+    memory_bytes: number;
+    net_rx_bytes: number;
+    net_tx_bytes: number;
+    active_servers: number;
+  } | null;
+  disk: {
+    path: string;
+    total_bytes: number;
+    used_bytes: number;
+    available_bytes: number;
+  } | null;
+  runtime_error?: string;
+  usage_error?: string;
+  disk_error?: string;
 }
 
 export interface ServerStats {

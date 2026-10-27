@@ -121,7 +121,7 @@ a container.
 - **Mod Management**: Enable/disable mods with `.disabled` toggling, view installed metadata, and delete mods.
 
 ### 📊 Real-Time Metrics & Container Monitoring
-- **Dashboard Host Capacity**: CPU cores and total memory reported by the selected Docker or Podman daemon, compared with configured limits across all servers. Includes uncapped CPU counts, memory overhead, overcapacity warnings, automatic refresh, and retry when the host is unavailable. These are configured limits, not live usage or reserved resources.
+- **Dashboard Host Resources**: Live CPU, memory, and network usage summed across active managed server containers, with CPU and memory compared against the Docker or Podman host's capacity. The resource viewer refreshes every five seconds and shows available, used, and total space on the filesystem containing `MCM_DATA_DIR`. Available disk space excludes filesystem reservations and remains visible when the runtime is offline. Container usage excludes other host processes; it is not a sum of configured limits.
 - **Live Container Resource Metrics**: Real-time stats polled directly from the Docker daemon:
   - **CPU Utilization %**: Normalized across available host cores.
   - **Memory Usage & Limits**: Real-time memory consumption, limits, and usage percentage.
@@ -473,7 +473,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `GET` | `/api/jars/:kind/versions` | Fetch upstream Minecraft versions for a given server type. |
 | `GET` | `/api/jars/:kind/versions/:v/builds` | Fetch builds for a specific version. |
 | `GET` | `/api/system/java-versions` | List available Java runtime versions supported by the system. |
-| `GET` | `/api/system/capacity` | Get the container host's CPU cores, total memory in bytes, and runtime name. Requires authentication; returns `503` when the runtime is unavailable. |
+| `GET` | `/api/system/capacity` | Get runtime CPU/memory capacity, aggregate measured server usage, and data-directory filesystem space. Requires authentication. Runtime, usage, and disk failures are reported independently so available readings remain visible. |
 
 ### Modpack Management
 | Method | Path | Description |

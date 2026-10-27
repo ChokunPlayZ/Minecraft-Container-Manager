@@ -23,16 +23,10 @@ func (s *Server) handleDockerStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHostCapacity(w http.ResponseWriter, r *http.Request) {
 	if s.servers == nil {
-		writeError(w, http.StatusServiceUnavailable, "capacity_unavailable", "Host capacity is unavailable. Check the container runtime and try again.")
+		writeError(w, http.StatusServiceUnavailable, "capacity_unavailable", "Host resources are unavailable. Refresh to try again.")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	capacity, err := s.servers.HostCapacity(ctx)
-	if err != nil {
-		s.logger.Printf("host capacity: %v", err)
-		writeError(w, http.StatusServiceUnavailable, "capacity_unavailable", "Host capacity is unavailable. Check the container runtime and try again.")
-		return
-	}
-	writeJSON(w, http.StatusOK, capacity)
+	writeJSON(w, http.StatusOK, s.servers.HostCapacity(ctx))
 }

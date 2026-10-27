@@ -14,11 +14,11 @@ type HostCapacity struct {
 }
 
 func (m *Manager) HostCapacity(ctx context.Context) (HostCapacity, error) {
+	capacity := HostCapacity{Runtime: m.runtimeName()}
 	info, err := m.client.Info(ctx)
 	if err != nil {
-		return HostCapacity{}, fmt.Errorf("inspect %s host capacity: %w", m.runtimeName(), err)
+		return capacity, fmt.Errorf("inspect %s host capacity: %w", m.runtimeName(), err)
 	}
-	capacity := HostCapacity{Runtime: m.runtimeName()}
 	if info.NCPU > 0 {
 		capacity.CPUCores = info.NCPU
 	}
