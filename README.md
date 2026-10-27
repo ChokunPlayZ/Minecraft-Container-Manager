@@ -136,6 +136,7 @@ a container.
 
 ### 🔄 Container Lifecycle, Rebuild Warnings & Server Cloning
 - **Lifecycle Controls**: Start, Graceful Stop (`SIGTERM` with `stop`/`end`/`shutdown` commands piped to console), Restart, and Force-Kill (`SIGKILL`).
+- **Dashboard Controls**: Start or stop a server from its fleet row. The action menu includes Restart, server-specific Backups, Copy server, and Force kill with confirmation.
 - **Rebuild Warning System**: Automatically detects when server configuration changes (Java runtime, memory limits, CPU quotas, port bindings) require container recreation and displays an actionable rebuild banner.
 - **1-Click Container Rebuild**: Recreate sibling containers on demand without data loss to apply updated configuration, memory limits, or base images. If online, the server is gracefully shut down first to cleanly save world data, the container is recreated, and it is automatically booted back up.
 - **Instant Server Duplication / Cloning**: 1-click server cloning (`POST /api/servers/:id/copy`) that duplicates server data, configurations, mods, and plugins while automatically allocating fresh host ports.

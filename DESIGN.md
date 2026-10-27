@@ -341,10 +341,10 @@ The shared shell fixes a rail at the left on wide screens and centers fluid cont
 
 The spacing foundation is (4px), with frequently reused half steps (6px, 10px, 14px). Form groups normally use (16px), panel sections (20px or 24px), and larger task separations (24px or 28px). Page heading groups have a (20px) gap and a (28px) bottom margin, reducing the margin to (24px) on narrow screens.
 
-Responsive rules follow the shipped utility breakpoints:
+Responsive rules follow the shipped utility breakpoints, with a local fleet action threshold:
 
 - **Small (640px / 40rem):** panel padding grows from (20px) to (24px); multi-column form groups can open; search fields can become bounded rather than full width. Authentication form width remains capped at (384px).
-- **Medium (768px / 48rem):** fleet rows use aligned identity, state, memory, port, and action columns. Below this width, rows use identity/state columns with actions on a separate line; secondary columns and the table-like heading are hidden. Four resource cells become a two-by-two grid with matching dividers. Workspace tabs continue to scroll horizontally.
+- **Medium (768px / 48rem):** fleet rows align identity, state, memory, and port. Actions occupy a separate full-width row until (1200px), when they share a fixed (232px) column with the Actions heading. Below (768px), rows retain identity/state with actions on a separate line; secondary columns and the table-like heading are hidden. Four resource cells become a two-by-two grid with matching dividers. Workspace tabs continue to scroll horizontally.
 - **Large (1024px / 64rem):** the fixed rail appears and content is offset by its width. Below it, a header menu button reveals labeled navigation in flow; selecting a destination closes the menu. The authentication layout becomes a split panel at this breakpoint.
 - **Extra large (1280px / 80rem):** dense settings and the file editor can use adjacent columns; below it, their sections stack.
 

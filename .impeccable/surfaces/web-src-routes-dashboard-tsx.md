@@ -24,3 +24,13 @@ FORM: Grounded candidate 6, operations runbook / network atlas, seed ad72187a. A
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 
 Confirmed: the user delegated full design judgment and chose direct implementation.
+
+## Dashboard and backup extension
+
+The inherited Operate direction remains in force. Shared navigation now uses compact icon-and-label links for Servers, Backups, Settings, and Users in both rail and mobile menus. Backups opens the dedicated manager; the server workspace retains its Backups tab.
+
+Each fleet row exposes a state-aware Start or Stop button, Manage, and a named More actions menu containing Restart, Backups, Copy server, and Force kill. Backups carries the row's server selection to the manager. Power actions show pending feedback and inline errors; unavailable operations are disabled. Force kill names the server and requires a destructive confirmation describing possible loss of unsaved world data.
+
+At (1200px) and above, rows and the heading share a fixed (232px) actions column. From (768px) through (1199px), identity, status, memory, and host port remain aligned while actions move below a divider across the full row; the Actions heading is hidden. Below (768px), identity and status remain visible, secondary columns and the heading disappear, and actions occupy their own line.
+
+Finish: ship, with no material findings in `.impeccable/review/dashboard-backup-update/finish-review.md`. The extension reuses existing tokens, controls, theme pairs, and confirmation behavior.
