@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mcm-panel/mcm/internal/auth"
@@ -62,8 +63,49 @@ func TestPerformanceEndpoints(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &history); err != nil {
 				t.Fatal(err)
 			}
-			if history.Samples == nil || !history.Spark.Available || history.ResolutionSeconds != 1800 {
+			if history.Samples == nil || !history.Spark.Available || history.ResolutionSeconds != 1800 || history.Settings.CollectionMode != "off" {
 				t.Fatalf("history=%+v", history)
+			}
+		}
+	}
+	for _, test := range []struct {
+		body, id            string
+		authenticated, csrf bool
+		want                int
+	}{
+		{`{"collection_mode":"console"}`, "one", false, true, 401},
+		{`{"collection_mode":"console"}`, "one", true, false, 403},
+		{`{}`, "one", true, true, 400},
+		{`{"collection_mode":null}`, "one", true, true, 400},
+		{`{"collection_mode":true}`, "one", true, true, 400},
+		{`{"collection_mode":"automatic"}`, "one", true, true, 400},
+		{`{"collection_mode":""}`, "one", true, true, 400},
+		{`{"collection_mode":"off"}`, "missing", true, true, 404},
+		{`{"collection_mode":"console"}`, "one", true, true, 200},
+		{`{"collection_mode":"rcon"}`, "one", true, true, 200},
+		{`{"collection_mode":"off"}`, "one", true, true, 200},
+	} {
+		req := httptest.NewRequest(http.MethodPut, "/api/servers/"+test.id+"/performance/settings", strings.NewReader(test.body))
+		if test.authenticated {
+			req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+		}
+		if test.csrf {
+			req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "test-csrf"})
+			req.Header.Set(csrfHeaderName, "test-csrf")
+		}
+		response := httptest.NewRecorder()
+		s.ServeHTTP(response, req)
+		if response.Code != test.want {
+			t.Fatalf("settings %s = %d: %s", test.body, response.Code, response.Body)
+		}
+		if test.want == 200 {
+			var settings servers.PerformanceSettings
+			if err := json.Unmarshal(response.Body.Bytes(), &settings); err != nil {
+				t.Fatal(err)
+			}
+			var mode string
+			if err := handle.DB.QueryRow(`SELECT collection_mode FROM performance_settings WHERE server_id='one'`).Scan(&mode); err != nil || mode != settings.CollectionMode {
+				t.Fatalf("mode=%s settings=%+v err=%v", mode, settings, err)
 			}
 		}
 	}

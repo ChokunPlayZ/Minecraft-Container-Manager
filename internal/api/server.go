@@ -152,6 +152,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/status", s.requireAuth(s.wrapJSON(s.handleServerStatus)))
 	s.mux.HandleFunc("GET /api/servers/{id}/stats", s.requireAuth(s.wrapJSON(s.handleServerStats)))
 	s.mux.HandleFunc("GET /api/servers/{id}/performance", s.requireAuth(s.wrapJSON(s.handlePerformanceHistory)))
+	s.mux.HandleFunc("PUT /api/servers/{id}/performance/settings", s.requireAuth(s.wrapJSON(s.handlePerformanceCollection)))
 	s.mux.HandleFunc("POST /api/servers/{id}/performance/spark", s.requireAuth(s.wrapJSON(s.handleCaptureSparkReport)))
 	s.mux.HandleFunc("GET /api/servers/{id}/console", s.requireAuth(s.handleServerConsole))
 	s.mux.HandleFunc("POST /api/servers/{id}/console/command", s.requireAuth(s.wrapJSON(s.handleServerConsoleCommand)))

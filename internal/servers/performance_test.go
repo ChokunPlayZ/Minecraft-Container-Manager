@@ -3,8 +3,11 @@ package servers
 import (
 	"archive/zip"
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/docker"
+	"github.com/mcm-panel/mcm/internal/rcon"
 )
 
 func newPerformanceStore(t *testing.T, kind, version, state string) (*Store, Server) {
@@ -171,6 +175,9 @@ func TestPerformanceSamplingHistoryAndRetention(t *testing.T) {
 		"list": "There are 3 of a max 20 players online: Steve, Alex, Test\n", "spark tps": sparkMetricsFixture,
 	}}
 	ctx := context.Background()
+	if _, err := s.SetPerformanceCollection(ctx, srv.ID, "console"); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.samplePerformance(ctx, srv, time.Now().Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +218,185 @@ func TestPerformanceSamplingHistoryAndRetention(t *testing.T) {
 	}
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM performance_samples`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("cascade count=%d err=%v", count, err)
+	}
+}
+
+func TestPerformanceCollectionOptIn(t *testing.T) {
+	s, srv := newPerformanceStore(t, "paper", "1.21.1", StateRunning)
+	runtime := &performanceRuntime{fakeRuntime: &fakeRuntime{statsResult: docker.ContainerStats{CPUPercent: 25, MemoryUsageBytes: 2048}}, logPath: performanceLog(t, s, srv), responses: map[string]string{
+		"list": "There are 2 of a max 20 players online: Steve, Alex\n", "spark tps": sparkMetricsFixture,
+	}}
+	s.docker = runtime
+	ctx := context.Background()
+	settings, err := s.PerformanceSettings(ctx, srv.ID)
+	if err != nil || settings.CollectionMode != "off" {
+		t.Fatalf("default=%+v err=%v", settings, err)
+	}
+	at := time.Now().Add(-3 * time.Minute).Truncate(time.Minute)
+	if err := s.samplePerformance(ctx, srv, at); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.consoleCommands) != 0 {
+		t.Fatal("default collection sent console commands")
+	}
+	if _, err := s.SetPerformanceCollection(ctx, srv.ID, "console"); err != nil {
+		t.Fatal(err)
+	}
+	// A newly constructed store reads the persisted choice rather than a cache.
+	other := &Store{db: s.db}
+	settings, err = other.PerformanceSettings(ctx, srv.ID)
+	if err != nil || settings.CollectionMode != "console" {
+		t.Fatalf("persisted=%+v err=%v", settings, err)
+	}
+	if err := s.samplePerformance(ctx, srv, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.consoleCommands) != 2 {
+		t.Fatalf("commands=%v", runtime.consoleCommands)
+	}
+	if _, err := s.SetPerformanceCollection(ctx, srv.ID, "off"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.samplePerformance(ctx, srv, at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.consoleCommands) != 2 {
+		t.Fatal("disabled collection continued sending commands")
+	}
+	history, err := s.PerformanceHistory(ctx, srv.ID, "1h")
+	if err != nil || len(history.Samples) != 3 {
+		t.Fatalf("history=%+v err=%v", history, err)
+	}
+	for _, sample := range history.Samples {
+		if sample.CPUPercent == nil || *sample.CPUPercent != 25 {
+			t.Fatal("quiet CPU history was lost")
+		}
+	}
+	if history.Samples[0].TPS != nil || history.Samples[1].TPS == nil || history.Samples[2].TPS != nil {
+		t.Fatal("opt-in gaps or prior history were not preserved")
+	}
+	if _, err := s.SetPerformanceCollection(ctx, srv.ID, "invalid"); !errors.Is(err, ErrPerformanceCollectionMode) {
+		t.Fatal(err)
+	}
+	if _, err := s.SetPerformanceCollection(ctx, "missing", "off"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if _, err := s.PerformanceSettings(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+}
+
+type performanceRCONRuntime struct {
+	*fakeRuntime
+	address string
+}
+
+func (f *performanceRCONRuntime) RCONAddresses(context.Context, string, int) ([]string, error) {
+	return []string{f.address}, nil
+}
+
+func TestPerformanceRCONPolling(t *testing.T) {
+	s, srv := newPerformanceStore(t, "paper", "1.21.1", StateRunning)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	commands := make(chan string, 4)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			var length int32
+			if binary.Read(conn, binary.LittleEndian, &length) != nil || length < 10 || length > 65536 {
+				return
+			}
+			body := make([]byte, length)
+			if _, err := io.ReadFull(conn, body); err != nil {
+				return
+			}
+			id := binary.LittleEndian.Uint32(body[:4])
+			kind := binary.LittleEndian.Uint32(body[4:8])
+			payload := string(body[8 : len(body)-2])
+			response := ""
+			if kind == rcon.TypeAuth {
+				if payload != "secret" {
+					return
+				}
+			} else {
+				commands <- payload
+				switch payload {
+				case "list":
+					response = "There are 4 of a max 20 players online: A, B, C, D"
+				case "spark tps":
+					response = sparkMetricsFixture
+				}
+			}
+			packet := make([]byte, 14+len(response))
+			binary.LittleEndian.PutUint32(packet[:4], uint32(len(packet)-4))
+			binary.LittleEndian.PutUint32(packet[4:8], id)
+			if kind == rcon.TypeAuth {
+				binary.LittleEndian.PutUint32(packet[8:12], rcon.TypeAuthResponse)
+			}
+			copy(packet[12:], response)
+			if _, err := conn.Write(packet); err != nil {
+				return
+			}
+		}
+	}()
+	// Even with a console log available, RCON mode must never send stdin commands.
+	_ = performanceLog(t, s, srv)
+	props := "enable-rcon=true\nrcon.password=secret\nrcon.port=25575\n"
+	if err := os.WriteFile(filepath.Join(s.dataPath(srv.ID), "server.properties"), []byte(props), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &performanceRCONRuntime{fakeRuntime: &fakeRuntime{statsResult: docker.ContainerStats{CPUPercent: 12}}, address: listener.Addr().String()}
+	s.docker = runtime
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := s.SetPerformanceCollection(ctx, srv.ID, "rcon"); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-2 * time.Minute)
+	if err := s.samplePerformance(ctx, srv, at); err != nil {
+		t.Fatal(err)
+	}
+	history, err := s.PerformanceHistory(ctx, srv.ID, "1h")
+	if err != nil || len(history.Samples) != 1 || history.Samples[0].TPS == nil || *history.Samples[0].TPS != 20 || *history.Samples[0].Players != 4 {
+		t.Fatalf("history=%+v err=%v", history, err)
+	}
+	if len(commands) != 2 || len(runtime.consoleCommands) != 0 || history.Settings.LastError != "" {
+		t.Fatalf("commands=%d console=%v settings=%+v", len(commands), runtime.consoleCommands, history.Settings)
+	}
+	_ = listener.Close()
+	if err := s.samplePerformance(ctx, srv, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := s.PerformanceSettings(ctx, srv.ID)
+	if err != nil || settings.LastError == "" || len(runtime.consoleCommands) != 0 {
+		t.Fatalf("failed RCON settings=%+v console=%v err=%v", settings, runtime.consoleCommands, err)
+	}
+}
+
+func TestPerformanceRCONDisabledIsQuiet(t *testing.T) {
+	s, srv := newPerformanceStore(t, "paper", "1.21.1", StateRunning)
+	runtime := &fakeRuntime{statsResult: docker.ContainerStats{CPUPercent: 10}}
+	s.docker = runtime
+	if _, err := s.SetPerformanceCollection(context.Background(), srv.ID, "rcon"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.samplePerformance(context.Background(), srv, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	history, err := s.PerformanceHistory(context.Background(), srv.ID, "1h")
+	if err != nil || history.Settings.LastError == "" || len(runtime.consoleCommands) != 0 {
+		t.Fatalf("history=%+v err=%v", history, err)
+	}
+	if history.Samples[0].CPUPercent == nil || history.Samples[0].TPS != nil {
+		t.Fatal(fmt.Sprint(history.Samples[0]))
 	}
 }
 

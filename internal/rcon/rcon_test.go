@@ -1,6 +1,8 @@
 package rcon
 
 import (
+	"bufio"
+	"context"
 	"encoding/binary"
 	"net"
 	"strings"
@@ -46,6 +48,39 @@ func TestPacketRoundTrip(t *testing.T) {
 	rid, rt, rp := decodePacket(t, wire)
 	if rid != requestID || rt != typ || rp != payload {
 		t.Fatalf("round trip mismatch: got (%d, %d, %q)", rid, rt, rp)
+	}
+}
+
+func TestAuthenticateSingleResponse(t *testing.T) {
+	connection, peer := net.Pipe()
+	defer peer.Close()
+	client := &Client{conn: connection, rw: bufio.NewReadWriter(bufio.NewReader(connection), bufio.NewWriter(connection)), timeout: time.Second}
+	defer client.Close()
+	go func() {
+		packet := make([]byte, 4+10+len("secret"))
+		if _, err := readFull(peer, packet); err != nil {
+			return
+		}
+		_, _ = peer.Write(encodePacket(1, TypeAuthResponse, ""))
+		// The connection stays open, with no extra response to drain.
+	}()
+	if err := client.authenticate("secret"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDialContextCancellation(t *testing.T) {
+	server := newFakeServer(t, "secret", map[string]string{"list": "players"})
+	ctx, cancel := context.WithCancel(context.Background())
+	client, err := DialContext(ctx, server.addr(), "secret", time.Second)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	defer client.Close()
+	cancel()
+	if _, err := client.Command("list"); err == nil {
+		t.Fatal("command succeeded after cancellation")
 	}
 }
 

@@ -134,6 +134,12 @@ export interface ServerStats {
 }
 
 export type PerformanceRange = '1h' | '6h' | '24h' | '7d';
+export type PerformanceCollectionMode = 'off' | 'rcon' | 'console';
+
+export interface PerformanceSettings {
+  collection_mode: PerformanceCollectionMode;
+  last_error?: string;
+}
 
 export interface PerformanceSample {
   timestamp: string;
@@ -155,6 +161,7 @@ export interface SparkReport {
 }
 
 export interface PerformanceHistory {
+  settings: PerformanceSettings;
   samples: PerformanceSample[];
   start: string;
   end: string;

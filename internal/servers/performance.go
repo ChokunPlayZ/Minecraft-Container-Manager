@@ -25,6 +25,43 @@ const PerformanceRetention = 7 * 24 * time.Hour
 
 var ErrSparkUnavailable = errors.New("spark is not available on this server")
 var ErrSparkBusy = errors.New("a spark report is already being captured")
+var ErrPerformanceCollectionMode = errors.New("collection_mode must be off, rcon, or console")
+
+type PerformanceSettings struct {
+	CollectionMode string `json:"collection_mode"`
+	LastError      string `json:"last_error,omitempty"`
+}
+
+func (s *Store) PerformanceSettings(ctx context.Context, id string) (PerformanceSettings, error) {
+	var settings PerformanceSettings
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(p.collection_mode,'off'), COALESCE(p.last_error,'')
+		FROM servers s LEFT JOIN performance_settings p ON p.server_id=s.id WHERE s.id=?`, id).
+		Scan(&settings.CollectionMode, &settings.LastError)
+	if errors.Is(err, sql.ErrNoRows) {
+		return settings, ErrNotFound
+	}
+	return settings, err
+}
+
+func (s *Store) SetPerformanceCollection(ctx context.Context, id, mode string) (PerformanceSettings, error) {
+	if mode != "off" && mode != "rcon" && mode != "console" {
+		return PerformanceSettings{}, ErrPerformanceCollectionMode
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO performance_settings(server_id,collection_mode)
+		SELECT id, ? FROM servers WHERE id=?
+		ON CONFLICT(server_id) DO UPDATE SET collection_mode=excluded.collection_mode, last_error=''`, mode, id)
+	if err != nil {
+		return PerformanceSettings{}, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return PerformanceSettings{}, err
+	}
+	if n == 0 {
+		return PerformanceSettings{}, ErrNotFound
+	}
+	return PerformanceSettings{CollectionMode: mode}, nil
+}
 
 type PerformanceSample struct {
 	Timestamp   time.Time `json:"timestamp"`
@@ -59,6 +96,7 @@ type PerformanceHistory struct {
 	RetentionDays     int                 `json:"retention_days"`
 	Spark             SparkSupport        `json:"spark"`
 	Report            *SparkReport        `json:"report"`
+	Settings          PerformanceSettings `json:"settings"`
 }
 
 // Versions are compared numerically: 1.21.10 is newer than 1.21.1. Unresolved
@@ -183,9 +221,16 @@ dispatch:
 func floatPointer(v float64) *float64 { return &v }
 
 func (s *Store) samplePerformance(ctx context.Context, srv Server, at time.Time) error {
+	settings, err := s.PerformanceSettings(ctx, srv.ID)
+	if err != nil {
+		return err
+	}
 	sample := PerformanceSample{Timestamp: at}
 	if srv.State != StateRunning && srv.State != StateStarting && srv.State != StateInstalling && srv.State != StateBuilding {
-		sample.CPUPercent, sample.MemoryBytes, sample.Players = floatPointer(0), floatPointer(0), floatPointer(0)
+		sample.CPUPercent, sample.MemoryBytes = floatPointer(0), floatPointer(0)
+		if settings.CollectionMode != "off" {
+			sample.Players = floatPointer(0)
+		}
 	} else if srv.ContainerID != "" && !isDockerNil(s.docker) {
 		stats, err := s.docker.Stats(ctx, srv.ContainerID)
 		if err == nil {
@@ -193,24 +238,49 @@ func (s *Store) samplePerformance(ctx context.Context, srv Server, at time.Time)
 			sample.CPUPercent = floatPointer(stats.CPUPercent)
 			sample.MemoryBytes = floatPointer(float64(stats.MemoryUsageBytes))
 		}
-		if srv.State == StateRunning {
-			// Fresh command responses avoid inferring a zero count from truncated
-			// join/leave logs or reusing a previous process's TPS readings.
-			out, _ := s.performanceCommand(ctx, srv, "list", 3*time.Second, func(out string) bool { return playerCount(out) != nil })
-			sample.Players = playerCount(out)
-			if spark, err := s.sparkSupport(ctx, srv); err == nil && spark.Available {
-				out, _ = s.performanceCommand(ctx, srv, sparkCommand(srv.ServerType)+" tps", 3*time.Second, func(out string) bool {
-					tps, tick := parseSparkMetrics(out)
-					return tps != nil && tick != nil
-				})
-				sample.TPS, sample.TickMS = parseSparkMetrics(out)
-			}
+		if srv.State == StateRunning && settings.CollectionMode != "off" {
+			metricsCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			message := s.sampleGameMetrics(metricsCtx, srv, settings.CollectionMode, &sample)
+			cancel()
+			// A setting changed during a poll must not receive the old mode's error.
+			_, _ = s.db.ExecContext(ctx, `UPDATE performance_settings SET last_error=? WHERE server_id=? AND collection_mode=?`, message, srv.ID, settings.CollectionMode)
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO performance_samples
+	_, err = s.db.ExecContext(ctx, `INSERT INTO performance_samples
 		(server_id, recorded_at, online, cpu_percent, memory_bytes, players, tps, tick_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		srv.ID, at.UnixMilli(), sample.Online, sample.CPUPercent, sample.MemoryBytes, sample.Players, sample.TPS, sample.TickMS)
 	return err
+}
+
+func (s *Store) sampleGameMetrics(ctx context.Context, srv Server, mode string, sample *PerformanceSample) string {
+	query := func(command string, done func(string) bool) (string, error) {
+		return s.performanceCommand(ctx, srv, command, 3*time.Second, done)
+	}
+	if mode == "rcon" {
+		client, err := s.rconDial(ctx, srv.ID)
+		if err != nil || client == nil {
+			return "RCON is unavailable. Enable RCON, set a password, and make its TCP port reachable from MCM. Console polling was not used."
+		}
+		defer client.Close()
+		query = func(command string, _ func(string) bool) (string, error) { return client.Command(command) }
+	}
+	out, _ := query("list", func(out string) bool { return playerCount(out) != nil })
+	sample.Players = playerCount(out)
+	message := ""
+	if sample.Players == nil {
+		message = "The server did not return a player count. Check the selected polling connection and server configuration."
+	}
+	if spark, err := s.sparkSupport(ctx, srv); err == nil && spark.Available {
+		out, _ = query(sparkCommand(srv.ServerType)+" tps", func(out string) bool {
+			tps, tick := parseSparkMetrics(out)
+			return tps != nil && tick != nil
+		})
+		sample.TPS, sample.TickMS = parseSparkMetrics(out)
+		if sample.TPS == nil || sample.TickMS == nil {
+			message = "Spark did not return tick readings through the selected polling connection. Check that spark is loaded and supports this connection."
+		}
+	}
+	return message
 }
 
 var playerCountRE = regexp.MustCompile(`(?i)There are (\d+) of a max \d+ players online`)
@@ -377,6 +447,10 @@ func (s *Store) PerformanceHistory(ctx context.Context, id, window string) (Perf
 	end := time.Now().UTC()
 	result := PerformanceHistory{Samples: []PerformanceSample{}, Start: end.Add(-duration), End: end,
 		ResolutionSeconds: int(resolution.Seconds()), IntervalSeconds: int(PerformanceInterval.Seconds()), RetentionDays: 7}
+	result.Settings, err = s.PerformanceSettings(ctx, id)
+	if err != nil {
+		return PerformanceHistory{}, err
+	}
 	result.Spark, err = s.sparkSupport(ctx, srv)
 	if err != nil {
 		return PerformanceHistory{}, err

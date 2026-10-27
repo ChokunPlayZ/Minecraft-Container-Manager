@@ -63,14 +63,39 @@ func (s *Store) rconDial(ctx context.Context, id string) (*rcon.Client, error) {
 	if err != nil || !cfg.Enabled || cfg.Password == "" {
 		return nil, nil
 	}
-	// The container only publishes its primary game port (srv.HostPort); RCON
-	// must be reached through that same published port.
-	addr := net.JoinHostPort(s.dockerHost(), strconv.Itoa(srv.HostPort))
-	client, err := rcon.Dial(addr, cfg.Password, 3*time.Second)
+	port := cfg.Port
+	if port == 0 {
+		port = 25575
+	}
+	var addresses []string
+	if runtime, ok := s.docker.(interface {
+		RCONAddresses(context.Context, string, int) ([]string, error)
+	}); ok {
+		addresses, err = runtime.RCONAddresses(ctx, srv.ContainerID, port)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for _, extra := range srv.ExtraPorts {
+			if extra.ContainerPort == port && extra.Protocol == "tcp" {
+				addresses = append(addresses, net.JoinHostPort(s.dockerHost(), strconv.Itoa(extra.HostPort)))
+			}
+		}
+	}
+	for _, address := range addresses {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		client, dialErr := rcon.DialContext(ctx, address, cfg.Password, 2*time.Second)
+		if dialErr == nil {
+			return client, nil
+		}
+		err = dialErr
+	}
 	if err != nil {
 		return nil, fmt.Errorf("connect rcon: %w", err)
 	}
-	return client, nil
+	return nil, fmt.Errorf("RCON port is not reachable; use a shared container network or configure an extra TCP port")
 }
 
 // PlayerList returns the currently connected players for a running server. It

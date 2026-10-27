@@ -4,6 +4,7 @@ package rcon
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -28,25 +29,35 @@ var ErrAuthFailed = errors.New("rcon authentication failed")
 
 // Client is a small RCON client bound to a single TCP connection.
 type Client struct {
-	conn    net.Conn
-	rw      *bufio.ReadWriter
-	timeout time.Duration
+	ctx        context.Context
+	conn       net.Conn
+	rw         *bufio.ReadWriter
+	timeout    time.Duration
+	stopCancel func() bool
 }
 
 // Dial connects to the RCON server at address and authenticates with the given
 // password. It returns an error if the connection or authentication fails.
 func Dial(address, password string, timeout time.Duration) (*Client, error) {
-	conn, err := net.DialTimeout("tcp", address, timeout)
+	return DialContext(context.Background(), address, password, timeout)
+}
+
+// DialContext bounds connection, authentication, and subsequent commands by ctx.
+func DialContext(ctx context.Context, address, password string, timeout time.Duration) (*Client, error) {
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("dial rcon: %w", err)
 	}
 	c := &Client{
-		conn:    conn,
-		rw:      bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)),
-		timeout: timeout,
+		ctx:        ctx,
+		conn:       conn,
+		rw:         bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)),
+		timeout:    timeout,
+		stopCancel: context.AfterFunc(ctx, func() { _ = conn.Close() }),
 	}
 	if err := c.authenticate(password); err != nil {
-		_ = conn.Close()
+		_ = c.Close()
 		return nil, err
 	}
 	return c, nil
@@ -57,53 +68,54 @@ func (c *Client) authenticate(password string) error {
 	if err := c.writePacket(reqID, TypeAuth, password); err != nil {
 		return err
 	}
-	respID, typ, payload, err := c.readPacket()
-	if err != nil {
-		return err
-	}
-	if respID == -1 {
-		return ErrAuthFailed
-	}
-	// A successful auth response may arrive in more than one packet; drain any
-	// trailing empty response frames so the next command is not confused.
-	if typ == TypeAuthResponse && respID == reqID {
-		_ = c.conn.SetReadDeadline(time.Now().Add(c.timeout))
-		for {
-			nr, nt, _, rerr := c.tryReadPacket()
-			if rerr != nil {
-				break
-			}
-			if nt == TypeResponseValue && nr == -1 {
-				continue
-			}
-			if nt == TypeResponseValue {
-				break
-			}
+	for {
+		respID, typ, _, err := c.readPacket()
+		if err != nil {
+			return err
 		}
-		_ = c.conn.SetReadDeadline(time.Time{})
+		if respID == -1 {
+			return ErrAuthFailed
+		}
+		if typ == TypeAuthResponse && respID == reqID {
+			return nil
+		}
+		// Some implementations send an empty response-value frame before auth.
+		if typ != TypeResponseValue || respID != reqID {
+			return errors.New("unexpected rcon authentication response")
+		}
 	}
-	_ = payload
-	return nil
 }
 
 // Command sends an RCON command and returns the raw response payload.
 func (c *Client) Command(command string) (string, error) {
+	if c.ctx != nil && c.ctx.Err() != nil {
+		return "", c.ctx.Err()
+	}
 	reqID := int32(2)
 	if err := c.writePacket(reqID, TypeExecCommand, command); err != nil {
 		return "", err
 	}
-	respID, _, payload, err := c.readPacket()
-	if err != nil {
-		return "", err
+	for {
+		respID, typ, payload, err := c.readPacket()
+		if err != nil {
+			return "", err
+		}
+		// Also tolerate the trailing empty auth frame used by some servers.
+		if typ == TypeResponseValue && respID == -1 && payload == "" {
+			continue
+		}
+		if respID != reqID || typ != TypeResponseValue {
+			return "", errors.New("rcon command rejected")
+		}
+		return payload, nil
 	}
-	if respID == -1 {
-		return "", errors.New("rcon command rejected")
-	}
-	return payload, nil
 }
 
 // Close closes the underlying connection.
 func (c *Client) Close() error {
+	if c.stopCancel != nil {
+		c.stopCancel()
+	}
 	if c.conn != nil {
 		return c.conn.Close()
 	}

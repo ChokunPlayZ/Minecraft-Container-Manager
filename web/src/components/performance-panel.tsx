@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ExternalLink, Loader2, RefreshCw, Zap } from 'lucide-react';
 import { api, ApiError } from '../api/client';
-import type { PerformanceHistory, PerformanceRange, PerformanceSample, SparkReport } from '../api/types';
+import type { PerformanceCollectionMode, PerformanceHistory, PerformanceRange, PerformanceSample, SparkReport } from '../api/types';
 import { formatBytes } from '../lib/formatters';
 import { Button } from './ui/button';
 import { Select } from './ui/select';
@@ -104,11 +104,14 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [report, setReport] = useState<SparkReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const reportRevision = useRef(0);
+  const settingsRevision = useRef(0);
   const capturing = report?.status === 'capturing';
 
   useEffect(() => {
@@ -117,10 +120,11 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
     // Sequential polling avoids stale responses when a server responds slowly.
     async function load() {
       const revision = reportRevision.current;
+      const settingsVersion = settingsRevision.current;
       try {
         const result = await api.performanceHistory(serverId, range);
         if (!active) return;
-        setHistory(result); setLoadError(null);
+        setHistory((previous) => settingsVersion === settingsRevision.current || !previous ? result : { ...result, settings: previous.settings }); setLoadError(null);
         if (revision === reportRevision.current) setReport(result.report);
       } catch (err) {
         if (active) setLoadError(errorMessage(err, 'Could not load performance history. Try again.'));
@@ -136,6 +140,17 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
     setRange(value as PerformanceRange); setSelected(null); setLoading(true); setHistory(null);
   }
 
+  async function changeCollection(value: string) {
+    setSavingSettings(true); setSettingsError(null); settingsRevision.current++;
+    try {
+      const settings = await api.setPerformanceCollection(serverId, value as PerformanceCollectionMode);
+      settingsRevision.current++;
+      setHistory((previous) => previous ? { ...previous, settings } : previous);
+      setReload((previous) => previous + 1);
+    } catch (err) { setSettingsError(errorMessage(err, 'Could not save the collection mode. Try again.')); }
+    finally { setSavingSettings(false); }
+  }
+
   async function capture() {
     setBusy(true); setCaptureError(null); reportRevision.current++;
     try {
@@ -147,6 +162,7 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
   }
 
   const support = history?.spark;
+  const collectionMode = history?.settings.collection_mode ?? 'off';
   const shared = history ? { history, selected, onSelect: setSelected } : null;
   const selectedTime = history && selected !== null ? history.samples[selected]?.timestamp : undefined;
   const freshReportURL = report?.url?.match(/^https:\/\/spark\.lucko\.me\/[A-Za-z0-9]+(?:\?[A-Za-z0-9_=&%-]+)?$/) ? report.url : undefined;
@@ -164,7 +180,22 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
       </div>
 
       {loadError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive"><span>{loadError} {history ? 'Showing the last available readings.' : ''}</span><Button variant="outline" size="sm" onClick={() => setReload((value) => value + 1)}>Retry</Button></div>}
-      {!isRunning && <p className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">Server is offline. Previous history is still available; new tick readings resume when the server starts.</p>}
+      <div className="rounded-xl border bg-card p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label htmlFor="performance-collection-mode" className="text-sm font-semibold">Player and tick metrics</label>
+          <Select id="performance-collection-mode" aria-describedby="performance-collection-description" value={collectionMode} onValueChange={(value) => void changeCollection(value)} disabled={!history || loading || savingSettings} className="w-full sm:w-52">
+            <option value="off">Off (default)</option><option value="rcon">RCON polling</option><option value="console">Console commands</option>
+          </Select>
+        </div>
+        <p id="performance-collection-description" className="mt-3 max-w-prose text-sm leading-6 text-muted-foreground">{collectionMode === 'off'
+          ? 'Automatic player counts, TPS, and tick-time collection are off. CPU and memory history continue. Previous readings remain available.'
+          : collectionMode === 'console'
+            ? 'Runs list and spark tps every 30 seconds. Their responses appear in your server console. Choose Off to stop automatic commands.'
+            : 'Polls list and spark tps over RCON every 30 seconds. Enable RCON, set a password, and make its TCP port reachable from MCM. There is no console fallback; server plugins or settings may still log RCON commands.'}</p>
+        <p aria-live="polite" className="mt-2 text-xs text-muted-foreground">{savingSettings ? 'Saving collection mode…' : 'Saved per server. Changes apply to the next collection cycle.'}</p>
+        {(settingsError || history?.settings.last_error) && <p role="alert" className="mt-3 text-sm text-destructive">{settingsError ?? history?.settings.last_error}</p>}
+      </div>
+      {!isRunning && <p className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">Server is offline. Previous history is still available.</p>}
 
       {loading ? <div aria-label="Loading performance history" className="grid gap-4 md:grid-cols-2">{Array.from({ length: 5 }, (_, index) => <Skeleton key={index} className="h-64 rounded-xl" />)}</div> : shared && <>
         {shared.history.samples.length === 0 && <div className="rounded-lg border border-dashed p-6 text-center"><h3 className="text-sm font-semibold">No performance history yet</h3><p className="mt-1 text-sm text-muted-foreground">The first reading appears within 30 seconds. Try a wider time range to see older history.</p></div>}
@@ -184,7 +215,7 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
 
       <div className="rounded-xl border bg-card p-5 sm:p-6" aria-labelledby="spark-title">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-prose"><h3 id="spark-title" className="font-semibold">Spark report</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">Capture a 60-second profile and upload it to spark. If a profiler is already running, open its current report.</p></div>
+          <div className="max-w-prose"><h3 id="spark-title" className="font-semibold">Spark report</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">Capture a 60-second profile and upload it to spark. If a profiler is already running, open its current report. Manual report captures write to the console.</p></div>
           <Button variant="outline" disabled={!isRunning || !support?.available || busy || capturing} onClick={() => void capture()} className="gap-2">
             {busy || capturing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}{busy || capturing ? 'Capturing report…' : 'Capture spark report'}
           </Button>

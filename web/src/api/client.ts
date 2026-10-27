@@ -11,6 +11,8 @@ import type {
   ServerStats,
   PerformanceHistory,
   PerformanceRange,
+  PerformanceCollectionMode,
+  PerformanceSettings,
   SparkReport,
   HostCapacity,
   ServerStatus,
@@ -169,13 +171,22 @@ let mockDiscordSettings: DiscordSettings = {
   events: ['server_started', 'server_stopped', 'server_crashed', 'server_error', 'backup_completed', 'backup_failed'],
 };
 const mockSparkReports: Record<string, SparkReport> = {};
+const mockPerformanceModes: Record<string, PerformanceCollectionMode> = {};
 
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
 
+  const performanceSettingsPath = path.match(/^\/api\/servers\/([^/]+)\/performance\/settings$/);
+  if (performanceSettingsPath && init.method === 'PUT') {
+    const input = JSON.parse(String(init.body ?? '{}')) as PerformanceSettings;
+    mockPerformanceModes[performanceSettingsPath[1]] = input.collection_mode;
+    return { collection_mode: input.collection_mode } as T;
+  }
+
   const performancePath = path.match(/^\/api\/servers\/([^/]+)\/performance(?:\?range=(1h|6h|24h|7d))?$/);
   if (performancePath) {
     const [, serverId, range = '1h'] = performancePath;
+    const mode = mockPerformanceModes[serverId] ?? 'off';
     const hours = { '1h': 1, '6h': 6, '24h': 24, '7d': 168 }[range] ?? 1;
     const resolution = { '1h': 30, '6h': 60, '24h': 300, '7d': 1800 }[range] ?? 30;
     const count = hours * 3600 / resolution;
@@ -185,6 +196,7 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     return {
       start: new Date(start).toISOString(), end: new Date(end).toISOString(),
       resolution_seconds: resolution, interval_seconds: 30, retention_days: 7,
+      settings: { collection_mode: mode },
       spark: { available: true, source: 'bundled' }, report: mockSparkReports[serverId] ?? null,
       samples: Array.from({ length: count }, (_, index) => {
         const phase = index * 120 / count;
@@ -193,9 +205,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
           timestamp: new Date(start + index * resolution * 1000).toISOString(), online: true,
           cpu_percent: 18 + 8 * Math.sin(phase / 8) + (spike ? 24 : 0),
           memory_bytes: (1.6 + phase / 500 + 0.1 * Math.sin(phase / 5)) * 1024 ** 3,
-          players: Math.max(0, Math.round(9 + 6 * Math.sin(phase / 24))),
-          tps: spike ? 17.8 : 20,
-          tick_ms: 12 + 4 * Math.sin(phase / 6) + (spike ? 43 : 0),
+          players: mode === 'off' ? null : Math.max(0, Math.round(9 + 6 * Math.sin(phase / 24))),
+          tps: mode === 'off' ? null : spike ? 17.8 : 20,
+          tick_ms: mode === 'off' ? null : 12 + 4 * Math.sin(phase / 6) + (spike ? 43 : 0),
         };
       }),
     } as T;
@@ -772,6 +784,9 @@ export const api = {
 
   performanceHistory: (id: string, range: PerformanceRange = '1h') =>
     request<PerformanceHistory>(`/api/servers/${id}/performance?range=${range}`),
+
+  setPerformanceCollection: (id: string, mode: PerformanceCollectionMode) =>
+    request<PerformanceSettings>(`/api/servers/${id}/performance/settings`, { method: 'PUT', body: JSON.stringify({ collection_mode: mode }) }),
 
   captureSparkReport: (id: string) =>
     request<SparkReport>(`/api/servers/${id}/performance/spark`, { method: 'POST' }),

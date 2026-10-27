@@ -15,9 +15,9 @@ THESIS: Relate resource usage, player activity, and server tick health over the 
 
 OWN-WORLD: Inherit mineral surfaces, forest teal, semantic borders, system text, tabular readings, and the existing tabs. Charts use consistent scales and accessible labels.
 
-STORY: Choose a time window, inspect five histories, and capture or open a spark profile without leaving the workspace. Loading, empty history, offline servers, unsupported spark, capture progress, errors, and completed links are explicit.
+STORY: Choose a time window, inspect five histories, and capture or open a spark profile without leaving the workspace. Player and tick collection defaults off per server, with explicit RCON and console choices and their requirements/output explained. CPU and memory remain automatic. Loading, empty history, offline servers, unsupported spark, collection errors, capture progress, errors, and completed links are explicit.
 
-FIRST VIEWPORT: A compact history heading with window selector precedes resource and player charts; TPS and median tick duration follow. A full-width report section holds the capture button, state, and result link. Charts share timestamps and offer pointer and keyboard inspection.
+FIRST VIEWPORT: A compact history heading with window selector precedes a labeled collection-mode selector and resource/player charts; TPS and median tick duration follow. A full-width report section holds the capture button, state, and result link. Charts share timestamps and offer pointer and keyboard inspection.
 
 FORM: Existing-surface extension; seed not applicable. Responsive two-column chart grid collapses to one column. Chart inspection is the signature interaction; avoid decorative motion.
 
