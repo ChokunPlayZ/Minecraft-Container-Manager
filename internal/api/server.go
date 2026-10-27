@@ -192,6 +192,18 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleGetProperties)))
 	s.mux.HandleFunc("PUT /api/servers/{id}/properties", s.requireAuth(s.wrapJSON(s.handleSaveProperties)))
 
+	// Java world library, generation settings and chunk maintenance.
+	s.mux.HandleFunc("GET /api/servers/{id}/worlds", s.requireAuth(s.wrapJSON(s.handleListWorlds)))
+	s.mux.HandleFunc("POST /api/servers/{id}/worlds", s.requireAuth(s.wrapJSON(s.handleSaveWorld(true))))
+	s.mux.HandleFunc("POST /api/servers/{id}/worlds/import", s.requireAuth(s.wrapJSON(s.handleImportWorld)))
+	s.mux.HandleFunc("PUT /api/servers/{id}/worlds/{world}", s.requireAuth(s.wrapJSON(s.handleSaveWorld(false))))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/worlds/{world}", s.requireAuth(s.wrapJSON(s.handleDeleteWorld)))
+	s.mux.HandleFunc("POST /api/servers/{id}/worlds/{world}/activate", s.requireAuth(s.wrapJSON(s.handleActivateWorld)))
+	s.mux.HandleFunc("GET /api/servers/{id}/worlds/{world}/export", s.requireAuth(s.handleExportWorld))
+	s.mux.HandleFunc("GET /api/servers/{id}/worlds/{world}/regions", s.requireAuth(s.wrapJSON(s.handleWorldRegions)))
+	s.mux.HandleFunc("GET /api/servers/{id}/worlds/{world}/chunks", s.requireAuth(s.wrapJSON(s.handleWorldChunks)))
+	s.mux.HandleFunc("POST /api/servers/{id}/worlds/{world}/chunks/reset", s.requireAuth(s.wrapJSON(s.handleResetWorldChunks)))
+
 	// External catalog proxy.
 	s.mux.HandleFunc("GET /api/proxy", s.requireAuth(s.handleProxy))
 	s.mux.HandleFunc("POST /api/proxy", s.requireAuth(s.handleProxy))

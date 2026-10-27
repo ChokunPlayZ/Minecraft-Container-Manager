@@ -637,7 +637,7 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   return null;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const mockResult = handleMockRequest<T>(path, init);
   if (mockResult !== null) return mockResult;
 

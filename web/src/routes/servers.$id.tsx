@@ -39,6 +39,7 @@ import { FileManager } from '../components/file-manager';
 import { InstallPanel } from '../components/install-panel';
 import { LogBrowser } from '../components/log-browser';
 import { ModsPanel } from '../components/mods-panel';
+import { WorldsPanel } from '../components/worlds-panel';
 import { PlayersPanel } from '../components/players-panel';
 import { PerformancePanel } from '../components/performance-panel';
 import { PropertiesEditor } from '../components/properties-editor';
@@ -63,7 +64,7 @@ export const Route = createFileRoute('/servers/$id')({
   component: ServerDetailRoute,
 });
 
-type ServerTab = 'console' | 'performance' | 'logs' | 'players' | 'files' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
+type ServerTab = 'console' | 'performance' | 'logs' | 'players' | 'files' | 'worlds' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
 
 export function ServerDetailRoute() {
   const { id } = Route.useParams();
@@ -285,6 +286,7 @@ export function ServerDetailRoute() {
     { id: 'logs', label: 'Logs', icon: FileText },
     { id: 'players', label: 'Players', icon: Users },
     { id: 'files', label: 'Files', icon: FolderOpen },
+    { id: 'worlds', label: 'Worlds', icon: Globe },
     { id: 'mods', label: 'Mods & Plugins', icon: Package },
     { id: 'backups', label: 'Backups', icon: Archive },
     { id: 'schedules', label: 'Schedules', icon: CalendarClock },
@@ -586,6 +588,7 @@ export function ServerDetailRoute() {
 
           {/* Tab Panes */}
           <div id="server-workspace-panel" role="tabpanel" aria-labelledby={`server-tab-${effectiveTab}`} tabIndex={0} className="outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg">
+          {effectiveTab === 'worlds' && <WorldsPanel key={server.id} serverId={server.id} state={state} serverType={server.server_type} />}
           {effectiveTab === 'schedules' && <SchedulesPanel key={server.id} serverId={server.id} />}
           {effectiveTab === 'performance' && <PerformancePanel key={server.id} serverId={server.id} isRunning={isRunning} />}
           {effectiveTab === 'console' && (

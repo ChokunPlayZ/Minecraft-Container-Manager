@@ -151,6 +151,15 @@ a container.
 - **Smart Auto-Scroll**: Sticky bottom-scrolling that pauses automatically when scrolling up to inspect past logs.
 - **Saved Log Browser**: Open the server's Logs tab to read files from `logs/` and `crash-reports/`, including `.log.gz` rotations and logs inside `.tar`, `.tar.gz`, and `.tgz` archives, without extracting them. Search, line numbers, wrapping, and pagination help inspect saved output. Previews show the first 2 MiB; search applies to that preview.
 
+### World Management
+
+- Open a Java game server’s **Worlds** tab to browse its saved worlds, dimensions, saved seed, Minecraft version and disk usage. Proxies and standalone Geyser servers do not store Java worlds.
+- Create worlds with numeric or text seeds, default/superflat/large-biomes/amplified generation and optional structures. Leave the seed blank for a random seed. Make a world active, then start the server to generate it. Generation settings stay editable until `level.dat` exists; existing terrain retains its saved seed.
+- **Import ZIP** accepts a Java world with `level.dat`, either at the archive root or inside a folder. Matching Bukkit `<world>_nether` and `<world>_the_end` folders are imported and exported with the main world. Imports use a new folder name and never overwrite existing folders. Limits: 2 GiB compressed, 8 GiB unpacked, 100,000 entries. Unsafe paths, symbolic links, duplicate files and invalid metadata are rejected before the imported world becomes available.
+- **Make active** updates `level-name` and generation settings in `server.properties`, preserving unrelated properties. Switching takes effect on the next start. World imports, exports, switches, seed edits, deletions and chunk resets require a stopped server and a confirmed inactive container; startup waits for world operations on that server.
+- **Manage chunks** inspects paged region files by dimension, including modded dimension folders. The 32 × 32 map selects individual generated chunks or all generated chunks in the selected region. Coordinate-range inputs support precise selection on touch screens, with a visible list of all selected chunk coordinates. Arrow keys move between cells; Space selects. Resetting removes the selected terrain, entity and point-of-interest entries so Minecraft regenerates the chunks when visited. Other chunk payloads are unchanged. Resetting makes sectors reusable and does not immediately shrink region files.
+- Chunk resets first copy every affected region and external chunk payload to `.mcm-world-backups/<id>/`, with a `reset.json` manifest. To recover, stop the server and use **Files** to copy the backed-up paths over their original paths. World deletion moves the inactive world and its dimension folders to `.mcm-world-trash/<id>/`; restore the folders to the server root using **Files**. These recovery folders remain until manually removed and count toward disk usage. The active world cannot be deleted.
+
 ### Scheduled Commands & Server Actions
 
 - Open a server's **Schedules** tab to schedule a console command, start, stop, or graceful restart.
@@ -534,6 +543,16 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 ### Server Properties
 | Method | Path | Description |
 | --- | --- | --- |
+| `GET` | `/api/servers/:id/worlds` | List worlds, active world and whether world writes are available. |
+| `POST` | `/api/servers/:id/worlds` | Create a world with `name`, string `seed`, `level_type` and `generate_structures`. |
+| `POST` | `/api/servers/:id/worlds/import` | Import a ZIP using multipart `name` and `file` fields. |
+| `PUT` | `/api/servers/:id/worlds/:world` | Update an ungenerated world’s seed and generation settings. |
+| `POST` | `/api/servers/:id/worlds/:world/activate` | Select the world for the next server start. |
+| `GET` | `/api/servers/:id/worlds/:world/export` | Download a world and matching Bukkit dimensions as ZIP. |
+| `DELETE` | `/api/servers/:id/worlds/:world` | Move an inactive world to recovery storage; returns `recovery_path`. |
+| `GET` | `/api/servers/:id/worlds/:world/regions?dimension=world&offset=0` | List up to 100 region headers for a dimension ID returned by the world list. |
+| `GET` | `/api/servers/:id/worlds/:world/chunks?dimension=world&x=0&z=0` | List generated chunks and saved timestamps in a region. |
+| `POST` | `/api/servers/:id/worlds/:world/chunks/reset` | Reset `chunks` (unique local indices `z * 32 + x`, 0–1023) in `dimension`, `region_x`, `region_z`; returns count and `recovery_path`. |
 | `GET` | `/api/servers/:id/properties` | Fetch current parsed `server.properties`. |
 | `PUT` | `/api/servers/:id/properties` | Update `server.properties` content. |
 

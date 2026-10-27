@@ -208,12 +208,12 @@ func decodeExtraPorts(data string) []ExtraPort {
 // ContainerConfig captures the container-dependent configuration applied to
 // the container at creation time.
 type ContainerConfig struct {
-	ServerType    string      `json:"server_type"`
-	Version       string      `json:"version"`
-	Build         string      `json:"build"`
-	RAMMB         int         `json:"ram_mb"`
-	CPULimit      float64     `json:"cpu_limit"`
-	MemoryLimitMB int         `json:"memory_limit_mb"`
+	ServerType        string      `json:"server_type"`
+	Version           string      `json:"version"`
+	Build             string      `json:"build"`
+	RAMMB             int         `json:"ram_mb"`
+	CPULimit          float64     `json:"cpu_limit"`
+	MemoryLimitMB     int         `json:"memory_limit_mb"`
 	HostPort          int         `json:"host_port"`
 	JavaVersion       int         `json:"java_version"`
 	ExtraPorts        []ExtraPort `json:"extra_ports"`
@@ -232,12 +232,12 @@ func currentContainerConfig(srv *Server) ContainerConfig {
 	ports := make([]ExtraPort, len(srv.ExtraPorts))
 	copy(ports, srv.ExtraPorts)
 	return ContainerConfig{
-		ServerType:    srv.ServerType,
-		Version:       srv.Version,
-		Build:         srv.Build,
-		RAMMB:         srv.RAMMB,
-		CPULimit:      srv.CPULimit,
-		MemoryLimitMB: srv.MemoryLimitMB,
+		ServerType:        srv.ServerType,
+		Version:           srv.Version,
+		Build:             srv.Build,
+		RAMMB:             srv.RAMMB,
+		CPULimit:          srv.CPULimit,
+		MemoryLimitMB:     srv.MemoryLimitMB,
 		HostPort:          srv.HostPort,
 		JavaVersion:       srv.JavaVersion,
 		ExtraPorts:        ports,
@@ -339,6 +339,7 @@ type Store struct {
 	serverLocksMu sync.Mutex
 	serverLocks   map[string]*sync.Mutex
 	fileEditMu    sync.Mutex
+	worldLocks    sync.Map
 
 	proxyMu         sync.Mutex
 	proxy           *proxy.Service
@@ -870,6 +871,8 @@ func (s *Store) pendingInitialState(id string, srv Server) string {
 
 // Start ensures a container exists then starts it.
 func (s *Store) Start(ctx context.Context, id string) (Server, error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
 	// Use an operation context that survives client disconnection so that in-flight
 	// container provisioning and startup complete even if the browser reloads or disconnects.
 	opCtx, opCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
