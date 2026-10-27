@@ -112,7 +112,7 @@
   .section-heading { font-size: 1rem; font-weight: 600; letter-spacing: -0.015em; }
   .empty-state { padding: 56px 24px; text-align: center; }
   .empty-state > svg { margin: 0 auto 16px; width: 32px; height: 32px; color: var(--muted-foreground); stroke-width: 1.5; }
-  .empty-state p { margin: 8px auto 0; max-width: 45ch; line-height: 1.6; color: var(--muted-foreground); }
+  .empty-state > p { margin: 8px auto 0; max-width: 45ch; line-height: 1.6; color: var(--muted-foreground); }
   .server-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--border); border-radius: 12px; background: var(--card); margin-bottom: 24px; }
   .server-metric { min-width: 0; padding: 18px 22px; }
   .server-metric + .server-metric { border-left: 1px solid var(--border); }
@@ -152,6 +152,7 @@
 .dialog-backdrop {
   background: rgb(9 20 21 / 62%);
   padding: 24px;
+  text-align: left;
   backdrop-filter: none;
   overscroll-behavior: contain;
 }
