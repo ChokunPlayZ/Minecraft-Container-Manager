@@ -27,6 +27,7 @@ import {
   isModernVersion,
   NbtFormat,
   getPresetsForItem,
+  getPresetNbt,
   buildGiveCommand,
   validateNbt,
   NbtPreset,
@@ -134,7 +135,7 @@ export function GiveItemModal({
 
   function handleApplyPreset(preset: NbtPreset) {
     setEnableNbt(true);
-    const snippet = nbtFormat === 'modern' ? preset.modern : preset.legacy;
+    const snippet = getPresetNbt(preset, nbtFormat, serverVersion);
     setRawNbt(snippet);
   }
 
@@ -505,11 +506,11 @@ export function GiveItemModal({
                   <Textarea
                     value={rawNbt}
                     onChange={(e) => setRawNbt(e.target.value)}
-                    placeholder={
-                      nbtFormat === 'modern'
-                        ? "[enchantments={levels:{'minecraft:sharpness':5}},unbreakable={}]"
-                        : '{Enchantments:[{id:"minecraft:sharpness",lvl:5s}],Unbreakable:1b}'
-                    }
+                    placeholder={getPresetNbt({
+                      modern: "[enchantments={'minecraft:sharpness':5},unbreakable={}]",
+                      modernBefore1215: "[enchantments={levels:{'minecraft:sharpness':5}},unbreakable={}]",
+                      legacy: '{Enchantments:[{id:"minecraft:sharpness",lvl:5s}],Unbreakable:1b}',
+                    }, nbtFormat, serverVersion)}
                     className={`font-mono text-xs min-h-[75px] ${
                       !nbtValidation.valid ? 'border-destructive focus-visible:ring-destructive' : ''
                     }`}

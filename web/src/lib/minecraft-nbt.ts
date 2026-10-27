@@ -5,30 +5,54 @@ export interface NbtPreset {
   label: string;
   description: string;
   modern: string;
+  modernBefore1215?: string;
   legacy: string;
   applicableTo?: (itemId: string) => boolean;
 }
 
-/**
- * Determines whether the given Minecraft version uses Modern Item Components (>= 1.20.5)
- * or Legacy SNBT syntax (< 1.20.5).
- */
-export function isModernVersion(version?: string): boolean {
+function isVersionAtLeast(version: string | undefined, major: number, minor: number, patch = 0): boolean {
   if (!version) return true;
-  // Match e.g. "1.21.4", "1.20.5", "1.20.1", "1.19.4"
+  // Unknown versions (including "latest") default to the current component format.
   const match = version.match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
   if (!match) return true;
-  const major = parseInt(match[1], 10);
-  const minor = parseInt(match[2], 10);
-  const patch = match[3] ? parseInt(match[3], 10) : 0;
-
-  if (major > 1) return true;
-  if (major === 1) {
-    if (minor > 20) return true;
-    if (minor === 20 && patch >= 5) return true;
-    return false;
+  const actual = [Number(match[1]), Number(match[2]), Number(match[3] || 0)];
+  const required = [major, minor, patch];
+  for (let i = 0; i < required.length; i++) {
+    if (actual[i] !== required[i]) return actual[i] > required[i];
   }
-  return false;
+  return true;
+}
+
+/** Whether a Minecraft version uses item components instead of legacy SNBT. */
+export function isModernVersion(version?: string): boolean {
+  return isVersionAtLeast(version, 1, 20, 5);
+}
+
+/** Minecraft 1.21.5 removed the enchantment component's nested levels field. */
+function enchantmentNbt(
+  enchantments: Record<string, number>,
+  unbreakable = false,
+): Pick<NbtPreset, 'modern' | 'modernBefore1215' | 'legacy'> {
+  const entries = Object.entries(enchantments);
+  const levels = entries.map(([id, level]) => `'minecraft:${id}':${level}`).join(',');
+  const durability = unbreakable ? ',unbreakable={}' : '';
+  const legacyLevels = entries.map(([id, level]) => `{id:"minecraft:${id}",lvl:${level}s}`).join(',');
+  return {
+    modern: `[enchantments={${levels}}${durability}]`,
+    modernBefore1215: `[enchantments={levels:{${levels}}}${durability}]`,
+    legacy: `{Enchantments:[${legacyLevels}]${unbreakable ? ',Unbreakable:1b' : ''}}`,
+  };
+}
+
+export function getPresetNbt(
+  preset: Pick<NbtPreset, 'modern' | 'modernBefore1215' | 'legacy'>,
+  format: NbtFormat,
+  version?: string,
+): string {
+  if (format === 'legacy') return preset.legacy;
+  return isVersionAtLeast(version, 1, 21, 5)
+    ? preset.modern
+    : (preset.modernBefore1215 ?? preset.modern);
 }
 
 export const COMMON_NBT_PRESETS: NbtPreset[] = [
@@ -38,20 +62,14 @@ export const COMMON_NBT_PRESETS: NbtPreset[] = [
     label: '⚡ God Sword (Max Enchants)',
     description: 'Sharpness V, Fire Aspect II, Looting III, Sweeping Edge III, Unbreaking III, Mending, Unbreakable',
     applicableTo: (id) => id.endsWith('_sword') || id === 'minecraft:mace',
-    modern:
-      "[enchantments={levels:{'minecraft:sharpness':5,'minecraft:fire_aspect':2,'minecraft:looting':3,'minecraft:sweeping_edge':3,'minecraft:unbreaking':3,'minecraft:mending':1}},unbreakable={}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:sharpness",lvl:5s},{id:"minecraft:fire_aspect",lvl:2s},{id:"minecraft:looting",lvl:3s},{id:"minecraft:sweeping_edge",lvl:3s},{id:"minecraft:unbreaking",lvl:3s},{id:"minecraft:mending",lvl:1s}],Unbreakable:1b}',
+    ...enchantmentNbt({ sharpness: 5, fire_aspect: 2, looting: 3, sweeping_edge: 3, unbreaking: 3, mending: 1 }, true),
   },
   {
     id: 'smite-sword',
     label: '💀 Smite Slayer (Undead)',
     description: 'Smite V, Looting III, Unbreaking III, Mending',
     applicableTo: (id) => id.endsWith('_sword') || id.endsWith('_axe'),
-    modern:
-      "[enchantments={levels:{'minecraft:smite':5,'minecraft:looting':3,'minecraft:unbreaking':3,'minecraft:mending':1}}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:smite",lvl:5s},{id:"minecraft:looting",lvl:3s},{id:"minecraft:unbreaking",lvl:3s},{id:"minecraft:mending",lvl:1s}]}',
+    ...enchantmentNbt({ smite: 5, looting: 3, unbreaking: 3, mending: 1 }),
   },
 
   // Tools - Pickaxes & Axes
@@ -60,20 +78,14 @@ export const COMMON_NBT_PRESETS: NbtPreset[] = [
     label: '💎 Fortune Miner (Max)',
     description: 'Efficiency V, Fortune III, Unbreaking III, Mending, Unbreakable',
     applicableTo: (id) => id.endsWith('_pickaxe') || id.endsWith('_axe') || id.endsWith('_shovel'),
-    modern:
-      "[enchantments={levels:{'minecraft:efficiency':5,'minecraft:fortune':3,'minecraft:unbreaking':3,'minecraft:mending':1}},unbreakable={}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:efficiency",lvl:5s},{id:"minecraft:fortune",lvl:3s},{id:"minecraft:unbreaking",lvl:3s},{id:"minecraft:mending",lvl:1s}],Unbreakable:1b}',
+    ...enchantmentNbt({ efficiency: 5, fortune: 3, unbreaking: 3, mending: 1 }, true),
   },
   {
     id: 'god-pickaxe-silk',
     label: '✨ Silk Touch Master',
     description: 'Efficiency V, Silk Touch, Unbreaking III, Mending, Unbreakable',
     applicableTo: (id) => id.endsWith('_pickaxe') || id.endsWith('_axe') || id.endsWith('_shovel'),
-    modern:
-      "[enchantments={levels:{'minecraft:efficiency':5,'minecraft:silk_touch':1,'minecraft:unbreaking':3,'minecraft:mending':1}},unbreakable={}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:efficiency",lvl:5s},{id:"minecraft:silk_touch",lvl:1s},{id:"minecraft:unbreaking",lvl:3s},{id:"minecraft:mending",lvl:1s}],Unbreakable:1b}',
+    ...enchantmentNbt({ efficiency: 5, silk_touch: 1, unbreaking: 3, mending: 1 }, true),
   },
 
   // Ranged Weapons
@@ -82,20 +94,14 @@ export const COMMON_NBT_PRESETS: NbtPreset[] = [
     label: '🏹 God Bow (Power V)',
     description: 'Power V, Flame, Infinity, Punch II, Unbreaking III, Unbreakable',
     applicableTo: (id) => id === 'minecraft:bow',
-    modern:
-      "[enchantments={levels:{'minecraft:power':5,'minecraft:flame':1,'minecraft:infinity':1,'minecraft:punch':2,'minecraft:unbreaking':3}},unbreakable={}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:power",lvl:5s},{id:"minecraft:flame",lvl:1s},{id:"minecraft:infinity",lvl:1s},{id:"minecraft:punch",lvl:2s},{id:"minecraft:unbreaking",lvl:3s}],Unbreakable:1b}',
+    ...enchantmentNbt({ power: 5, flame: 1, infinity: 1, punch: 2, unbreaking: 3 }, true),
   },
   {
     id: 'god-crossbow',
     label: '🎯 Rapid Multi-Crossbow',
     description: 'Quick Charge III, Multishot, Piercing IV, Unbreaking III, Mending',
     applicableTo: (id) => id === 'minecraft:crossbow',
-    modern:
-      "[enchantments={levels:{'minecraft:quick_charge':3,'minecraft:multishot':1,'minecraft:piercing':4,'minecraft:unbreaking':3,'minecraft:mending':1}}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:quick_charge",lvl:3s},{id:"minecraft:multishot",lvl:1s},{id:"minecraft:piercing",lvl:4s},{id:"minecraft:unbreaking",lvl:3s},{id:"minecraft:mending",lvl:1s}]}',
+    ...enchantmentNbt({ quick_charge: 3, multishot: 1, piercing: 4, unbreaking: 3, mending: 1 }),
   },
 
   // Mace (1.21+)
@@ -104,10 +110,7 @@ export const COMMON_NBT_PRESETS: NbtPreset[] = [
     label: '🔨 Smash Mace (1.21+)',
     description: 'Density V, Breach IV, Wind Burst III, Unbreaking III, Mending',
     applicableTo: (id) => id === 'minecraft:mace',
-    modern:
-      "[enchantments={levels:{'minecraft:density':5,'minecraft:breach':4,'minecraft:wind_burst':3,'minecraft:unbreaking':3,'minecraft:mending':1}},unbreakable={}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:density",lvl:5s},{id:"minecraft:breach",lvl:4s},{id:"minecraft:wind_burst",lvl:3s},{id:"minecraft:unbreaking",lvl:3s},{id:"minecraft:mending",lvl:1s}],Unbreakable:1b}',
+    ...enchantmentNbt({ density: 5, breach: 4, wind_burst: 3, unbreaking: 3, mending: 1 }, true),
   },
 
   // Armor
@@ -120,10 +123,7 @@ export const COMMON_NBT_PRESETS: NbtPreset[] = [
       id.endsWith('_chestplate') ||
       id.endsWith('_leggings') ||
       id.endsWith('_boots'),
-    modern:
-      "[enchantments={levels:{'minecraft:protection':4,'minecraft:unbreaking':3,'minecraft:mending':1,'minecraft:thorns':3}},unbreakable={}]",
-    legacy:
-      '{Enchantments:[{id:"minecraft:protection",lvl:4s},{id:"minecraft:unbreaking",lvl:3s},{id:"minecraft:mending",lvl:1s},{id:"minecraft:thorns",lvl:3s}],Unbreakable:1b}',
+    ...enchantmentNbt({ protection: 4, unbreaking: 3, mending: 1, thorns: 3 }, true),
   },
 
   // Universal Presets

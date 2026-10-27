@@ -225,19 +225,48 @@ client, such as `unix://` or `tcp://`; use a locally forwarded socket for an SSH
 connection.
 
 For a systemd installation, use `deploy/mcm-podman.service` as a **user** unit
-instead of the Docker-specific system unit. Set the persistent session secret
-in `~/.config/mcm/mcm.env`, then run:
+instead of the Docker-specific system unit. This unit launches the installed
+`/usr/local/bin/mcm` binary and requires `~/.config/mcm/mcm.env` to exist before
+startup. From the project directory on the Linux host, run:
 
 ```sh
-install -d ~/.config/systemd/user ~/.config/mcm
+# Build and install the native binary (requires Go and pnpm).
+make build
+sudo install -m 0755 ./mcm /usr/local/bin/mcm
+
+install -d ~/.config/systemd/user
+install -d -m 0700 ~/.config/mcm
+# Create a persistent session secret on first install; preserve existing config.
+if [ ! -e "$HOME/.config/mcm/mcm.env" ]; then
+  (umask 077
+   printf 'MCM_SESSION_SECRET=%s\n' "$(openssl rand -hex 32)" > "$HOME/.config/mcm/mcm.env")
+fi
+
 install -m 0644 deploy/mcm-podman.service ~/.config/systemd/user/mcm.service
-# Create ~/.config/mcm/mcm.env with MCM_SESSION_SECRET and any other settings.
+systemctl --user enable --now podman.socket
 systemctl --user daemon-reload
+systemctl --user reset-failed mcm.service
 systemctl --user enable --now mcm.service
 ```
 
 The unit stores data in `~/.local/share/mcm`. Enable user lingering with
 `loginctl enable-linger "$USER"` if it should continue running after logout.
+Add overrides to `~/.config/mcm/mcm.env` as needed. Use literal absolute paths
+there: systemd environment files do not expand shell variables such as `$HOME`.
+If moving an existing installation, set `MCM_DATA_DIR` to its existing data path.
+
+If startup fails, inspect the unit and its journal:
+
+```sh
+systemctl --user status mcm.service --no-pager -l
+journalctl --user -u mcm.service -n 50 --no-pager
+```
+
+`Failed to load environment files` points to a missing or unreadable
+`~/.config/mcm/mcm.env`; create it using the block above. `status=203/EXEC` points
+to the executable: confirm `/usr/local/bin/mcm` is installed and executable on
+this host. A failure in `podman.socket` should be checked with
+`systemctl --user status podman.socket --no-pager -l`.
 
 ### macOS and remote hosts
 

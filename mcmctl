@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+# Per-user Linux installation and management for MCM. No elevated privileges.
+set -Eeuo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mcm"
+BIN_DIR="${MCM_BIN_DIR:-$HOME/.local/bin}"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+CONFIG="$CONFIG_DIR/mcm.env"
+STATE="$CONFIG_DIR/install.conf"
+UNIT="$UNIT_DIR/mcm.service"
+STAGING=""
+BUILD_CONTAINER=""
+ENGINE=""
+SOURCE_DIR=""
+
+say() { printf '%s\n' "$*"; }
+die() { say "Error: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "Install $1 first, then retry."; }
+cleanup() {
+    if [[ -n "$BUILD_CONTAINER" && -n "$ENGINE" ]]; then
+        "$ENGINE" rm -f "$BUILD_CONTAINER" >/dev/null 2>&1 || true
+    fi
+    [[ -z "$STAGING" ]] || rm -rf -- "$STAGING"
+}
+trap cleanup EXIT
+
+usage() {
+    cat <<'USAGE'
+Usage: ./mcmctl install [--runtime podman|docker] [--data-dir /absolute/path] [--port 8080]
+       mcmctl start|stop|restart|status|logs|enable|disable
+       mcmctl update [--local]
+       mcmctl config|backup|rollback|uninstall
+
+install    Build the complete app, create config, and start a user service.
+update     Fast-forward the source checkout, build, back up, and restart.
+  --local  Build the current checkout without fetching or changing Git files.
+config     Open persistent settings in $EDITOR (default: vi).
+backup     Save the panel database, settings, and installed version.
+rollback   Restore the last backup and restart the panel.
+uninstall  Remove the service and installed commands; retain config and data.
+
+Run as your normal Linux user. Podman is preferred when both engines exist.
+Minecraft servers keep running when the panel is stopped or updated.
+USAGE
+}
+
+# Read literal KEY=value settings without executing the file as shell code.
+setting() {
+    local key="$1" value="" line
+    [[ -f "$CONFIG" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == "$key="* ]]; then value="${line#*=}"; fi
+    done < "$CONFIG"
+    if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+        value="${value:1:${#value}-2}"
+    fi
+    printf '%s' "$value"
+}
+
+set_setting() {
+    local key="$1" value="$2" line temp
+    temp=$(mktemp "$CONFIG_DIR/.env.XXXXXX")
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == "$key="* ]] || printf '%s\n' "$line"
+    done < "$CONFIG" > "$temp"
+    printf '%s=%s\n' "$key" "$value" >> "$temp"
+    chmod 600 "$temp"
+    mv -f -- "$temp" "$CONFIG"
+}
+
+absolute_path() {
+    [[ "$1" == /* ]] || die "Use an absolute path: $1"
+    # Literal environment-file paths; avoid unsupported escaping/expansion.
+    [[ "$1" != *[$'\n\r\\\"\047\$']* ]] || die "Path contains unsupported quotes, escapes, or shell variables: $1"
+}
+
+load_state() {
+    local key value
+    [[ -f "$STATE" ]] || die "MCM is not installed. Run ./mcmctl install from the project checkout."
+    while IFS='=' read -r key value; do
+        [[ "$key" != SOURCE_DIR ]] || SOURCE_DIR="$value"
+    done < "$STATE"
+    [[ -n "$SOURCE_DIR" ]] || die "Installation metadata is incomplete: $STATE"
+}
+
+lock_installation() {
+    need flock
+    mkdir -p "$CONFIG_DIR"
+    chmod 700 "$CONFIG_DIR"
+    exec 9>"$CONFIG_DIR/.lock"
+    flock -n 9 || die "Another MCM installation or update is running."
+}
+
+prepare_engine() {
+    need "$ENGINE"
+    if [[ "$ENGINE" == podman ]]; then
+        systemctl --user enable --now podman.socket
+        local socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+        [[ -S "$socket" ]] || die "Podman's API socket is missing: $socket. Check: systemctl --user status podman.socket"
+    fi
+    "$ENGINE" info >/dev/null || die "$ENGINE is not accessible to your user. Check its installation and permissions."
+}
+
+ensure_runtime_image() {
+    local image
+    image=$(setting MCM_SERVER_IMAGE)
+    [[ -n "$image" ]] || image=docker.io/library/eclipse-temurin:21-jre-alpine
+    if ! "$ENGINE" image inspect "$image" >/dev/null 2>&1; then
+        say "Downloading the Minecraft runtime image."
+        "$ENGINE" pull "$image"
+    fi
+}
+
+prepare_config() {
+    local data_dir="$1" port="$2" secret
+    mkdir -p "$CONFIG_DIR" "$BIN_DIR" "$UNIT_DIR"
+    touch "$CONFIG"
+    chmod 600 "$CONFIG"
+    [[ -n "$(setting MCM_CONTAINER_RUNTIME)" ]] || set_setting MCM_CONTAINER_RUNTIME "$ENGINE"
+    [[ -z "$data_dir" ]] || set_setting MCM_DATA_DIR "$data_dir"
+    [[ -n "$(setting MCM_DATA_DIR)" ]] || set_setting MCM_DATA_DIR "${XDG_DATA_HOME:-$HOME/.local/share}/mcm"
+    [[ -z "$port" ]] || set_setting MCM_ADDR ":$port"
+    [[ -n "$(setting MCM_ADDR)" ]] || set_setting MCM_ADDR :8080
+    if [[ -z "$(setting MCM_CONTAINER_HOST)" ]]; then
+        if [[ "$ENGINE" == podman ]]; then
+            set_setting MCM_CONTAINER_HOST "unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+        else
+            set_setting MCM_CONTAINER_HOST "${DOCKER_HOST:-unix:///var/run/docker.sock}"
+        fi
+    fi
+    secret=$(setting MCM_SESSION_SECRET)
+    if [[ -z "$secret" || "$secret" == change-me-to-a-long-random-string ]]; then
+        secret=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+        [[ ${#secret} == 64 ]] || die "Could not create a session secret."
+        set_setting MCM_SESSION_SECRET "$secret"
+    fi
+    data_dir=$(setting MCM_DATA_DIR)
+    absolute_path "$data_dir"
+    mkdir -p -- "$data_dir"
+    [[ -w "$data_dir" ]] || die "Your user cannot write to $data_dir."
+}
+
+build_app() {
+    [[ -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/mcmctl" ]] || die "Source checkout is missing: $SOURCE_DIR"
+    STAGING=$(mktemp -d "$BIN_DIR/.mcm-build.XXXXXX")
+    say "Building MCM and its web interface with $ENGINE. The running panel stays up during the build."
+    local image="localhost/mcm-build:$(id -u)"
+    "$ENGINE" build --target go --tag "$image" --file "$SOURCE_DIR/Dockerfile" "$SOURCE_DIR"
+    BUILD_CONTAINER=$("$ENGINE" create --entrypoint /bin/true "$image")
+    "$ENGINE" cp "$BUILD_CONTAINER:/out/mcm" "$STAGING/mcm"
+    "$ENGINE" rm "$BUILD_CONTAINER" >/dev/null
+    BUILD_CONTAINER=""
+    [[ -s "$STAGING/mcm" ]] || die "The build did not produce an MCM binary."
+    chmod 755 "$STAGING/mcm"
+}
+
+unit_quote() {
+    local value="${1//%/%%}"
+    printf '"%s"' "$value"
+}
+
+write_unit() {
+    {
+        say '# Managed by mcmctl. Change application settings in mcm.env.'
+        say '[Unit]'
+        say 'Description=MCM - Minecraft Container Manager'
+        if [[ "$ENGINE" == podman ]]; then
+            say 'After=podman.socket'
+            say 'Requires=podman.socket'
+        fi
+        say ''
+        say '[Service]'
+        printf 'ExecStart=%s\n' "$(unit_quote "$BIN_DIR/mcm")"
+        printf 'EnvironmentFile=%s\n' "$(unit_quote "$CONFIG")"
+        printf 'WorkingDirectory=%s\n' "$(unit_quote "$HOME")"
+        say 'Restart=on-failure'
+        say 'RestartSec=5'
+        say 'TimeoutStopSec=90'
+        say ''
+        say '[Install]'
+        say 'WantedBy=default.target'
+    } > "$UNIT"
+}
+
+wait_ready() {
+    local address port host scheme=http attempt
+    address=$(setting MCM_ADDR)
+    port="${address##*:}"
+    host="${address%:*}"
+    [[ -n "$host" && "$host" != 0.0.0.0 && "$host" != '[::]' ]] || host=127.0.0.1
+    [[ -z "$(setting MCM_TLS_CERT)" ]] || scheme=https
+    for ((attempt=0; attempt<30; attempt++)); do
+        if systemctl --user is-active --quiet mcm.service &&
+            curl --noproxy '*' --fail --silent --max-time 2 "$scheme://$host:$port/readyz" >/dev/null; then
+            say "MCM is ready at $scheme://$host:$port"
+            return 0
+        fi
+        sleep 1
+    done
+    journalctl --user -u mcm.service -n 30 --no-pager >&2 || true
+    return 1
+}
+
+snapshot() {
+    local backup db_path suffix
+    backup=$(mktemp -d "$CONFIG_DIR/backups/update-$(date +%Y%m%d-%H%M%S)-XXXXXX")
+    cp -p -- "$CONFIG" "$backup/mcm.env" || return 1
+    for suffix in mcm mcmctl; do
+        [[ ! -f "$BIN_DIR/$suffix" ]] || cp -p -- "$BIN_DIR/$suffix" "$backup/$suffix" || return 1
+    done
+    [[ ! -f "$UNIT" ]] || cp -p -- "$UNIT" "$backup/mcm.service" || return 1
+    db_path=$(setting MCM_DB_PATH)
+    [[ -n "$db_path" ]] || db_path="$(setting MCM_DATA_DIR)/mcm.db"
+    absolute_path "$db_path"
+    printf '%s\n' "$db_path" > "$backup/database-path" || return 1
+    for suffix in '' -wal -shm; do
+        [[ ! -f "$db_path$suffix" ]] || cp -p -- "$db_path$suffix" "$backup/database$suffix" || return 1
+    done
+    printf '%s\n' "$backup" > "$CONFIG_DIR/last-backup" || return 1
+    say "Panel backup saved: $backup"
+}
+
+restore_snapshot() {
+    local backup db_path suffix
+    [[ -f "$CONFIG_DIR/last-backup" ]] || die "No panel backup is available."
+    IFS= read -r backup < "$CONFIG_DIR/last-backup"
+    [[ -f "$backup/mcm" ]] || die "This backup has no installed binary: $backup"
+    systemctl --user stop mcm.service || return 1
+    cp -p -- "$backup/mcm" "$BIN_DIR/.mcm-restore" || return 1
+    mv -f -- "$BIN_DIR/.mcm-restore" "$BIN_DIR/mcm" || return 1
+    cp -p -- "$backup/mcm.env" "$CONFIG" || return 1
+    [[ ! -f "$backup/mcm.service" ]] || cp -p -- "$backup/mcm.service" "$UNIT" || return 1
+    [[ ! -f "$backup/mcmctl" ]] || cp -p -- "$backup/mcmctl" "$BIN_DIR/.mcmctl-restore" || return 1
+    [[ ! -f "$BIN_DIR/.mcmctl-restore" ]] || mv -f -- "$BIN_DIR/.mcmctl-restore" "$BIN_DIR/mcmctl" || return 1
+    IFS= read -r db_path < "$backup/database-path"
+    # Restore a database only when one existed before the update.
+    if [[ -f "$backup/database" ]]; then
+        absolute_path "$db_path"
+        for suffix in '' -wal -shm; do
+            rm -f -- "$db_path$suffix" || return 1
+            [[ ! -f "$backup/database$suffix" ]] || cp -p -- "$backup/database$suffix" "$db_path$suffix" || return 1
+        done
+    fi
+    systemctl --user daemon-reload || return 1
+    systemctl --user reset-failed mcm.service || return 1
+    systemctl --user start mcm.service || return 1
+    wait_ready
+}
+
+enable_boot() {
+    systemctl --user enable mcm.service
+    if command -v loginctl >/dev/null 2>&1 && [[ $(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null) != yes ]]; then
+        if ! loginctl enable-linger "$(id -un)"; then
+            say "To run MCM after logout and at boot, run: sudo loginctl enable-linger $(id -un)"
+        fi
+    fi
+}
+
+install_app() {
+    local requested_engine="" data_dir="" port="" flag
+    while (($#)); do
+        flag="$1"; shift
+        (($#)) || die "Missing value for $flag"
+        case "$flag" in
+            --runtime) requested_engine="$1" ;;
+            --data-dir) data_dir="$1"; absolute_path "$data_dir" ;;
+            --port) port="$1"; [[ "$port" =~ ^[0-9]+$ && "$port" -gt 1023 && "$port" -le 65535 ]] || die "Port must be between 1024 and 65535." ;;
+            *) die "Unknown option: $flag" ;;
+        esac
+        shift
+    done
+    SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+    [[ -f "$SOURCE_DIR/Dockerfile" ]] || load_state
+    ENGINE="${requested_engine:-$(setting MCM_CONTAINER_RUNTIME)}"
+    if [[ -z "$ENGINE" ]]; then
+        if command -v podman >/dev/null 2>&1; then ENGINE=podman; else ENGINE=docker; fi
+    fi
+    [[ "$ENGINE" == podman || "$ENGINE" == docker ]] || die "Runtime must be podman or docker."
+    if [[ -n "$requested_engine" && -n "$(setting MCM_CONTAINER_RUNTIME)" && "$requested_engine" != "$(setting MCM_CONTAINER_RUNTIME)" ]]; then
+        die "Config uses $(setting MCM_CONTAINER_RUNTIME). Change MCM_CONTAINER_RUNTIME and MCM_CONTAINER_HOST in $CONFIG before switching engines."
+    fi
+    prepare_engine
+    prepare_config "$data_dir" "$port"
+    ensure_runtime_image
+    build_app
+    mkdir -p "$CONFIG_DIR/backups"
+    # Capture the stopped database, including any residual SQLite WAL.
+    systemctl --user stop mcm.service 2>/dev/null || true
+    if [[ -f "$BIN_DIR/mcm" ]]; then snapshot; fi
+    [[ ! -f "$UNIT" ]] || cp -p -- "$UNIT" "$CONFIG_DIR/previous.service"
+    mv -f -- "$STAGING/mcm" "$BIN_DIR/mcm"
+    cp -- "$SOURCE_DIR/mcmctl" "$STAGING/mcmctl"
+    chmod 755 "$STAGING/mcmctl"
+    mv -f -- "$STAGING/mcmctl" "$BIN_DIR/mcmctl"
+    printf 'SOURCE_DIR=%s\n' "$SOURCE_DIR" > "$STATE"
+    write_unit
+    systemctl --user daemon-reload
+    systemctl --user reset-failed mcm.service
+    enable_boot
+    if ! systemctl --user start mcm.service || ! wait_ready; then
+        die "MCM could not start. Inspect: $BIN_DIR/mcmctl logs. Your settings and server data are retained."
+    fi
+    say "Installed. Manage MCM with: $BIN_DIR/mcmctl status"
+    say "Settings: $CONFIG"
+    say "Server data: $(setting MCM_DATA_DIR)"
+}
+
+update_app() {
+    local local_build=false
+    if (($#)); then
+        [[ $# == 1 && "$1" == --local ]] || die "Usage: mcmctl update [--local]"
+        local_build=true
+    fi
+    load_state
+    ENGINE=$(setting MCM_CONTAINER_RUNTIME)
+    prepare_engine
+    if [[ "$local_build" == false ]]; then
+        need git
+        [[ -z $(git -C "$SOURCE_DIR" status --porcelain) ]] || die "The checkout has local changes. Commit or stash them, or use mcmctl update --local to build them."
+        git -C "$SOURCE_DIR" pull --ff-only
+    fi
+    ensure_runtime_image
+    build_app
+    mkdir -p "$CONFIG_DIR/backups"
+    systemctl --user stop mcm.service
+    snapshot
+    mv -f -- "$STAGING/mcm" "$BIN_DIR/mcm"
+    if ! systemctl --user start mcm.service || ! wait_ready; then
+        say "The update did not become ready. Restoring the previous binary, config, and panel database."
+        restore_snapshot || die "Rollback needs attention. Inspect: mcmctl logs"
+        die "The update failed; the previous version is running."
+    fi
+    cp -- "$SOURCE_DIR/mcmctl" "$STAGING/mcmctl"
+    chmod 755 "$STAGING/mcmctl"
+    mv -f -- "$STAGING/mcmctl" "$BIN_DIR/mcmctl"
+    say 'Update complete. Existing settings and server files were preserved.'
+}
+
+command="${1:-help}"
+[[ $# == 0 ]] || shift
+case "$command" in help|-h|--help) usage; exit 0 ;; esac
+[[ $(uname -s) == Linux ]] || die "The service installer requires Linux with systemd. See README for Docker Compose and macOS setup."
+[[ $(id -u) != 0 ]] || die "Run mcmctl as your normal user, without sudo."
+need systemctl
+absolute_path "$CONFIG_DIR"
+absolute_path "$BIN_DIR"
+case "$command" in
+    install|update|rollback|backup|uninstall) lock_installation ;;
+esac
+case "$command" in
+    install|update|rollback) need curl ;;
+esac
+case "$command" in
+    install) install_app "$@" ;;
+    update) update_app "$@" ;;
+    start|stop|restart|status) systemctl --user "$command" mcm.service ;;
+    logs) exec journalctl --user -u mcm.service -n 100 -f ;;
+    config) [[ -f "$CONFIG" ]] || die "Run ./mcmctl install first."; exec "${EDITOR:-vi}" "$CONFIG" ;;
+    enable) enable_boot ;;
+    disable) systemctl --user disable mcm.service ;;
+    backup)
+        load_state
+        mkdir -p "$CONFIG_DIR/backups"
+        was_active=false
+        systemctl --user is-active --quiet mcm.service && was_active=true
+        systemctl --user stop mcm.service
+        if ! snapshot; then
+            [[ "$was_active" != true ]] || systemctl --user start mcm.service
+            die 'Backup failed.'
+        fi
+        [[ "$was_active" != true ]] || systemctl --user start mcm.service
+        ;;
+    rollback) restore_snapshot ;;
+    uninstall)
+        systemctl --user disable --now mcm.service
+        rm -f -- "$UNIT" "$BIN_DIR/mcm" "$BIN_DIR/mcmctl" "$STATE"
+        systemctl --user daemon-reload
+        say "MCM removed. Settings and backups remain in $CONFIG_DIR; server data is retained."
+        ;;
+    *) usage >&2; die "Unknown command: $command" ;;
+esac

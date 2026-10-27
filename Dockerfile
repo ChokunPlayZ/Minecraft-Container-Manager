@@ -3,7 +3,7 @@
 ###############################################################################
 # Web build stage
 ###############################################################################
-FROM node:22-alpine AS web
+FROM docker.io/library/node:22-alpine AS web
 
 WORKDIR /app
 
@@ -25,7 +25,7 @@ RUN pnpm build
 ###############################################################################
 # Go build stage
 ###############################################################################
-FROM golang:1.26-alpine AS go
+FROM docker.io/library/golang:1.26-alpine AS go
 
 WORKDIR /src
 
@@ -46,7 +46,7 @@ RUN go mod download && \
 ###############################################################################
 # Runtime stage
 ###############################################################################
-FROM alpine:3.20 AS runtime
+FROM docker.io/library/alpine:3.20 AS runtime
 
 RUN apk add --no-cache ca-certificates tzdata su-exec
 

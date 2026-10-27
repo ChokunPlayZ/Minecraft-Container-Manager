@@ -51,7 +51,20 @@ describe('GiveItemModal Component', () => {
     expect(screen.getByText(/\/give Alex minecraft:elytra 1/)).toBeInTheDocument();
   });
 
-  it('toggles raw NBT editor and populates with preset', async () => {
+  it.each([
+    {
+      version: '1.21.4',
+      nbt: "[enchantments={levels:{'minecraft:sharpness':5,'minecraft:fire_aspect':2,'minecraft:looting':3,'minecraft:sweeping_edge':3,'minecraft:unbreaking':3,'minecraft:mending':1}},unbreakable={}]",
+    },
+    {
+      version: '1.21.5',
+      nbt: "[enchantments={'minecraft:sharpness':5,'minecraft:fire_aspect':2,'minecraft:looting':3,'minecraft:sweeping_edge':3,'minecraft:unbreaking':3,'minecraft:mending':1},unbreakable={}]",
+    },
+    {
+      version: undefined,
+      nbt: "[enchantments={'minecraft:sharpness':5,'minecraft:fire_aspect':2,'minecraft:looting':3,'minecraft:sweeping_edge':3,'minecraft:unbreaking':3,'minecraft:mending':1},unbreakable={}]",
+    },
+  ])('previews and submits a god sword for Minecraft $version', async ({ version, nbt }) => {
     const user = userEvent.setup();
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
 
@@ -60,7 +73,7 @@ describe('GiveItemModal Component', () => {
         open={true}
         onClose={vi.fn()}
         player="Steve"
-        serverVersion="1.21.4"
+        serverVersion={version}
         onSubmit={handleSubmit}
       />,
     );
@@ -77,11 +90,10 @@ describe('GiveItemModal Component', () => {
     // Click the God Sword preset
     await user.click(godSwordPreset);
 
-    // Textarea should be populated with Modern Component format (since 1.21.4)
+    // The editor, preview, and submitted payload must use the server's component format.
     const textarea = screen.getByPlaceholderText(/enchantments=/i);
-    expect(textarea).toHaveValue(
-      "[enchantments={levels:{'minecraft:sharpness':5,'minecraft:fire_aspect':2,'minecraft:looting':3,'minecraft:sweeping_edge':3,'minecraft:unbreaking':3,'minecraft:mending':1}},unbreakable={}]",
-    );
+    expect(textarea).toHaveValue(nbt);
+    expect(screen.getByText(`/give Steve minecraft:diamond_sword${nbt} 1`)).toBeInTheDocument();
 
     // Live preview and textarea should update
     expect(screen.getAllByText(/sharpness':5/).length).toBeGreaterThan(0);
@@ -97,7 +109,7 @@ describe('GiveItemModal Component', () => {
     expect(handleSubmit).toHaveBeenCalledWith({
       item: 'minecraft:diamond_sword',
       amount: 2,
-      nbt: "[enchantments={levels:{'minecraft:sharpness':5,'minecraft:fire_aspect':2,'minecraft:looting':3,'minecraft:sweeping_edge':3,'minecraft:unbreaking':3,'minecraft:mending':1}},unbreakable={}]",
+      nbt,
     });
   });
 

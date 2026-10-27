@@ -4,6 +4,8 @@ import {
   buildGiveCommand,
   validateNbt,
   getPresetsForItem,
+  getPresetNbt,
+  COMMON_NBT_PRESETS,
 } from '../src/lib/minecraft-nbt';
 import { searchMinecraftItems } from '../src/lib/minecraft-items';
 
@@ -48,6 +50,43 @@ describe('Minecraft NBT Utilities', () => {
     const pickPresets = getPresetsForItem('minecraft:diamond_pickaxe');
     expect(pickPresets.some((p) => p.id === 'god-pickaxe-fortune')).toBe(true);
     expect(pickPresets.some((p) => p.id === 'god-pickaxe-silk')).toBe(true);
+  });
+
+  const enchantedPresets = [
+    'god-sword',
+    'smite-sword',
+    'god-pickaxe-fortune',
+    'god-pickaxe-silk',
+    'god-bow',
+    'god-crossbow',
+    'god-mace',
+    'god-armor',
+  ];
+
+  it.each(enchantedPresets)('uses flat enchantments for %s on 1.21.5+', (id) => {
+    const preset = COMMON_NBT_PRESETS.find((p) => p.id === id)!;
+    for (const version of ['1.21.5', '1.21.10', '1.22', '26.1', '1.21.5-pre1', 'latest', undefined]) {
+      const nbt = getPresetNbt(preset, 'modern', version);
+      const enchantments = nbt.match(/^\[enchantments=\{([^{}]+)\}/)?.[1];
+      expect(enchantments).toBeDefined();
+      expect(enchantments).not.toContain('levels');
+      expect(enchantments?.split(',').every((entry) => /^'minecraft:[a-z_]+':\d+$/.test(entry))).toBe(true);
+      expect(validateNbt(nbt).valid).toBe(true);
+    }
+  });
+
+  it.each(enchantedPresets)('keeps nested enchantments for %s on 1.20.5–1.21.4', (id) => {
+    const preset = COMMON_NBT_PRESETS.find((p) => p.id === id)!;
+    for (const version of ['1.20.5', '1.20.6', '1.21', '1.21.1', '1.21.4']) {
+      const nbt = getPresetNbt(preset, 'modern', version);
+      expect(nbt).toMatch(/^\[enchantments=\{levels:\{/);
+      expect(validateNbt(nbt).valid).toBe(true);
+    }
+  });
+
+  it.each(COMMON_NBT_PRESETS)('preserves legacy syntax for $id', (preset) => {
+    expect(getPresetNbt(preset, 'legacy', '1.20.1')).toBe(preset.legacy);
+    expect(getPresetNbt(preset, 'legacy', '1.21.5')).toBe(preset.legacy);
   });
 
   it('builds give command correctly with or without NBT', () => {
