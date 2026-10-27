@@ -395,7 +395,7 @@ Cards use a one-pixel border, card fill, card foreground, large corners, and no 
 
 ### Navigation
 
-Rail links combine an icon and a (14px) label. Desktop links include a (12px) description; mobile links omit that description. The active item uses a card surface, foreground text, a one-pixel border ring, a primary icon, and a trailing chevron. Inactive links use muted text and an accent hover surface. The current page is exposed to assistive technology. A skip link becomes visible on focus.
+Rail and mobile navigation links combine an icon and a (14px) label for Servers, Backups, Settings, and Users, without supporting descriptions. The active item uses a card surface, foreground text, a one-pixel border ring, a primary icon, and a trailing chevron. Inactive links use muted text and an accent hover surface. The current page is exposed to assistive technology. A skip link becomes visible on focus.
 
 Workspace tabs use a transparent surface and a two-pixel bottom rule for selection. They are separated by (6px), have (13px by 15px) padding on wide screens, and use (12px) padding on narrow screens. They retain horizontal scrolling instead of compressing labels.
 

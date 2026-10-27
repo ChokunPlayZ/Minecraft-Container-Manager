@@ -1,4 +1,4 @@
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
@@ -54,7 +54,7 @@ describe('BackupsPanel', () => {
 
     expect(screen.getByRole('button', { name: /Upload/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('pre-update')).toBeInTheDocument();
-    expect(screen.getByText(/10\.0 MB/)).toBeInTheDocument();
+    expect(screen.getByText(/stored$/)).toHaveTextContent('10.0 MB');
     expect(screen.getByText('Local')).toBeInTheDocument();
   });
 
@@ -179,5 +179,62 @@ describe('BackupsPanel', () => {
       'local',
       expect.any(Function),
     );
+  });
+
+  it('filters archives by name and storage and resets both filters', async () => {
+    vi.spyOn(api, 'listBackups').mockResolvedValue({ backups: [
+      { id: 'local', server_id: mockServer.id, name: 'before-upgrade', location: 'local:before.tar.gz', size_bytes: 100, status: 'completed', created_at: '2026-10-27T00:00:00Z' },
+      { id: 'cloud', server_id: mockServer.id, name: 'daily-cloud', location: 's3://bucket/daily.tar.gz', size_bytes: 100, status: 'completed', created_at: '2026-10-27T01:00:00Z' },
+    ] });
+    vi.spyOn(api, 'getBackupProgress').mockResolvedValue({ active: false });
+    vi.spyOn(api, 'subscribeBackupEvents').mockReturnValue(() => {});
+    render(<BackupsPanel server={mockServer} />);
+    await screen.findByText('before-upgrade');
+    await userEvent.selectOptions(screen.getByLabelText('Filter backup storage'), 'local');
+    expect(screen.queryByText('daily-cloud')).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Search backups'), 'daily');
+    expect(screen.getByText('No matching backups')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+    expect(screen.getByText('before-upgrade')).toBeInTheDocument();
+    expect(screen.getByText('daily-cloud')).toBeInTheDocument();
+  });
+
+  it('creates a named backup in the selected storage and refreshes the list', async () => {
+    const backup = { id: 'new', server_id: mockServer.id, name: 'before-update', location: 's3://bucket/new.tar.gz', size_bytes: 100, status: 'completed' as const, created_at: '2026-10-27T00:00:00Z' };
+    const list = vi.spyOn(api, 'listBackups').mockResolvedValueOnce({ backups: [] }).mockResolvedValue({ backups: [backup] });
+    vi.spyOn(api, 'getBackupProgress').mockResolvedValue({ active: false });
+    vi.spyOn(api, 'subscribeBackupEvents').mockReturnValue(() => {});
+    const create = vi.spyOn(api, 'createBackup').mockResolvedValue(backup);
+    render(<BackupsPanel server={mockServer} />);
+    await screen.findByText('No backups yet');
+    await userEvent.type(screen.getByLabelText('Backup name (optional)'), ' before-update ');
+    await userEvent.selectOptions(screen.getByLabelText('Storage target'), 's3');
+    await userEvent.click(screen.getByRole('button', { name: 'Create backup' }));
+    expect(await screen.findByText('before-update')).toBeInTheDocument();
+    expect(create).toHaveBeenCalledWith(mockServer.id, 'before-update', 's3');
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText('Backup name (optional)')).toHaveValue('');
+    expect(screen.getByText('Backup created.')).toBeInTheDocument();
+  });
+
+  it('confirms restoration and does not offer incomplete archives for restore or download', async () => {
+    const base = { server_id: mockServer.id, location: 'local:backup.tar.gz', size_bytes: 100, created_at: '2026-10-27T00:00:00Z' };
+    vi.spyOn(api, 'listBackups').mockResolvedValue({ backups: [
+      { ...base, id: 'complete', name: 'good-backup', status: 'completed' },
+      { ...base, id: 'failed', name: 'failed-backup', status: 'failed' },
+    ] });
+    vi.spyOn(api, 'getBackupProgress').mockResolvedValue({ active: false });
+    vi.spyOn(api, 'subscribeBackupEvents').mockReturnValue(() => {});
+    const restore = vi.spyOn(api, 'restoreBackup').mockResolvedValue({ ok: true });
+    render(<BackupsPanel server={mockServer} />);
+    await screen.findByText('good-backup');
+    expect(screen.getAllByRole('button', { name: /^Restore$/ })[1]).toBeDisabled();
+    expect(screen.getAllByRole('button', { name: 'Download backup' })[1]).toBeDisabled();
+    await userEvent.click(screen.getAllByRole('button', { name: /^Restore$/ })[0]);
+    const dialog = await screen.findByRole('dialog', { name: 'Restore backup' });
+    expect(restore).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole('button', { name: /^Restore$/ }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith(mockServer.id, 'complete'));
+    expect(await screen.findByText('Backup restored.')).toBeInTheDocument();
   });
 });

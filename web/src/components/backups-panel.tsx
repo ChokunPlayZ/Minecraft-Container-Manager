@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Download, Loader2, Plus, RotateCcw, Trash2, UploadCloud } from 'lucide-react';
+import { Archive, CheckCircle2, Download, Loader2, Plus, RefreshCw, RotateCcw, Search, Trash2, UploadCloud } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { BackupProgress, BackupRecord, Server } from '../api/types';
 import { Button } from './ui/button';
@@ -8,6 +8,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { ProgressBar } from './ui/progress';
 import { Select } from './ui/select';
+import { Skeleton } from './ui/skeleton';
 import { useModal } from './ui/modal';
 
 function formatBytes(bytes: number): string {
@@ -23,6 +24,12 @@ export function BackupsPanel({ server }: { server: Server }) {
   const [storage, setStorage] = useState<'local' | 's3'>('local');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [locationFilter, setLocationFilter] = useState('all');
   const [activeProgress, setActiveProgress] = useState<BackupProgress | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadFileName, setUploadFileName] = useState<string | null>(null);
@@ -30,12 +37,16 @@ export function BackupsPanel({ server }: { server: Server }) {
   const { confirm, dialog } = useModal();
 
   const load = useCallback(async () => {
+    setRefreshing(true);
     try {
       const res = await api.listBackups(server.id);
       setBackups(res.backups ?? []);
-      setError(null);
+      setLoadError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Failed to load backups');
+      setLoadError(err instanceof ApiError ? err.detail : 'Could not load backups. Try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   }, [server.id]);
 
@@ -76,9 +87,6 @@ export function BackupsPanel({ server }: { server: Server }) {
           setBusy(true);
         }
       },
-      () => {
-        // SSE error fallback: poll once if needed
-      },
     );
 
     return () => {
@@ -86,6 +94,28 @@ export function BackupsPanel({ server }: { server: Server }) {
       unsub();
     };
   }, [server.id, load]);
+
+  // Recover progress if the event stream disconnects during a long operation.
+  useEffect(() => {
+    if (!busy) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void api.getBackupProgress(server.id).then((res) => {
+        if (cancelled || !res.progress) return;
+        setActiveProgress(res.progress);
+        if (res.progress.stage === 'completed' || res.progress.stage === 'failed') {
+          setBusy(false);
+          if (res.progress.stage === 'failed') setError(res.progress.error || res.progress.message);
+          void load();
+        }
+      }).catch(() => {});
+    }, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [busy, server.id, load]);
+
+  const disabled = busy || uploadProgress !== null || deleting !== null;
+  const visibleBackups = backups.filter((backup) => backup.name.toLowerCase().includes(query.trim().toLowerCase()) &&
+    (locationFilter === 'all' || (locationFilter === 'local' ? backup.location.startsWith('local:') : !backup.location.startsWith('local:'))));
 
   async function createBackup() {
     setBusy(true);
@@ -100,7 +130,8 @@ export function BackupsPanel({ server }: { server: Server }) {
     });
 
     try {
-      await api.createBackup(server.id, name.trim(), storage);
+      const backup = await api.createBackup(server.id, name.trim(), storage);
+      setActiveProgress({ id: backup.id, server_id: server.id, operation: 'backup', stage: 'completed', percent: 100, message: 'Backup created.' });
       setName('');
       await load();
     } catch (err) {
@@ -134,6 +165,7 @@ export function BackupsPanel({ server }: { server: Server }) {
 
     try {
       await api.restoreBackup(server.id, backupId);
+      setActiveProgress({ id: backupId, server_id: server.id, operation: 'restore', stage: 'completed', percent: 100, message: 'Backup restored.' });
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Restore failed');
       setActiveProgress(null);
@@ -174,11 +206,15 @@ export function BackupsPanel({ server }: { server: Server }) {
     )
       return;
 
+    setError(null);
+    setDeleting(backupId);
     try {
       await api.deleteBackup(backupId);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Delete failed');
+    } finally {
+      setDeleting(null);
     }
   }
 
@@ -186,21 +222,22 @@ export function BackupsPanel({ server }: { server: Server }) {
     <>
       {dialog}
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Backups</CardTitle>
-          <CardDescription>World snapshots stored locally or in S3-compatible cloud storage.</CardDescription>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 pb-3">
+          <div className="space-y-1.5"><CardTitle className="text-base">Backups</CardTitle>
+          <CardDescription>{loading ? 'Loading backup archives…' : `${backups.length} ${backups.length === 1 ? 'backup' : 'backups'} · ${formatBytes(backups.reduce((sum, backup) => sum + backup.size_bytes, 0))} stored`}</CardDescription></div>
+          <Button variant="ghost" size="icon" aria-label="Refresh backups" disabled={refreshing || disabled} onClick={() => void load()}><RefreshCw className={refreshing ? 'animate-spin' : ''} /></Button>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Create / Upload form */}
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
-            <div className="sm:col-span-2 space-y-1.5">
+          <form className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_160px_auto]" onSubmit={(event) => { event.preventDefault(); if (!disabled) void createBackup(); }}>
+            <div className="space-y-1.5">
               <Label htmlFor="backup-name">Backup name (optional)</Label>
               <Input
                 id="backup-name"
                 placeholder="pre-update"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                disabled={busy}
+                disabled={disabled}
               />
             </div>
             <div className="space-y-1.5">
@@ -208,21 +245,23 @@ export function BackupsPanel({ server }: { server: Server }) {
               <Select
                 id="backup-storage"
                 value={storage}
-                onChange={(e) => setStorage(e.target.value as 'local' | 's3')}
-                disabled={busy}
+                onChange={(event) => setStorage(event.target.value as 'local' | 's3')}
+                disabled={disabled}
               >
                 <option value="local">Local Disk</option>
                 <option value="s3">S3 Cloud</option>
               </Select>
             </div>
-            <div className="flex items-end gap-1.5 sm:col-span-2">
-              <Button onClick={() => void createBackup()} disabled={busy} className="flex-1 font-semibold">
+            <div className="flex flex-wrap items-end gap-2 sm:col-span-2 xl:col-span-1">
+              <Button type="submit" disabled={disabled} className="flex-1 font-semibold">
                 <Plus className="h-4 w-4 mr-1" /> {busy ? 'Processing…' : 'Create backup'}
               </Button>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".tar.gz,.tar,.gz,.zip"
+                accept=".tar.gz,.zip"
+                aria-label="Upload backup archive"
+                disabled={disabled}
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
@@ -232,7 +271,7 @@ export function BackupsPanel({ server }: { server: Server }) {
               />
               <Button
                 variant="outline"
-                disabled={busy || uploadProgress !== null}
+                disabled={disabled}
                 onClick={() => fileInputRef.current?.click()}
                 title="Upload external backup archive"
                 className="font-medium"
@@ -240,7 +279,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                 <UploadCloud className="h-4 w-4 mr-1.5 text-primary" /> Upload
               </Button>
             </div>
-          </div>
+          </form>
 
           {/* Active Backup / Restore Operation Progress Bar */}
           {activeProgress && activeProgress.stage !== 'completed' && activeProgress.stage !== 'failed' && (
@@ -296,29 +335,30 @@ export function BackupsPanel({ server }: { server: Server }) {
             </div>
           )}
 
-          {error && <p className="text-sm text-destructive font-medium">{error}</p>}
+          {error && <p role="alert" className="text-sm text-destructive font-medium">{error}</p>}
+          {loadError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"><p>{loadError}</p><Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>Try again</Button></div>}
+
+          {backups.length > 0 && <div className="flex flex-wrap gap-3 border-t pt-5">
+            <div className="relative min-w-0 flex-1 basis-48"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input aria-label="Search backups" placeholder="Search backups…" value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" /></div>
+            <Select aria-label="Filter backup storage" className="w-full sm:w-40" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">All storage</option><option value="local">Local disk</option><option value="s3">S3 cloud</option></Select>
+          </div>}
 
           <div className="space-y-2">
-            {backups.length === 0 && (
-              <div className="empty-state"><h3 className="section-heading">No backups yet</h3><p>Create a backup before changing server software or restoring world data.</p></div>
+            {loading ? <div className="space-y-3 py-4" aria-label="Loading backups"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : !loadError && backups.length === 0 && (
+              <div className="empty-state"><Archive /><h3 className="section-heading">No backups yet</h3><p>Create a backup or upload a .tar.gz or .zip archive for this server.</p></div>
             )}
-            {backups.map((b) => {
+            {backups.length > 0 && visibleBackups.length === 0 && <div className="empty-state"><Search /><h3 className="section-heading">No matching backups</h3><p>Try another name or storage target.</p><Button variant="outline" className="mt-5" onClick={() => { setQuery(''); setLocationFilter('all'); }}>Reset filters</Button></div>}
+            {visibleBackups.map((b) => {
               const isLocal = b.location?.startsWith('local:');
               return (
                 <div
                   key={b.id}
                   className="flex flex-wrap items-center justify-between gap-3 border-b py-4 text-sm last:border-0"
                 >
-                  <div className="min-w-0 space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate font-medium text-foreground">{b.name}</p>
-                      <span
-                        className={`inline-flex items-center rounded-md px-1.5 py-0.2 text-[11px] font-semibold uppercase tracking-wider ${
-                          isLocal
-                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                            : 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
-                        }`}
-                      >
+                  <div className="min-w-0 flex-1 basis-48 space-y-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <p className="min-w-0 break-all font-medium text-foreground">{b.name}</p>
+                      <span className="inline-flex items-center rounded-md border bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                         {isLocal ? 'Local' : 'S3'}
                       </span>
                     </div>
@@ -334,7 +374,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                       aria-label="Download backup"
                       title="Download backup archive"
                       onClick={() => api.downloadBackupFile(b.id, `${b.name || 'backup'}.tar.gz`)}
-                      disabled={busy}
+                      disabled={disabled || b.status !== 'completed'}
                     >
                       <Download className="h-4 w-4" />
                     </Button>
@@ -344,7 +384,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                       aria-label="Restore"
                       title="Restore this backup"
                       onClick={() => void restore(b.id)}
-                      disabled={busy}
+                      disabled={disabled || b.status !== 'completed'}
                     >
                       <RotateCcw className="h-4 w-4" />
                     </Button>
@@ -354,15 +394,16 @@ export function BackupsPanel({ server }: { server: Server }) {
                       aria-label="Delete"
                       title="Delete this backup"
                       onClick={() => void remove(b.id)}
-                      disabled={busy}
+                      disabled={disabled}
                     >
-                      <Trash2 className="h-4 w-4 text-destructive/80 hover:text-destructive" />
+                      {deleting === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-destructive" />}
                     </Button>
                   </div>
                 </div>
               );
             })}
           </div>
+          {backups.length > 0 && <p role="status" className="border-t pt-3 text-xs text-muted-foreground">{visibleBackups.length} of {backups.length} {backups.length === 1 ? 'backup' : 'backups'}</p>}
         </CardContent>
       </Card>
     </>

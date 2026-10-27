@@ -462,6 +462,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
       ],
     } as T;
   }
+  if (path.startsWith('/api/servers/') && path.endsWith('/backups/progress')) {
+    return { active: false } as T;
+  }
   if (path.startsWith('/api/servers/') && path.endsWith('/install')) {
     return {
       server_id: 'demo',
@@ -1042,6 +1045,7 @@ export const api = {
     onProgress: (p: BackupProgress) => void,
     onError?: (err: Event) => void,
   ) => {
+    if (isMock() || typeof EventSource === 'undefined') return () => {};
     const source = new EventSource(`/api/servers/${serverId}/backups/events`, {
       withCredentials: true,
     });

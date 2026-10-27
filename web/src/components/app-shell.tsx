@@ -1,14 +1,15 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
-import { Box, ChevronRight, LogOut, Menu, Server, Settings2, Users, X } from 'lucide-react';
+import { Archive, Box, ChevronRight, LogOut, Menu, Server, Settings2, Users, X } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { ThemeToggle } from './theme-toggle';
 import { Button } from './ui/button';
 
 const destinations = [
-  { to: '/dashboard', label: 'Servers', icon: Server, description: 'Server instances' },
-  { to: '/settings', label: 'Settings', icon: Settings2, description: 'Account & integrations' },
-  { to: '/users', label: 'Users', icon: Users, description: 'Panel accounts' },
+  { to: '/dashboard', label: 'Servers', icon: Server },
+  { to: '/backups', label: 'Backups', icon: Archive },
+  { to: '/settings', label: 'Settings', icon: Settings2 },
+  { to: '/users', label: 'Users', icon: Users },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -23,17 +24,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   function navigation(mobile = false) {
     return (
       <nav aria-label={mobile ? 'Mobile navigation' : 'Main navigation'} className="space-y-1.5">
-        {destinations.map(({ to, label, icon: Icon, description }) => {
+        {destinations.map(({ to, label, icon: Icon }) => {
           const active = to === current.to;
           return (
             <Link key={to} to={to} onClick={() => setMenuOpen(false)}
               aria-current={active ? 'page' : undefined}
               className={`flex items-center gap-3 rounded-lg px-3 py-3 transition-colors ${active ? 'bg-card text-foreground ring-1 ring-border' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}>
               <Icon className={`h-[18px] w-[18px] shrink-0 ${active ? 'text-primary' : ''}`} strokeWidth={1.7} />
-              <div className="min-w-0">
-                <span className="block text-sm font-medium">{label}</span>
-                {!mobile && <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>}
-              </div>
+              <span className="min-w-0 text-sm font-medium">{label}</span>
               {active && <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" />}
             </Link>
           );

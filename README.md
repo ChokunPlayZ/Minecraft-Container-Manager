@@ -173,6 +173,7 @@ a container.
 - **Automatic Lifecycle Cleanup**: Removing a server automatically deregisters its DNS record on Cloudflare.
 
 ### 📦 S3-Compatible Backups & Scheduling
+- **Dedicated Backup Manager**: Open Backups to select a server, manage archives, search by name, filter by local or S3 storage, and save its automatic backup interval. The server's Backups tab remains available.
 - **Object Store Integration**: Archive server data directories to compressed `.tar.gz` archives stored in any S3-compatible object store (AWS S3, MinIO, Cloudflare R2, DigitalOcean Spaces).
 - **Automated Scheduling & Retention**: Configure automated backup intervals per server with automatic pruning of older snapshots.
 - **Instant Restore**: One-click in-place snapshot restoration.
