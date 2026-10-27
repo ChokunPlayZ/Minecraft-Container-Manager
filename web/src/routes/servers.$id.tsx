@@ -6,6 +6,7 @@ import {
   Archive,
   ArrowLeft,
   Check,
+  CalendarClock,
   ChevronDown,
   Clock,
   Copy,
@@ -42,6 +43,7 @@ import { PlayersPanel } from '../components/players-panel';
 import { PropertiesEditor } from '../components/properties-editor';
 import { ServerInstallProgress } from '../components/server-install-progress';
 import { ServerSettings } from '../components/server-settings';
+import { SchedulesPanel } from '../components/schedules-panel';
 import { ServerStatsGrid } from '../components/server-stats-grid';
 import { StatusBadge } from '../components/status-badge';
 import { Button } from '../components/ui/button';
@@ -60,7 +62,7 @@ export const Route = createFileRoute('/servers/$id')({
   component: ServerDetailRoute,
 });
 
-type ServerTab = 'console' | 'logs' | 'players' | 'files' | 'mods' | 'backups' | 'settings' | 'overview';
+type ServerTab = 'console' | 'logs' | 'players' | 'files' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
 
 export function ServerDetailRoute() {
   const { id } = Route.useParams();
@@ -283,6 +285,7 @@ export function ServerDetailRoute() {
     { id: 'files', label: 'Files', icon: FolderOpen },
     { id: 'mods', label: 'Mods & Plugins', icon: Package },
     { id: 'backups', label: 'Backups', icon: Archive },
+    { id: 'schedules', label: 'Schedules', icon: CalendarClock },
     { id: 'settings', label: 'Settings', icon: Settings2 },
   ];
 
@@ -581,6 +584,7 @@ export function ServerDetailRoute() {
 
           {/* Tab Panes */}
           <div id="server-workspace-panel" role="tabpanel" aria-labelledby={`server-tab-${effectiveTab}`} tabIndex={0} className="outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg">
+          {effectiveTab === 'schedules' && <SchedulesPanel key={server.id} serverId={server.id} />}
           {effectiveTab === 'console' && (
             <ConsoleViewer serverId={server.id} running={isRunning} />
           )}

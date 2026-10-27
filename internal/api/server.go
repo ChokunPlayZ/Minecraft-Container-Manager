@@ -20,6 +20,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/proxy"
+	"github.com/mcm-panel/mcm/internal/schedules"
 	"github.com/mcm-panel/mcm/internal/servers"
 	"github.com/mcm-panel/mcm/internal/web"
 )
@@ -30,6 +31,7 @@ type Server struct {
 	db         *db.Store
 	servers    *servers.Store
 	backups    *backups.Store
+	schedules  *schedules.Store
 	users      *auth.Users
 	sessions   *auth.Manager
 	passkeys   *auth.Passkeys
@@ -45,17 +47,18 @@ type Server struct {
 
 // Config holds the dependencies required to build the API server.
 type Options struct {
-	Cfg      *config.Config
-	DB       *db.Store
-	Servers  *servers.Store
-	Backups  *backups.Store
-	Users    *auth.Users
-	Sessions *auth.Manager
-	Passkeys *auth.Passkeys
-	WebAuthn *webauthn.WebAuthn
-	Jars     *jars.Resolver
-	DNS      *dns.Service
-	Logger   *log.Logger
+	Cfg       *config.Config
+	DB        *db.Store
+	Servers   *servers.Store
+	Backups   *backups.Store
+	Schedules *schedules.Store
+	Users     *auth.Users
+	Sessions  *auth.Manager
+	Passkeys  *auth.Passkeys
+	WebAuthn  *webauthn.WebAuthn
+	Jars      *jars.Resolver
+	DNS       *dns.Service
+	Logger    *log.Logger
 }
 
 type ctxKey string
@@ -69,6 +72,9 @@ func New(opts Options) http.Handler {
 	if opts.Logger == nil {
 		opts.Logger = log.Default()
 	}
+	if opts.Schedules == nil && opts.DB != nil {
+		opts.Schedules = schedules.NewStore(opts.DB.DB)
+	}
 	px := proxy.NewService()
 	if opts.Servers != nil {
 		opts.Servers.SetProxy(px)
@@ -78,6 +84,7 @@ func New(opts Options) http.Handler {
 		db:         opts.DB,
 		servers:    opts.Servers,
 		backups:    opts.Backups,
+		schedules:  opts.Schedules,
 		users:      opts.Users,
 		sessions:   opts.Sessions,
 		passkeys:   opts.Passkeys,
@@ -172,6 +179,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/servers/{id}/modpack", s.requireAuth(s.wrapJSON(s.handleUninstallModpack)))
 
 	// Server tasks (modpack installs, zipping, etc.)
+	s.mux.HandleFunc("GET /api/servers/{id}/schedules", s.requireAuth(s.wrapJSON(s.handleListSchedules)))
+	s.mux.HandleFunc("POST /api/servers/{id}/schedules", s.requireAuth(s.wrapJSON(s.handleCreateSchedule)))
+	s.mux.HandleFunc("PUT /api/servers/{id}/schedules/{scheduleId}", s.requireAuth(s.wrapJSON(s.handleUpdateSchedule)))
+	s.mux.HandleFunc("PATCH /api/servers/{id}/schedules/{scheduleId}", s.requireAuth(s.wrapJSON(s.handleToggleSchedule)))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/schedules/{scheduleId}", s.requireAuth(s.wrapJSON(s.handleDeleteSchedule)))
 	s.mux.HandleFunc("GET /api/servers/{id}/tasks/progress", s.requireAuth(s.wrapJSON(s.handleTaskProgress)))
 	s.mux.HandleFunc("GET /api/servers/{id}/tasks/events", s.requireAuth(s.handleTaskEvents))
 

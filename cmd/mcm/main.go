@@ -15,6 +15,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
+	"github.com/mcm-panel/mcm/internal/schedules"
 	"github.com/mcm-panel/mcm/internal/servers"
 )
 
@@ -69,19 +70,24 @@ func main() {
 	backupScheduler := backups.NewScheduler(backupStore, handle.DB, logger, 1*time.Minute)
 	backupScheduler.Start()
 	defer backupScheduler.Stop()
+	scheduleStore := schedules.NewStore(handle.DB)
+	taskScheduler := schedules.NewScheduler(scheduleStore, serverStore.ExecuteScheduledTask, logger)
+	taskScheduler.Start()
+	defer taskScheduler.Stop()
 
 	handler := api.New(api.Options{
-		Cfg:      cfg,
-		DB:       handle,
-		Servers:  serverStore,
-		Backups:  backupStore,
-		Users:    users,
-		Sessions: sessions,
-		Passkeys: passkeys,
-		WebAuthn: webAuthn,
-		Jars:     jarResolver,
-		DNS:      dnsService,
-		Logger:   logger,
+		Cfg:       cfg,
+		DB:        handle,
+		Servers:   serverStore,
+		Backups:   backupStore,
+		Schedules: scheduleStore,
+		Users:     users,
+		Sessions:  sessions,
+		Passkeys:  passkeys,
+		WebAuthn:  webAuthn,
+		Jars:      jarResolver,
+		DNS:       dnsService,
+		Logger:    logger,
 	})
 
 	if cfg.TLSCert != "" && cfg.TLSKey != "" {

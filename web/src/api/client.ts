@@ -1,4 +1,6 @@
 import type {
+  ScheduledTask,
+  ScheduleInput,
   ConsoleLine,
   ExtraPort,
   InstallInfo,
@@ -155,8 +157,24 @@ let mockDNSRecords: DNSRecord[] = [
   },
 ];
 
+let mockSchedules: ScheduledTask[] = [];
+
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
+
+  const schedulePath = path.match(/^\/api\/servers\/([^/]+)\/schedules(?:\/([^/]+))?$/);
+  if (schedulePath) {
+    const [, serverId, scheduleId] = schedulePath;
+    if (!init.method || init.method === 'GET') return { schedules: mockSchedules.filter((task) => task.server_id === serverId), default_timezone: 'UTC' } as T;
+    if (init.method === 'DELETE') { mockSchedules = mockSchedules.filter((task) => task.id !== scheduleId); return { ok: true } as T; }
+    const body = JSON.parse(String(init.body ?? '{}'));
+    const previous = mockSchedules.find((task) => task.id === scheduleId);
+    const now = new Date().toISOString();
+    // Demo mode does not dispatch commands or calculate live execution times.
+    const task: ScheduledTask = { id: scheduleId ?? crypto.randomUUID(), server_id: serverId, last_run_at: '', last_status: '', last_error: '', next_run_at: '', created_at: now, ...previous, ...body, updated_at: now };
+    mockSchedules = [...mockSchedules.filter((item) => item.id !== task.id), task];
+    return task as T;
+  }
 
   if (path === '/api/settings') {
     if (init.method === 'PUT' && init.body) {
@@ -644,6 +662,11 @@ async function readResponse<T>(response: Response): Promise<T> {
 
 
 export const api = {
+  listSchedules: (id: string) => request<{ schedules: ScheduledTask[]; default_timezone: string }>(`/api/servers/${id}/schedules`),
+  createSchedule: (id: string, input: ScheduleInput) => request<ScheduledTask>(`/api/servers/${id}/schedules`, { method: 'POST', body: JSON.stringify(input) }),
+  updateSchedule: (id: string, scheduleId: string, input: ScheduleInput) => request<ScheduledTask>(`/api/servers/${id}/schedules/${scheduleId}`, { method: 'PUT', body: JSON.stringify(input) }),
+  setScheduleEnabled: (id: string, scheduleId: string, enabled: boolean) => request<ScheduledTask>(`/api/servers/${id}/schedules/${scheduleId}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  deleteSchedule: (id: string, scheduleId: string) => request<{ ok: boolean }>(`/api/servers/${id}/schedules/${scheduleId}`, { method: 'DELETE' }),
   onboardingStatus: () => request<{ onboarding_required: boolean }>('/api/onboarding/status'),
 
   onboarding: (email: string, password: string) =>

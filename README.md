@@ -148,6 +148,14 @@ a container.
 - **Smart Auto-Scroll**: Sticky bottom-scrolling that pauses automatically when scrolling up to inspect past logs.
 - **Saved Log Browser**: Open the server's Logs tab to read files from `logs/` and `crash-reports/`, including `.log.gz` rotations and logs inside `.tar`, `.tar.gz`, and `.tgz` archives, without extracting them. Search, line numbers, wrapping, and pagination help inspect saved output. Previews show the first 2 MiB; search applies to that preview.
 
+### Scheduled Commands & Server Actions
+
+- Open a server's **Schedules** tab to schedule a console command, start, stop, or graceful restart.
+- Choose midnight, hourly, every 30 minutes, weekly, or monthly presets, or enter a standard five-field cron expression (`minute hour day month weekday`). For example, `0 0 * * *` runs at midnight and `*/15 * * * *` runs every 15 minutes. Names such as `midnight`, `daily`, and `@hourly` are also accepted by the API.
+- New tasks default to the existing `TZ` environment setting (`UTC` when unset or invalid). Each task saves its timezone and allows an override. Midnight follows the selected zone, including daylight saving changes.
+- Edit, pause/resume, and delete tasks; inspect the next run, last result, and error details. Console commands require a running server. Restart follows the manual restart behavior and also starts a stopped server.
+- Schedules persist in SQLite and run while the panel is online, within the five-second polling cadence. Missed runs are skipped after panel downtime. A task cannot overlap its own previous execution within the panel process, and pausing or deleting a task leaves an already running execution to finish. Failed runs are recorded and wait for the next scheduled occurrence.
+
 ### 👥 Player & Permissions Management
 - **Live Player Roster**: Real-time list of online players with 3D player head avatars (powered by Minotar).
 - **Player Moderation**: Quick actions to Kick, Ban, Pardon, OP, De-OP, or Whitelist players.
@@ -488,6 +496,15 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | --- | --- | --- |
 | `GET` | `/api/servers/:id/tasks/progress` | Poll active background task progress (modpack install, zip, etc.). |
 | `GET` | `/api/servers/:id/tasks/events` | Stream live task progress events via Server-Sent Events (SSE). |
+
+### Scheduled Tasks
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/servers/:id/schedules` | List recurring tasks, next run, and last result. |
+| `POST` | `/api/servers/:id/schedules` | Create a task with `name`, `action` (`command`, `start`, `stop`, `restart`), `command` (for command tasks), `cron`, optional `timezone` (defaults to `TZ`), and optional `enabled` (defaults to true). |
+| `PUT` | `/api/servers/:id/schedules/:scheduleId` | Replace task configuration; include `enabled`. |
+| `PATCH` | `/api/servers/:id/schedules/:scheduleId` | Pause or resume with `{"enabled": false}` or `{"enabled": true}`. |
+| `DELETE` | `/api/servers/:id/schedules/:scheduleId` | Delete a task and cancel its future runs. |
 
 ### Players, Whitelist & Operators
 | Method | Path | Description |

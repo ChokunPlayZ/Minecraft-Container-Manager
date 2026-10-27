@@ -857,3 +857,25 @@ export interface CopyServerInput {
 
 
 
+export type ScheduledAction = 'command' | 'start' | 'stop' | 'restart';
+
+export interface ScheduleInput {
+  name: string;
+  action: ScheduledAction;
+  command: string;
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+}
+
+export interface ScheduledTask extends ScheduleInput {
+  id: string;
+  server_id: string;
+  next_run_at: string;
+  last_run_at: string;
+  last_status: '' | 'running' | 'success' | 'failed' | 'skipped';
+  last_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
