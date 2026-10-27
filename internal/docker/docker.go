@@ -1,5 +1,5 @@
-// Package docker manages the lifecycle of per-server containers via the Docker
-// Engine API, honoring DOCKER_HOST.
+// Package docker manages server containers through the Docker Engine API or
+// Podman's Docker-compatible API.
 package docker
 
 import (
@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -264,6 +265,7 @@ type Manager struct {
 	client   *client.Client
 	host     string
 	image    string
+	runtime  string
 	cpuMu    sync.Mutex
 	cpuCache map[string]cpuSample
 }
@@ -271,20 +273,60 @@ type Manager struct {
 // New builds a Manager from a Docker host string (e.g. "unix:///...") and the
 // runtime image used to launch server containers.
 func New(host, image string) (*Manager, error) {
+	return NewWithRuntime("docker", host, image)
+}
+
+// NewWithRuntime selects Docker or Podman while sharing the compatible API
+// implementation. New remains available to existing Docker callers.
+func NewWithRuntime(runtimeName, host, image string) (*Manager, error) {
+	runtimeName = strings.ToLower(strings.TrimSpace(runtimeName))
+	if runtimeName == "" {
+		runtimeName = "docker"
+	}
+	if runtimeName != "docker" && runtimeName != "podman" {
+		return nil, fmt.Errorf("unsupported container runtime %q", runtimeName)
+	}
 	if image == "" {
 		image = "eclipse-temurin:21-jre-alpine"
 	}
 	cli, err := client.NewClientWithOpts(client.WithHost(host))
 	if err != nil {
-		return nil, fmt.Errorf("create docker client: %w", err)
+		return nil, fmt.Errorf("create %s client: %w", runtimeName, err)
 	}
-	cli.NegotiateAPIVersion(context.Background())
-	return &Manager{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cli.NegotiateAPIVersion(ctx)
+	m := &Manager{
 		client:   cli,
 		host:     host,
 		image:    image,
+		runtime:  runtimeName,
 		cpuCache: make(map[string]cpuSample),
-	}, nil
+	}
+	m.image = m.imageReference(image)
+	return m, nil
+}
+
+// Close releases idle API connections.
+func (m *Manager) Close() error { return m.client.Close() }
+
+func (m *Manager) runtimeName() string {
+	if m.runtime == "podman" {
+		return "podman"
+	}
+	return "docker"
+}
+
+// Podman must not depend on a host's short-name registry search configuration.
+// Normalization retains explicit registries, tags, digests, and local images.
+func (m *Manager) imageReference(name string) string {
+	if m == nil || m.runtime != "podman" {
+		return name
+	}
+	if ref, err := reference.ParseAnyReference(name); err == nil {
+		return ref.String()
+	}
+	return name
 }
 
 // Ping verifies the Docker daemon is reachable and responds. It is used by the
@@ -292,7 +334,7 @@ func New(host, image string) (*Manager, error) {
 func (m *Manager) Ping(ctx context.Context) error {
 	_, err := m.client.Ping(ctx)
 	if err != nil {
-		return fmt.Errorf("docker ping: %w", err)
+		return fmt.Errorf("%s ping: %w", m.runtimeName(), err)
 	}
 	return nil
 }
@@ -301,6 +343,7 @@ func (m *Manager) Ping(ctx context.Context) error {
 // the daemon is reachable and whether the runtime image needed to launch server
 // containers is present locally.
 type RuntimeStatus struct {
+	Runtime    string `json:"runtime"`
 	Reachable  bool   `json:"reachable"`
 	Image      string `json:"image"`
 	ImageReady bool   `json:"image_ready"`
@@ -312,9 +355,9 @@ type RuntimeStatus struct {
 // a common reason a server fails to start, so both are surfaced here for
 // diagnostics.
 func (m *Manager) RuntimeStatus(ctx context.Context) RuntimeStatus {
-	st := RuntimeStatus{Image: m.image}
+	st := RuntimeStatus{Runtime: m.runtimeName(), Image: m.image}
 	if _, err := m.client.Ping(ctx); err != nil {
-		st.Error = fmt.Sprintf("docker daemon unreachable: %v", err)
+		st.Error = fmt.Sprintf("%s API unreachable: %v", m.runtimeName(), err)
 		return st
 	}
 	st.Reachable = true
@@ -328,7 +371,7 @@ func (m *Manager) RuntimeStatus(ctx context.Context) RuntimeStatus {
 	}
 	st.ImageReady = len(imgs) > 0
 	if !st.ImageReady {
-		st.Error = fmt.Sprintf("runtime image %q is not present; run 'docker pull %s'", m.image, m.image)
+		st.Error = fmt.Sprintf("runtime image %q is not present; run '%s pull %s'", m.image, m.runtimeName(), m.image)
 	}
 	return st
 }
@@ -397,12 +440,12 @@ func (m *Manager) RuntimeImage(javaVersion int, serverType string) string {
 		ver = 21
 	}
 	if requiresJDK(serverType) {
-		return fmt.Sprintf("eclipse-temurin:%d-jdk-alpine", ver)
+		return m.imageReference(fmt.Sprintf("eclipse-temurin:%d-jdk-alpine", ver))
 	}
 	if m != nil && m.image != "" && javaVersion <= 0 {
-		return m.image
+		return m.imageReference(m.image)
 	}
-	return fmt.Sprintf("eclipse-temurin:%d-jre-alpine", ver)
+	return m.imageReference(fmt.Sprintf("eclipse-temurin:%d-jre-alpine", ver))
 }
 
 // Create provisions a stopped container for a server.
@@ -460,6 +503,25 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		Resources:    containerResources(opts),
 		PortBindings: portBindings(opts),
 	}
+	if m.runtime == "podman" {
+		// The panel and sibling servers share data on SELinux hosts.
+		hostCfg.Binds[0] += ":z"
+		info, err := m.client.Info(ctx)
+		if err != nil {
+			return "", fmt.Errorf("inspect podman host: %w", err)
+		}
+		for _, opt := range info.SecurityOptions {
+			if opt == "rootless" || strings.HasPrefix(opt, "name=rootless") {
+				// Preserve the API user's ownership of bind-mounted files when
+				// MCM runs directly on a rootless host. Containerized panels use
+				// UID/GID 0, which map to that same host user.
+				hostCfg.UsernsMode = container.UsernsMode(fmt.Sprintf("keep-id:uid=%d,gid=%d", os.Geteuid(), os.Getegid()))
+				// keep-id otherwise overrides the image user, bypassing bootstrap.
+				cfg.User = "0:0"
+				break
+			}
+		}
+	}
 
 	_ = m.EnsureNetwork(ctx)
 	netCfg := &network.NetworkingConfig{
@@ -492,7 +554,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		}
 		// If the image vanished between the presence check and the create (or a
 		// concurrent pull is still converging), pull again and retry once.
-		if strings.Contains(err.Error(), errNoSuchImage) {
+		if strings.Contains(strings.ToLower(err.Error()), strings.ToLower(errNoSuchImage)) {
 			if perr := m.pullNamedImage(ctx, img); perr != nil {
 				return "", fmt.Errorf("pull image after create failure: %w", perr)
 			}
@@ -552,6 +614,7 @@ func (m *Manager) EnsureImage(ctx context.Context) error {
 // EnsureNamedImage makes sure the specified runtime image is present locally,
 // pulling it from the registry when it is not.
 func (m *Manager) EnsureNamedImage(ctx context.Context, imageName string) error {
+	imageName = m.imageReference(imageName)
 	has, err := m.namedImagePresent(ctx, imageName)
 	if err != nil {
 		return err

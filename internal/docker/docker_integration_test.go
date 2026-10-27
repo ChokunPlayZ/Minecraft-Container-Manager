@@ -8,24 +8,27 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mcm-panel/mcm/internal/config"
 )
 
-// openIntegrationManager builds a Manager honoring DOCKER_HOST and verifies the
-// daemon is reachable, skipping when Docker is unavailable.
+// openIntegrationManager uses the same Docker/Podman configuration as the app,
+// skipping when the selected API is unavailable.
 func openIntegrationManager(t *testing.T) *Manager {
 	t.Helper()
-	host := os.Getenv("DOCKER_HOST")
-	if host == "" {
-		host = "unix:///var/run/docker.sock"
-	}
-	mgr, err := New(host, "itzg/minecraft-server")
+	cfg, err := config.Load()
 	if err != nil {
-		t.Skipf("docker client unavailable: %v", err)
+		t.Fatal(err)
 	}
+	mgr, err := NewWithRuntime(cfg.ContainerRuntime, cfg.DockerHost, cfg.ServerImage)
+	if err != nil {
+		t.Skipf("%s client unavailable: %v", cfg.ContainerRuntime, err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := mgr.client.Ping(ctx); err != nil {
-		t.Skipf("docker daemon unreachable: %v", err)
+		t.Skipf("%s API unreachable: %v", cfg.ContainerRuntime, err)
 	}
 	return mgr
 }

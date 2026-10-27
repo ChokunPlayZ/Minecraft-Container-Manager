@@ -357,7 +357,7 @@ export function ServerDetailRoute() {
                   <button
                     type="button"
                     onClick={copyAddress}
-                    title={server.host_port > 0 ? "Click to copy host & port" : "Click to copy internal Docker network address"}
+                    title={server.host_port > 0 ? "Click to copy host & port" : "Click to copy internal container network address"}
                     className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-0.5 text-xs hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                   >
                     <span className="font-mono">

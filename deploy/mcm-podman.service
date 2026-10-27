@@ -1,0 +1,16 @@
+[Unit]
+Description=MCM - Minecraft Container Manager (rootless Podman)
+After=podman.socket
+Requires=podman.socket
+
+[Service]
+ExecStart=/usr/local/bin/mcm
+EnvironmentFile=%h/.config/mcm/mcm.env
+Environment=MCM_CONTAINER_RUNTIME=podman
+Environment=MCM_DATA_DIR=%h/.local/share/mcm
+WorkingDirectory=%h
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

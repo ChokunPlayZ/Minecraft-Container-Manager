@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,6 +48,9 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv(EnvDataDir, "")
 	t.Setenv(EnvDBPath, "")
 	t.Setenv(EnvDockerHost, "")
+	t.Setenv(EnvContainerRuntime, "")
+	t.Setenv(EnvContainerHost, "")
+	t.Setenv(EnvPodmanHost, "")
 	t.Setenv(EnvSessionSecret, "")
 	t.Setenv(EnvAddr, "")
 	t.Setenv(EnvTLS, "")
@@ -69,6 +74,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DockerHost != "unix:///var/run/docker.sock" {
 		t.Errorf("DockerHost = %q", cfg.DockerHost)
 	}
+	if cfg.ContainerRuntime != "docker" {
+		t.Errorf("ContainerRuntime = %q, want docker", cfg.ContainerRuntime)
+	}
 	if cfg.DBPath != filepath.Join("./data", "mcm.db") {
 		t.Errorf("DBPath = %q", cfg.DBPath)
 	}
@@ -80,6 +88,65 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.WebAuthn.RPID != "localhost" {
 		t.Errorf("WebAuthn RPID = %q, want localhost", cfg.WebAuthn.RPID)
+	}
+}
+
+func TestContainerRuntimeEndpoints(t *testing.T) {
+	for _, tc := range []struct {
+		name, runtime, mcmHost, dockerHost, podmanHost, want string
+	}{
+		{name: "Docker default", want: defaultDockerHost},
+		{name: "Docker ignores Podman host", podmanHost: "unix:///podman.sock", want: defaultDockerHost},
+		{name: "Docker existing override", dockerHost: "tcp://localhost:2375", want: "tcp://localhost:2375"},
+		{name: "Podman host", runtime: "podman", podmanHost: "unix:///custom/podman.sock", want: "unix:///custom/podman.sock"},
+		{name: "Docker host compatibility", runtime: "podman", dockerHost: "unix:///compat.sock", podmanHost: "unix:///ignored.sock", want: "unix:///compat.sock"},
+		{name: "MCM host priority", runtime: "podman", mcmHost: "unix:///mcm.sock", dockerHost: "unix:///ignored.sock", podmanHost: "unix:///also-ignored.sock", want: "unix:///mcm.sock"},
+		{name: "Case and whitespace", runtime: " Podman ", mcmHost: "unix:///mcm.sock", want: "unix:///mcm.sock"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(EnvContainerRuntime, tc.runtime)
+			t.Setenv(EnvContainerHost, tc.mcmHost)
+			t.Setenv(EnvDockerHost, tc.dockerHost)
+			t.Setenv(EnvPodmanHost, tc.podmanHost)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DockerHost != tc.want {
+				t.Errorf("endpoint = %q, want %q", cfg.DockerHost, tc.want)
+			}
+		})
+	}
+}
+
+func TestPodmanDefaultEndpoint(t *testing.T) {
+	t.Setenv(EnvContainerRuntime, "podman")
+	t.Setenv(EnvContainerHost, "")
+	t.Setenv(EnvDockerHost, "")
+	t.Setenv(EnvPodmanHost, "")
+	for _, runtimeDir := range []string{"/custom/run", ""} {
+		t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtimeDir == "" {
+			runtimeDir = fmt.Sprintf("/run/user/%d", os.Geteuid())
+		}
+		want := "unix://" + filepath.Join(runtimeDir, "podman/podman.sock")
+		if os.Geteuid() == 0 {
+			want = "unix:///run/podman/podman.sock"
+		}
+		if cfg.DockerHost != want {
+			t.Errorf("endpoint = %q, want %q", cfg.DockerHost, want)
+		}
+	}
+}
+
+func TestLoadRejectsUnknownContainerRuntime(t *testing.T) {
+	t.Setenv(EnvContainerRuntime, "containerd")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), EnvContainerRuntime) {
+		t.Fatalf("expected runtime validation error, got %v", err)
 	}
 }
 

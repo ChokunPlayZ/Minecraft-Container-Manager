@@ -450,7 +450,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                           ))}
                         </Select>
                         <p className="text-[11px] text-muted-foreground">
-                          Selecting a server automatically configures its internal Docker container address (<code>mcm-:id</code>).
+                          Selecting a server automatically configures its internal container address (<code>mcm-:id</code>).
                         </p>
                       </div>
                     )}
@@ -478,7 +478,7 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                           className="text-xs font-mono"
                         />
                         <span className="text-[11px] text-muted-foreground">
-                          Internal Docker name or hostname:port.
+                          Internal container name or hostname:port.
                         </span>
                       </div>
                     </div>

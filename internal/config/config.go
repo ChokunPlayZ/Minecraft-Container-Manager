@@ -13,11 +13,13 @@ import (
 // Config holds the runtime configuration for MCM, populated from environment
 // variables with sane defaults.
 type Config struct {
-	Addr             string
-	PortRange        PortRange
-	DataDir          string
-	DBPath           string
+	Addr      string
+	PortRange PortRange
+	DataDir   string
+	DBPath    string
+	// DockerHost is the resolved API endpoint for either Docker or Podman.
 	DockerHost       string
+	ContainerRuntime string
 	SessionSecret    []byte
 	WebAuthn         WebAuthnConfig
 	TLSCert          string
@@ -32,11 +34,11 @@ type Config struct {
 	DefaultMemoryMB  int
 	// DataDirHost is the host-visible absolute path that corresponds to the
 	// process's DataDir. It is used as the bind-mount source when provisioning
-	// server containers through a Docker daemon. When running on bare metal
+	// server containers through Docker or Podman. When running on bare metal
 	// (or when the panel's DataDir already is a host path) it is left empty and
 	// DataDir is used directly.
 	DataDirHost string
-	// ServerImage is the Docker image used to run Minecraft server containers.
+	// ServerImage is the OCI image used to run Minecraft server containers.
 	ServerImage string
 	// S3 holds the object-storage configuration used for world backups. An
 	// empty Endpoint disables backups.
@@ -79,6 +81,9 @@ const (
 	EnvDataDirHost      = "MCM_DATA_DIR_HOST"
 	EnvDBPath           = "MCM_DB_PATH"
 	EnvDockerHost       = "DOCKER_HOST"
+	EnvContainerRuntime = "MCM_CONTAINER_RUNTIME"
+	EnvContainerHost    = "MCM_CONTAINER_HOST"
+	EnvPodmanHost       = "CONTAINER_HOST"
 	EnvSessionSecret    = "MCM_SESSION_SECRET"
 	EnvTLS              = "MCM_TLS"
 	EnvTLSCert          = "MCM_TLS_CERT"
@@ -120,18 +125,18 @@ const (
 )
 
 // Load builds a Config from the environment. Missing variables fall back to
-// defaults. It returns an error only when the configured port range is invalid.
+// defaults. Invalid runtime names and malformed values return an error.
 func Load() (*Config, error) {
 	var err error
 	cfg := &Config{
-		Addr:            getenv(EnvAddr, defaultAddr),
-		DataDir:         getenv(EnvDataDir, defaultDataDir),
-		DataDirHost:     getenv(EnvDataDirHost, ""),
-		DockerHost:      getenv(EnvDockerHost, defaultDockerHost),
-		TLSCert:         getenv(EnvTLSCert, ""),
-		TLSKey:          getenv(EnvTLSKey, ""),
-		TLSRedirect:     parseBoolEnv(EnvTLSRedirect, true),
-		TLSRedirectAddr: getenv(EnvTLSRedirectAddr, redirectAddrFor(getenv(EnvAddr, defaultAddr))),
+		Addr:             getenv(EnvAddr, defaultAddr),
+		DataDir:          getenv(EnvDataDir, defaultDataDir),
+		DataDirHost:      getenv(EnvDataDirHost, ""),
+		ContainerRuntime: strings.ToLower(strings.TrimSpace(getenv(EnvContainerRuntime, "docker"))),
+		TLSCert:          getenv(EnvTLSCert, ""),
+		TLSKey:           getenv(EnvTLSKey, ""),
+		TLSRedirect:      parseBoolEnv(EnvTLSRedirect, true),
+		TLSRedirectAddr:  getenv(EnvTLSRedirectAddr, redirectAddrFor(getenv(EnvAddr, defaultAddr))),
 		WebAuthn: WebAuthnConfig{
 			RPID:          getenv(EnvWebAuthnRPID, defaultRPID),
 			RPOrigins:     splitOrigins(getenv(EnvWebAuthnOrigin, "")),
@@ -145,6 +150,10 @@ func Load() (*Config, error) {
 			Region:    getenv(EnvS3Region, "us-east-1"),
 		},
 	}
+	if cfg.ContainerRuntime != "docker" && cfg.ContainerRuntime != "podman" {
+		return nil, fmt.Errorf("invalid %s %q: expected docker or podman", EnvContainerRuntime, cfg.ContainerRuntime)
+	}
+	cfg.DockerHost = containerHost(cfg.ContainerRuntime)
 	cfg.LoginMaxAttempts, err = parseIntEnv(EnvLoginMaxAttempts, defaultLoginMaxAttempts)
 	if err != nil {
 		return nil, err
@@ -200,6 +209,28 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// containerHost keeps DOCKER_HOST working for either runtime. A dedicated MCM
+// endpoint takes priority; Podman's CONTAINER_HOST is used only in Podman mode.
+func containerHost(runtimeName string) string {
+	if host := os.Getenv(EnvContainerHost); host != "" {
+		return host
+	}
+	if host := os.Getenv(EnvDockerHost); host != "" {
+		return host
+	}
+	if runtimeName == "podman" {
+		if host := os.Getenv(EnvPodmanHost); host != "" {
+			return host
+		}
+		if os.Geteuid() == 0 {
+			return "unix:///run/podman/podman.sock"
+		}
+		runtimeDir := getenv("XDG_RUNTIME_DIR", fmt.Sprintf("/run/user/%d", os.Geteuid()))
+		return "unix://" + filepath.Join(runtimeDir, "podman", "podman.sock")
+	}
+	return defaultDockerHost
 }
 
 func getenv(key, def string) string {

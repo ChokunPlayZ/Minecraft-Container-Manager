@@ -375,7 +375,7 @@ export function ServerSettings({
                     }}
                     className="text-primary hover:underline text-[11px] font-mono cursor-pointer"
                   >
-                    Copy Docker addr
+                    Copy container address
                   </button>
                 </div>
                 {hostPortConflict && (

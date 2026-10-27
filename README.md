@@ -1,6 +1,6 @@
 # MCM - Minecraft Container Manager
 
-MCM is a modern, high-performance, self-hosted Minecraft server management panel. Built with a lightweight **Go** backend and a responsive **React / Vite** frontend, MCM orchestrates Minecraft servers as sibling Docker containers on the host using lightweight, security-hardened **Eclipse Temurin Alpine OpenJDK/JRE** images.
+MCM is a modern, high-performance, self-hosted Minecraft server management panel. Built with a lightweight **Go** backend and a responsive **React / Vite** frontend, MCM orchestrates Minecraft servers as sibling **Docker or Podman** containers on the host using lightweight, security-hardened **Eclipse Temurin Alpine OpenJDK/JRE** images.
 
 Each Minecraft server container runs with MCM's custom native lifecycle entrypoint script (`DefaultEntryScript`), providing interactive console FIFO pipes, graceful shutdown traps (`SIGTERM`/`SIGINT`), headless Java configuration, and automated installer execution for Forge and NeoForge. MCM supports both direct host-port publication (for zero-proxy overhead, raw performance, and UDP/TCP support) and private container networking (`mcm-network`) with optional host ports for seamless multi-server proxy setups (e.g., Velocity or BungeeCord).
 
@@ -154,6 +154,103 @@ After upgrading from a version that ran Minecraft as root, use **Rebuild contain
 
 ---
 
+## Podman
+
+Select Podman with `MCM_CONTAINER_RUNTIME=podman`. MCM uses Podman's
+[Docker-compatible API](https://docs.podman.io/en/latest/markdown/podman-system-service.1.html)
+for server creation, lifecycle controls, networking, console commands, logs, and
+resource metrics. Docker remains the default runtime.
+
+### Rootless Linux (containerized panel)
+
+Enable the API socket as the user that will own the panel and server data:
+
+```sh
+systemctl --user enable --now podman.socket
+cp .env.example .env
+# Set MCM_SESSION_SECRET in .env.
+export MCM_PODMAN_SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+podman compose -f podman-compose.yml up -d --build
+```
+
+The standalone `podman-compose.yml` selects Podman regardless of the runtime
+setting in `.env`. It mounts the API socket, uses a shared SELinux label for
+server data, and disables the panel's SELinux process label as required for
+socket access. It runs the panel as UID/GID 0 **inside the rootless container**,
+which maps to the invoking host user and keeps the socket and data accessible.
+Minecraft containers preserve that ownership mapping. Run the panel and its
+server containers through the same user's Podman service.
+
+`podman compose` requires an installed Compose provider, such as `podman-compose`
+or Docker Compose. For a rootful deployment, enable `podman.socket` with
+`sudo systemctl enable --now podman.socket` and set
+`MCM_PODMAN_SOCKET=/run/podman/podman.sock`; UID/GID 0 then means host root.
+Rootless resource limits require cgroup v2 with CPU and memory controllers
+delegated to the user service.
+
+### Running the panel directly
+
+With the rootless socket enabled, launch the built binary as the same user:
+
+```sh
+MCM_CONTAINER_RUNTIME=podman ./mcm
+```
+
+The default endpoint is `unix://$XDG_RUNTIME_DIR/podman/podman.sock` (falling back
+to `/run/user/<uid>/podman/podman.sock`) for non-root processes and
+`unix:///run/podman/podman.sock` for root. MCM preserves file ownership with
+Podman's `keep-id` mapping when the API reports rootless mode. Installers and
+Java then run as the panel's UID/GID.
+
+To override the endpoint, set `MCM_CONTAINER_HOST`. The resolution order is
+`MCM_CONTAINER_HOST`, `DOCKER_HOST`, then (in Podman mode) `CONTAINER_HOST`, followed
+by the runtime's default socket. Clear an existing `DOCKER_HOST` when switching
+to Podman's default. Endpoints must use a transport supported by the Docker
+client, such as `unix://` or `tcp://`; use a locally forwarded socket for an SSH
+connection.
+
+For a systemd installation, use `deploy/mcm-podman.service` as a **user** unit
+instead of the Docker-specific system unit. Set the persistent session secret
+in `~/.config/mcm/mcm.env`, then run:
+
+```sh
+install -d ~/.config/systemd/user ~/.config/mcm
+install -m 0644 deploy/mcm-podman.service ~/.config/systemd/user/mcm.service
+# Create ~/.config/mcm/mcm.env with MCM_SESSION_SECRET and any other settings.
+systemctl --user daemon-reload
+systemctl --user enable --now mcm.service
+```
+
+The unit stores data in `~/.local/share/mcm`. Enable user lingering with
+`loginctl enable-linger "$USER"` if it should continue running after logout.
+
+### macOS and remote hosts
+
+Start your Podman machine and point a directly running panel at its forwarded
+socket:
+
+```sh
+podman machine start
+export MCM_CONTAINER_RUNTIME=podman
+export MCM_CONTAINER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')"
+./mcm
+```
+
+`MCM_DATA_DIR_HOST` must refer to the same data directory on the machine running
+Podman. For a VM, share that directory with write access; for a remote host,
+provide shared storage. Containerized panels must mount the **VM-side** Podman
+socket, not the macOS forwarding socket.
+
+Podman image references are normalized to Docker Hub (`docker.io/library/` for
+Eclipse Temurin), so automatic pulls do not depend on short-name registry search
+configuration. Explicit registries, digests, and `localhost/` images are preserved.
+
+Switching engines does not move existing containers. Stop servers before switching,
+keep the same server data path, and let MCM recreate containers in the selected
+engine. Start only one panel against a given database/data directory.
+
+---
+
 ## Bare Metal / LXC Deployment
 
 For hosts running MCM directly outside of Docker:
@@ -189,7 +286,11 @@ The unit runs the binary as the `mcm` user with `WorkingDirectory=/var/lib/mcm` 
 | `MCM_DATA_DIR_HOST` | `${PWD}/data` | Docker: host directory bind-mounted into the panel at `/data` and into each server container. |
 | `MCM_DATA_DIR` | `/data` (Docker) / `./data` (bare metal) | Process-side data directory used for SQLite database and server data. |
 | `MCM_DB_PATH` | `$MCM_DATA_DIR/mcm.db` | SQLite database file location. |
-| `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon endpoint. |
+| `DOCKER_HOST` | Runtime-specific socket | API endpoint for Docker or Podman. Docker defaults to `unix:///var/run/docker.sock`; Podman defaults are described above. |
+| `MCM_CONTAINER_RUNTIME` | `docker` | Container engine: `docker` or `podman`. |
+| `MCM_CONTAINER_HOST` | *(empty)* | API endpoint override for either engine; takes priority over `DOCKER_HOST`. |
+| `CONTAINER_HOST` | *(empty)* | Podman endpoint fallback when `MCM_CONTAINER_HOST` and `DOCKER_HOST` are unset. |
+| `MCM_PODMAN_SOCKET` | `$XDG_RUNTIME_DIR/podman/podman.sock` | Host socket mounted by `podman-compose.yml`; set explicitly for rootful or VM deployments. |
 | `PUID` / `PGID` | `1000` / `1000` | UID/GID the panel runs as and applies to the data directory. |
 | `MCM_SESSION_SECRET` | *(required)* | Secret key used to sign session cookies. |
 | `MCM_TLS` | `false` | Force secure cookies flag. Set to true when running under HTTPS. |
@@ -383,11 +484,12 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `GET` | `/api/ports/available` | Check available host ports in allocation range. |
 | `GET` | `/api/settings` | Fetch global panel settings (DNS, port range). |
 | `PUT` | `/api/settings` | Update global panel settings. |
-| `GET` | `/api/docker/status` | Get Docker daemon connection and runtime image status. |
+| `GET` | `/api/runtime/status` | Get selected engine (`runtime`), API reachability, and runtime image status. |
+| `GET` | `/api/docker/status` | Compatibility alias for `/api/runtime/status`. |
 | `GET` | `/api/proxy` | Cached and rate-limited reverse proxy for catalog APIs. |
 | `POST` | `/api/proxy` | POST requests through external catalog proxy. |
 | `GET` | `/healthz` | Liveness health check probe (`200 OK`). |
-| `GET` | `/readyz` | Readiness probe checking database and Docker connectivity. |
+| `GET` | `/readyz` | Readiness probe checking database and container runtime connectivity (legacy check keys: `docker` and `docker_image`). |
 
 ---
 

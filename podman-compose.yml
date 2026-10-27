@@ -1,0 +1,31 @@
+# Standalone Podman deployment: podman compose -f podman-compose.yml up -d --build
+# Start the API first: systemctl --user enable --now podman.socket
+services:
+  mcm:
+    build:
+      context: .
+    container_name: mcm
+    ports:
+      - "8080:8080"
+    environment:
+      MCM_ADDR: ${MCM_ADDR:-:8080}
+      MCM_PORT_RANGE: ${MCM_PORT_RANGE:-25565-25665}
+      MCM_DATA_DIR: /data
+      MCM_DATA_DIR_HOST: ${MCM_DATA_DIR_HOST:-${PWD}/data}
+      MCM_DB_PATH: ${MCM_DB_PATH:-/data/mcm.db}
+      MCM_CONTAINER_RUNTIME: podman
+      MCM_CONTAINER_HOST: unix:///run/podman/podman.sock
+      MCM_SERVER_IMAGE: ${MCM_SERVER_IMAGE:-eclipse-temurin:21-jre-alpine}
+      MCM_SESSION_SECRET: ${MCM_SESSION_SECRET:-}
+      # Root inside rootless containers maps to the host user. Keep both the
+      # panel and its sibling servers in that mapping, including socket access.
+      PUID: 0
+      PGID: 0
+      TZ: ${TZ:-UTC}
+    security_opt:
+      - label=disable
+    volumes:
+      # Shared SELinux label allows the sibling servers to use this data too.
+      - ${MCM_DATA_DIR_HOST:-${PWD}/data}:/data:z
+      - ${MCM_PODMAN_SOCKET:-${XDG_RUNTIME_DIR:-/run}/podman/podman.sock}:/run/podman/podman.sock
+    restart: unless-stopped

@@ -48,10 +48,12 @@ func main() {
 		logger.Fatalf("configure webauthn: %v", err)
 	}
 
-	dockerMgr, err := docker.New(cfg.DockerHost, cfg.ServerImage)
+	dockerMgr, err := docker.NewWithRuntime(cfg.ContainerRuntime, cfg.DockerHost, cfg.ServerImage)
 	if err != nil {
-		logger.Fatalf("create docker client: %v", err)
+		logger.Fatalf("create container runtime client: %v", err)
 	}
+	logger.Printf("container runtime: %s (%s)", cfg.ContainerRuntime, cfg.DockerHost)
+	defer dockerMgr.Close()
 
 	jarResolver := jars.NewResolver()
 	serverStore := servers.NewStore(handle, dockerMgr, jarResolver, cfg.PortRange.Start, cfg.PortRange.End, cfg.DataDir, cfg.DataDirHost)

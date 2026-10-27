@@ -19,6 +19,9 @@ services:
       MCM_DATA_DIR_HOST: ${MCM_DATA_DIR_HOST:-${PWD}/data}
       MCM_DB_PATH: ${MCM_DB_PATH:-/data/mcm.db}
       DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
+      MCM_CONTAINER_RUNTIME: ${MCM_CONTAINER_RUNTIME:-docker}
+      MCM_CONTAINER_HOST: ${MCM_CONTAINER_HOST:-}
+      MCM_SERVER_IMAGE: ${MCM_SERVER_IMAGE:-eclipse-temurin:21-jre-alpine}
       MCM_SESSION_SECRET: ${MCM_SESSION_SECRET:-}
       # UID/GID the MCM process drops to (and that own the data dir). Override
       # to match your host user, e.g. PUID=$(id -u) PGID=$(id -g).
