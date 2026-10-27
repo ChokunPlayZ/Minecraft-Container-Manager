@@ -211,12 +211,25 @@ journalctl --user -u mcm.service -n 50 --no-pager
 | --- | --- |
 | `Failed to load environment files` | Re-run `./mcmctl install --runtime podman` from the updated checkout. It creates the required settings before starting. |
 | `203/EXEC` or missing executable | Re-run `install`; it builds and installs the complete binary and rewrites the user unit. |
+| `EnvironmentFile= path is not absolute` or `WorkingDirectory= path is not absolute` with a quoted absolute path | An earlier installer put literal quote characters around these directives. Remove those wrapping quotes, reload the unit, and restart using the commands below. |
 | Podman socket missing or unavailable | Check `systemctl --user status podman.socket --no-pager -l` and `podman info` as the service user. |
 | Build failed | Resolve the reported image-download or build error and retry; an update has not stopped the installed version yet. |
 | Update refused because of local changes | Commit/stash them, or intentionally use `update --local`. |
 | Panel cannot become ready | Check the printed journal, configured port, data permissions, container API, and runtime image. HTTPS installations need a certificate trusted by the host and valid for the configured listen host. |
 | Service stops after logout | Enable lingering with `sudo loginctl enable-linger "$USER"`. |
 | `unknown mount option` or a socket path ending in `}` | That comes from the earlier Compose setup. The managed installer does not require Compose. If retaining Compose, use the updated `podman-compose.yml` with flat defaults and plain socket paths. |
+
+To repair the quoted paths in an existing unit without rebuilding the app:
+
+```sh
+sed -i.bak -E 's/^(EnvironmentFile|WorkingDirectory)="(.*)"$/\1=\2/' "$HOME/.config/systemd/user/mcm.service"
+systemctl --user daemon-reload
+systemctl --user reset-failed mcm.service
+systemctl --user restart mcm.service
+```
+
+This preserves the original unit as `mcm.service.bak`. `ExecStart` keeps its
+command-line quoting; the two whole-path directives use unquoted values.
 
 For macOS or a containerized panel, use the alternative
 [Compose setup](../README.md#alternative-docker-compose). The Linux service

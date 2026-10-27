@@ -13,6 +13,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+SYSTEMD_ANALYZE = shutil.which('systemd-analyze')
 STUB = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
@@ -44,6 +45,12 @@ elif name == 'systemctl':
     if cmd in ('start', 'restart'):
         binary = pathlib.Path(os.environ['MCM_BIN_DIR']) / 'mcm'
         config = pathlib.Path(os.environ['XDG_CONFIG_HOME']) / 'mcm/mcm.env'
+        unit = pathlib.Path(os.environ['XDG_CONFIG_HOME']) / 'systemd/user/mcm.service'
+        for line in unit.read_text().splitlines():
+            if line.startswith(('EnvironmentFile=', 'WorkingDirectory=')):
+                if not line.split('=', 1)[1].startswith('/'):
+                    print('Path directive is not absolute: ' + line, file=sys.stderr)
+                    sys.exit(1)
         if not config.exists() or not binary.exists(): sys.exit(1)
         if os.environ.get('MCM_TEST_FAIL_VERSION') and os.environ['MCM_TEST_FAIL_VERSION'] in binary.read_text():
             # Model migrations performed before the new app fails to start.
@@ -130,12 +137,69 @@ class ManagerTests(unittest.TestCase):
         self.assertIn('MCM_CONTAINER_RUNTIME=podman', config)
         self.assertIn('MCM_CONTAINER_HOST=unix://' + self.socket_dir.name, config)
         self.assertIn('ExecStart="' + str(self.binary) + '"', self.unit.read_text())
-        self.assertIn('EnvironmentFile="' + str(self.config) + '"', self.unit.read_text())
+        self.assertIn('EnvironmentFile=' + str(self.config) + '\n', self.unit.read_text())
+        self.assertIn('WorkingDirectory=' + str(Path.home()) + '\n', self.unit.read_text())
         builds = [call for call in self.calls() if call[:2] == ['podman', 'build']]
         self.assertEqual(len(builds), 1)
         self.assertIn('--target', builds[0])
         self.assertIn('go', builds[0])
         self.assertTrue((self.root / 'active').exists())
+
+    def test_unit_paths_with_spaces_and_literal_specifiers(self):
+        self.env['XDG_CONFIG_HOME'] = str(self.root / 'config %n with spaces')
+        self.env['MCM_BIN_DIR'] = str(self.root / 'bin %n with spaces')
+        self.config = Path(self.env['XDG_CONFIG_HOME']) / 'mcm/mcm.env'
+        self.binary = Path(self.env['MCM_BIN_DIR']) / 'mcm'
+        self.unit = Path(self.env['XDG_CONFIG_HOME']) / 'systemd/user/mcm.service'
+        self.run_manager('install')
+        unit = self.unit.read_text()
+        self.assertIn('ExecStart="' + str(self.binary).replace('%', '%%') + '"\n', unit)
+        self.assertIn('EnvironmentFile=' + str(self.config).replace('%', '%%') + '\n', unit)
+        self.assertNotIn('EnvironmentFile="', unit)
+        self.assertNotIn('WorkingDirectory="', unit)
+        self.verify_with_systemd()
+
+    def verify_with_systemd(self, expect_valid=True):
+        if not SYSTEMD_ANALYZE:
+            return
+        # Resolve Podman's dependency without installing or starting its service.
+        (self.unit.parent / 'podman.socket').write_text('[Socket]\nListenStream=/tmp/mcm-test-not-started.sock\n')
+        (self.unit.parent / 'podman.service').write_text('[Service]\nExecStart=/bin/true\n')
+        result = subprocess.run(
+            [SYSTEMD_ANALYZE, '--user', 'verify', '--man=no', str(self.unit)],
+            env={**os.environ, 'SYSTEMD_UNIT_PATH': str(self.unit.parent) + ':'},
+            text=True, capture_output=True,
+        )
+        if expect_valid:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        else:
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('not absolute', result.stderr)
+
+    @unittest.skipUnless(SYSTEMD_ANALYZE, 'systemd-analyze is available on Linux')
+    def test_generated_service_passes_real_systemd_verification(self):
+        self.run_manager('install')
+        self.verify_with_systemd()
+
+    @unittest.skipUnless(SYSTEMD_ANALYZE, 'systemd-analyze is available on Linux')
+    def test_documented_repair_restores_a_valid_unit(self):
+        self.run_manager('install')
+        original = self.unit.read_text()
+        broken_lines = []
+        for line in original.splitlines():
+            if line.startswith(('EnvironmentFile=', 'WorkingDirectory=')):
+                key, value = line.split('=', 1)
+                line = key + '="' + value + '"'
+            broken_lines.append(line)
+        self.unit.write_text('\n'.join(broken_lines) + '\n')
+        self.verify_with_systemd(expect_valid=False)
+        subprocess.run([
+            'sed', '-i.bak', '-E', r's/^(EnvironmentFile|WorkingDirectory)="(.*)"$/\1=\2/',
+            str(self.unit),
+        ], check=True)
+        self.assertEqual(self.unit.read_text(), original)
+        self.assertTrue(Path(str(self.unit) + '.bak').exists())
+        self.verify_with_systemd()
 
     def test_reinstall_preserves_secret_settings_and_database(self):
         self.run_manager('install')

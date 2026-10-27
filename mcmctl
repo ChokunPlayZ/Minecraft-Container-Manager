@@ -162,9 +162,15 @@ build_app() {
     chmod 755 "$STAGING/mcm"
 }
 
-unit_quote() {
-    local value="${1//%/%%}"
-    printf '"%s"' "$value"
+unit_path() {
+    # Path directives consume the whole value; quotes would become path bytes.
+    # Literal percent signs still need escaping for systemd specifiers.
+    printf '%s' "${1//%/%%}"
+}
+
+unit_exec_path() {
+    # ExecStart uses command-line parsing, so its executable may be quoted.
+    printf '"%s"' "$(unit_path "$1")"
 }
 
 write_unit() {
@@ -178,9 +184,9 @@ write_unit() {
         fi
         say ''
         say '[Service]'
-        printf 'ExecStart=%s\n' "$(unit_quote "$BIN_DIR/mcm")"
-        printf 'EnvironmentFile=%s\n' "$(unit_quote "$CONFIG")"
-        printf 'WorkingDirectory=%s\n' "$(unit_quote "$HOME")"
+        printf 'ExecStart=%s\n' "$(unit_exec_path "$BIN_DIR/mcm")"
+        printf 'EnvironmentFile=%s\n' "$(unit_path "$CONFIG")"
+        printf 'WorkingDirectory=%s\n' "$(unit_path "$HOME")"
         say 'Restart=on-failure'
         say 'RestartSec=5'
         say 'TimeoutStopSec=90'
