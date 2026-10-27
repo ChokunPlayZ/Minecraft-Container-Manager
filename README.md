@@ -181,6 +181,21 @@ which maps to the invoking host user and keeps the socket and data accessible.
 Minecraft containers preserve that ownership mapping. Run the panel and its
 server containers through the same user's Podman service.
 
+`MCM_PODMAN_SOCKET` is an absolute filesystem path, such as
+`/run/user/1000/podman/podman.sock`, **without** `unix://`. The prefix belongs only
+in API endpoint variables such as `MCM_CONTAINER_HOST`. The Compose file requires
+`MCM_DATA_DIR_HOST` to be set to the absolute host data directory, and defaults the
+socket path to `/run/podman/podman.sock` if `MCM_PODMAN_SOCKET` is unset. Its variable
+expressions are kept flat for compatibility with older `podman-compose` providers.
+The copied `.env` template sets `MCM_DATA_DIR_HOST` to `${PWD}/data`; retain your
+existing value if you already keep server data elsewhere.
+
+If `podman-compose` reports `unknown mount option /run/podman/podman.sock`, update
+`podman-compose.yml` to this version, set `MCM_PODMAN_SOCKET` as shown above, ensure
+`MCM_DATA_DIR_HOST` is configured in `.env`, and retry.
+The previous file used nested default expressions that older providers left
+partially expanded inside the socket mount.
+
 `podman compose` requires an installed Compose provider, such as `podman-compose`
 or Docker Compose. For a rootful deployment, enable `podman.socket` with
 `sudo systemctl enable --now podman.socket` and set
@@ -290,7 +305,7 @@ The unit runs the binary as the `mcm` user with `WorkingDirectory=/var/lib/mcm` 
 | `MCM_CONTAINER_RUNTIME` | `docker` | Container engine: `docker` or `podman`. |
 | `MCM_CONTAINER_HOST` | *(empty)* | API endpoint override for either engine; takes priority over `DOCKER_HOST`. |
 | `CONTAINER_HOST` | *(empty)* | Podman endpoint fallback when `MCM_CONTAINER_HOST` and `DOCKER_HOST` are unset. |
-| `MCM_PODMAN_SOCKET` | `$XDG_RUNTIME_DIR/podman/podman.sock` | Host socket mounted by `podman-compose.yml`; set explicitly for rootful or VM deployments. |
+| `MCM_PODMAN_SOCKET` | `/run/podman/podman.sock` | Absolute host socket path mounted by `podman-compose.yml`, without `unix://`; set explicitly for rootless or VM deployments. |
 | `PUID` / `PGID` | `1000` / `1000` | UID/GID the panel runs as and applies to the data directory. |
 | `MCM_SESSION_SECRET` | *(required)* | Secret key used to sign session cookies. |
 | `MCM_TLS` | `false` | Force secure cookies flag. Set to true when running under HTTPS. |

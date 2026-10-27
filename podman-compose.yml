@@ -11,7 +11,8 @@ services:
       MCM_ADDR: ${MCM_ADDR:-:8080}
       MCM_PORT_RANGE: ${MCM_PORT_RANGE:-25565-25665}
       MCM_DATA_DIR: /data
-      MCM_DATA_DIR_HOST: ${MCM_DATA_DIR_HOST:-${PWD}/data}
+      # Keep interpolation flat for compatibility with podman-compose 1.5.
+      MCM_DATA_DIR_HOST: ${MCM_DATA_DIR_HOST:?Set MCM_DATA_DIR_HOST to an absolute host data directory}
       MCM_DB_PATH: ${MCM_DB_PATH:-/data/mcm.db}
       MCM_CONTAINER_RUNTIME: podman
       MCM_CONTAINER_HOST: unix:///run/podman/podman.sock
@@ -26,6 +27,16 @@ services:
       - label=disable
     volumes:
       # Shared SELinux label allows the sibling servers to use this data too.
-      - ${MCM_DATA_DIR_HOST:-${PWD}/data}:/data:z
-      - ${MCM_PODMAN_SOCKET:-${XDG_RUNTIME_DIR:-/run}/podman/podman.sock}:/run/podman/podman.sock
+      - type: bind
+        source: ${MCM_DATA_DIR_HOST:?Set MCM_DATA_DIR_HOST to an absolute host data directory}
+        target: /data
+        bind:
+          selinux: z
+      # This is a filesystem path, without the unix:// API endpoint prefix.
+      # Rootless hosts must set MCM_PODMAN_SOCKET to their user's socket path.
+      - type: bind
+        source: ${MCM_PODMAN_SOCKET:-/run/podman/podman.sock}
+        target: /run/podman/podman.sock
+        bind:
+          create_host_path: false
     restart: unless-stopped
