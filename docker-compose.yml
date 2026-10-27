@@ -28,6 +28,7 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-UTC}
+      CURSEFORGE_API_KEY: ${CURSEFORGE_API_KEY:-}
     volumes:
       # Host bind mount. Must match MCM_DATA_DIR_HOST above so the path the
       # panel sees (/data) and the host path MCM binds for server containers

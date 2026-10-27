@@ -147,6 +147,15 @@ func contextWithCurseForgeKey(r *http.Request) *http.Request {
 func (s *Server) handleGetModUpdates(w http.ResponseWriter, r *http.Request) {
 	r = contextWithCurseForgeKey(r)
 	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
+	if r.URL.Query().Get("cached") == "true" && !force {
+		res, err := s.servers.CachedModUpdates(r.Context(), r.PathValue("id"))
+		if err != nil {
+			s.writeServerErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
 	res, err := s.servers.CheckModUpdates(r.Context(), r.PathValue("id"), force)
 	if err != nil {
 		s.writeServerErr(w, err)
@@ -308,4 +317,3 @@ func (s *Server) handleSanitizeClientMods(w http.ResponseWriter, r *http.Request
 		"count":       len(quarantined),
 	})
 }
-

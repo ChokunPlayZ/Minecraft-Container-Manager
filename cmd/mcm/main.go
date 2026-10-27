@@ -68,6 +68,7 @@ func main() {
 	performanceCtx, stopPerformance := context.WithCancel(context.Background())
 	defer stopPerformance()
 	go serverStore.RunPerformanceMonitor(performanceCtx, logger)
+	go serverStore.RunUpdateChecker(performanceCtx, logger)
 	dnsService := dns.New(handle.DB)
 	serverStore.SetDNS(dnsService)
 	go serverStore.RunStatusMonitor(notificationCtx, logger)

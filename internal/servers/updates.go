@@ -75,9 +75,10 @@ type ModUpdateInfo struct {
 // ServerModUpdatesResponse is returned by CheckModUpdates.
 type ServerModUpdatesResponse struct {
 	Updates     map[string]ModUpdateInfo `json:"updates"`
-	LastChecked time.Time                `json:"last_checked"`
+	LastChecked time.Time                `json:"last_checked,omitzero"`
 	TotalMods   int                      `json:"total_mods"`
 	UpdateCount int                      `json:"update_count"`
+	Errors      []string                 `json:"errors,omitempty"`
 }
 
 // Modrinth API structs
@@ -192,8 +193,8 @@ type ModCompatibilityStatus string
 const (
 	ModCompatUpdateAvailable   ModCompatibilityStatus = "update_available"
 	ModCompatAlreadyCompatible ModCompatibilityStatus = "already_compatible"
-	ModCompatNotAvailable     ModCompatibilityStatus = "not_available"
-	ModCompatUntracked        ModCompatibilityStatus = "untracked"
+	ModCompatNotAvailable      ModCompatibilityStatus = "not_available"
+	ModCompatUntracked         ModCompatibilityStatus = "untracked"
 )
 
 // ModTargetCompatibility describes the compatibility status of an installed mod for a target MC version.
@@ -250,6 +251,9 @@ type BatchUpdateModsResult struct {
 
 // InvalidateModUpdatesCache purges the cached update state for a server.
 func (s *Store) InvalidateModUpdatesCache(serverID string) {
+	if s.db != nil {
+		_, _ = s.db.Exec(`UPDATE server_update_checks SET mods = 'null' WHERE server_id = ?`, serverID)
+	}
 	s.updatesMu.Lock()
 	defer s.updatesMu.Unlock()
 	if s.updatesCache != nil {
@@ -266,6 +270,11 @@ func (s *Store) InvalidateModUpdatesCache(serverID string) {
 }
 
 func (s *Store) setUpdatesCache(serverID string, resp *ServerModUpdatesResponse) {
+	if s.db != nil && len(resp.Errors) == 0 {
+		if raw, err := json.Marshal(resp); err == nil {
+			_, _ = s.db.Exec(`UPDATE server_update_checks SET mods = ? WHERE server_id = ?`, string(raw), serverID)
+		}
+	}
 	s.updatesMu.Lock()
 	defer s.updatesMu.Unlock()
 	if s.updatesCache == nil {
@@ -360,9 +369,28 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 	}
 
 	updates := make(map[string]ModUpdateInfo)
+	checkedModrinthHashes := make(map[string]bool)
 	serverLoaders := serverLoadersForType(srv.ServerType)
 	serverVersion := strings.TrimSpace(srv.Version)
 	px := s.getProxy()
+	var upstreamErrors []string
+	fetch := func(ctx context.Context, method, target string, body []byte, headers http.Header, force bool) (*proxy.ProxyResponse, error) {
+		resp, err := px.Do(ctx, method, target, body, headers, force)
+		if err == nil && (resp.StatusCode != http.StatusOK || resp.CacheStatus == "STALE" || !json.Valid(resp.Body)) {
+			err = fmt.Errorf("%s returned an unavailable or invalid response", target)
+		}
+		if err != nil {
+			upstreamErrors = append(upstreamErrors, err.Error())
+		}
+		return resp, err
+	}
+	decode := func(body []byte, value any) error {
+		err := json.Unmarshal(body, value)
+		if err != nil {
+			upstreamErrors = append(upstreamErrors, "Could not decode catalog response: "+err.Error())
+		}
+		return err
+	}
 
 	// 3. Batch check via Modrinth for all mods with SHA1 hashes
 	var modsWithSha1 []Mod
@@ -386,16 +414,18 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 			payload["game_versions"] = []string{serverVersion}
 		}
 
-		bodyBytes, _ := json.Marshal(payload)
-		resp, err := px.Do(ctx, http.MethodPost, "https://api.modrinth.com/v2/version_files/update", bodyBytes, nil, force)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			var modrinthUpdates map[string]modrinthVersion
-			if json.Unmarshal(resp.Body, &modrinthUpdates) == nil {
+		modrinthUpdates, err := fetchModrinthHashUpdates(ctx, px, payload, force)
+		if err != nil {
+			upstreamErrors = append(upstreamErrors, err.Error())
+		}
+		if err == nil {
+			{
 				for _, mod := range modsWithSha1 {
 					ver, exists := modrinthUpdates[mod.SHA1]
 					if !exists || len(ver.Files) == 0 {
 						continue
 					}
+					checkedModrinthHashes[mod.SHA1] = true
 
 					var primaryFile *modrinthVersionFile
 					for i := range ver.Files {
@@ -414,7 +444,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 						strings.EqualFold(primaryFile.Filename+".disabled", mod.File) ||
 						strings.EqualFold(primaryFile.Filename, strings.TrimSuffix(mod.File, ".disabled"))
 
-					if isSameHash && isSameFile {
+					if isSameHash || (primaryFile.Hashes["sha1"] == "" && isSameFile) {
 						continue
 					}
 
@@ -462,6 +492,9 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 		if _, ok := updates[mod.Name]; ok {
 			continue
 		}
+		if checkedModrinthHashes[mod.SHA1] {
+			continue
+		}
 
 		// Hangar provider
 		if mod.Provider == "hangar" && (mod.ProjectSlug != "" || mod.ProjectID != "") {
@@ -470,12 +503,12 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 				slug = mod.ProjectID
 			}
 			hangarURL := fmt.Sprintf("https://hangar.papermc.io/api/v1/projects/%s/versions?limit=5", url.PathEscape(slug))
-			resp, err := px.Do(ctx, http.MethodGet, hangarURL, nil, nil, force)
+			resp, err := fetch(ctx, http.MethodGet, hangarURL, nil, nil, force)
 			if err == nil && resp.StatusCode == http.StatusOK {
 				var vers struct {
 					Result []hangarVersion `json:"result"`
 				}
-				if json.Unmarshal(resp.Body, &vers) == nil && len(vers.Result) > 0 {
+				if decode(resp.Body, &vers) == nil && len(vers.Result) > 0 {
 					latest := vers.Result[0]
 					var dl hangarVersionDownload
 					if pDl, ok := latest.Downloads["PAPER"]; ok && pDl.FileInfo != nil {
@@ -521,10 +554,10 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 		if mod.Provider == "spiget" && mod.ProjectID != "" {
 			if resID, err := strconv.Atoi(mod.ProjectID); err == nil {
 				spigetURL := fmt.Sprintf("https://api.spiget.org/v2/resources/%d/versions?size=5&sort=-releaseDate", resID)
-				resp, err := px.Do(ctx, http.MethodGet, spigetURL, nil, nil, force)
+				resp, err := fetch(ctx, http.MethodGet, spigetURL, nil, nil, force)
 				if err == nil && resp.StatusCode == http.StatusOK {
 					var vers []spigetVersion
-					if json.Unmarshal(resp.Body, &vers) == nil && len(vers) > 0 {
+					if decode(resp.Body, &vers) == nil && len(vers) > 0 {
 						latest := vers[0]
 						currVer := cleanVersionString(mod.Version)
 						latestVer := cleanVersionString(latest.Name)
@@ -566,11 +599,12 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 					if serverVersion != "" {
 						cfURL += fmt.Sprintf("&gameVersion=%s", url.QueryEscape(serverVersion))
 					}
-					hdr := http.Header{"x-api-key": []string{cfKey}}
-					resp, err := px.Do(ctx, http.MethodGet, cfURL, nil, hdr, force)
+					hdr := http.Header{}
+					hdr.Set("x-api-key", cfKey)
+					resp, err := fetch(ctx, http.MethodGet, cfURL, nil, hdr, force)
 					if err == nil && resp.StatusCode == http.StatusOK {
 						var cfRes curseForgeFilesResponse
-						if json.Unmarshal(resp.Body, &cfRes) == nil && len(cfRes.Data) > 0 {
+						if decode(resp.Body, &cfRes) == nil && len(cfRes.Data) > 0 {
 							latest := cfRes.Data[0]
 							isSame := strings.EqualFold(latest.FileName, mod.File) ||
 								strings.EqualFold(latest.FileName+".disabled", mod.File) ||
@@ -605,6 +639,8 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 						}
 					}
 				}
+			} else {
+				upstreamErrors = append(upstreamErrors, "CurseForge checks require CURSEFORGE_API_KEY on the panel")
 			}
 			continue
 		}
@@ -632,10 +668,10 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 				reqURL += "?" + enc
 			}
 
-			resp, err := px.Do(ctx, http.MethodGet, reqURL, nil, nil, force)
+			resp, err := fetch(ctx, http.MethodGet, reqURL, nil, nil, force)
 			if err == nil && resp.StatusCode == http.StatusOK {
 				var vers []modrinthVersion
-				if json.Unmarshal(resp.Body, &vers) == nil && len(vers) > 0 {
+				if decode(resp.Body, &vers) == nil && len(vers) > 0 {
 					latest := vers[0]
 					if len(latest.Files) > 0 {
 						var primaryFile *modrinthVersionFile
@@ -654,7 +690,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 						isSameHash := mod.SHA1 != "" && primaryFile.Hashes["sha1"] != "" &&
 							strings.EqualFold(primaryFile.Hashes["sha1"], mod.SHA1)
 
-						if !isSameFile && !isSameHash {
+						if !isSameHash && (!isSameFile || (mod.SHA1 != "" && primaryFile.Hashes["sha1"] != "")) {
 							// Persist metadata if it was not tracked before
 							if modDir, _, err := s.modsPath(serverID, srv.ServerType); err == nil && (mod.Provider == "" || mod.ProjectID == "") {
 								writeModMeta(modDir, mod.File, ModDownloadMeta{
@@ -699,6 +735,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 		LastChecked: time.Now(),
 		TotalMods:   len(installedMods),
 		UpdateCount: len(updates),
+		Errors:      upstreamErrors,
 	}
 	s.setUpdatesCache(serverID, result)
 	return result, nil

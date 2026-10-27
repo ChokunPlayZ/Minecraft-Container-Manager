@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mcm-panel/mcm/internal/checkcache"
 )
 
 var (
@@ -192,6 +194,15 @@ func determineTTL(u *url.URL) time.Duration {
 // Do executes a proxied request, honoring concurrency limits, rate limiting,
 // 429 backoff, singleflight deduplication, and in-memory TTL caching.
 func (s *Service) Do(ctx context.Context, method, targetURL string, body []byte, headers http.Header, skipCache bool) (*ProxyResponse, error) {
+	// A pass always fetches fresh metadata once, then reuses it without a TTL.
+	credential := sha256.Sum256([]byte(headers.Get("x-api-key")))
+	key := computeCacheKey(method, targetURL, body) + fmt.Sprintf(":%x", credential)
+	return checkcache.Do(ctx, "proxy:"+key, func() (*ProxyResponse, error) {
+		return s.do(ctx, method, targetURL, body, headers, skipCache || checkcache.Active(ctx))
+	})
+}
+
+func (s *Service) do(ctx context.Context, method, targetURL string, body []byte, headers http.Header, skipCache bool) (*ProxyResponse, error) {
 	parsedURL, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid url: %w", err)
@@ -209,7 +220,8 @@ func (s *Service) Do(ctx context.Context, method, targetURL string, body []byte,
 		return nil, fmt.Errorf("%w: %s", ErrForbiddenHost, host)
 	}
 
-	cacheKey := computeCacheKey(method, targetURL, body)
+	credential := sha256.Sum256([]byte(headers.Get("x-api-key")))
+	cacheKey := computeCacheKey(method, targetURL, body) + fmt.Sprintf(":%x", credential)
 
 	// 1. Check in-memory cache
 	if !skipCache {

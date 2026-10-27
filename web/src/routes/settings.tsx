@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { Bell, Globe, KeyRound, Network, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Bell, Globe, KeyRound, Network, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { PasskeyMeta } from '../api/types';
 import { AppShell } from '../components/app-shell';
@@ -14,14 +14,15 @@ import { useModal } from '../components/ui/modal';
 import { CloudflareDNSSettingsCard } from '../components/cloudflare-dns-settings';
 import { PortPoolSettingsCard } from '../components/port-pool-settings';
 import { DiscordNotificationSettings } from '../components/discord-notification-settings';
+import { UpdateCheckerSettings } from '../components/update-checker-settings';
 
 interface SettingsSearch {
-  tab?: 'account' | 'dns' | 'ports' | 'notifications';
+  tab?: 'account' | 'dns' | 'ports' | 'notifications' | 'updates';
 }
 
 export const Route = createFileRoute('/settings')({
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
-    tab: search.tab === 'dns' ? 'dns' : search.tab === 'ports' ? 'ports' : search.tab === 'notifications' ? 'notifications' : 'account',
+    tab: search.tab === 'updates' ? 'updates' : search.tab === 'dns' ? 'dns' : search.tab === 'ports' ? 'ports' : search.tab === 'notifications' ? 'notifications' : 'account',
   }),
   component: SettingsRoute,
 });
@@ -44,12 +45,13 @@ function SettingsRoute() {
         <div className="page-heading">
           <div><h1 className="page-title">Settings</h1>
           <p className="page-description">
-            Manage account security, notifications, DNS, and port allocation.
+            Manage account security, notifications, update checks, DNS, and port allocation.
           </p></div>
         </div>
 
         {/* Tab navigation */}
         <div className="workspace-tabs" role="tablist" aria-label="Settings sections">
+          <button type="button" onClick={() => setTab('updates')} role="tab" aria-selected={activeTab === 'updates'} aria-controls="settings-panel" id="settings-tab-updates" className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'updates' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}><RefreshCw className="h-4 w-4" />Updates</button>
           <button
             type="button"
             onClick={() => setTab('account')}
@@ -123,6 +125,8 @@ function SettingsRoute() {
           <div className="max-w-3xl">
             <CloudflareDNSSettingsCard />
           </div>
+        ) : activeTab === 'updates' ? (
+          <div className="max-w-3xl"><UpdateCheckerSettings /></div>
         ) : activeTab === 'notifications' ? (
           <div className="max-w-3xl"><DiscordNotificationSettings /></div>
         ) : (

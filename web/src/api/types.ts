@@ -444,6 +444,23 @@ export interface ServerModUpdatesResponse {
   last_checked: string;
   total_mods?: number;
   update_count?: number;
+  errors?: string[];
+}
+
+export interface ServerUpdateCheck {
+  software?: { supported: boolean; available: boolean; latest_version?: string; latest_build?: string; reason?: string };
+  mods?: ServerModUpdatesResponse;
+  checked_at: string;
+  error?: string;
+}
+
+export interface UpdateCheckerStatus {
+  enabled: boolean;
+  running: boolean;
+  timezone: string;
+  next_check_at?: string;
+  last_checked?: string;
+  servers: Record<string, ServerUpdateCheck>;
 }
 
 export type ModCompatibilityStatus =

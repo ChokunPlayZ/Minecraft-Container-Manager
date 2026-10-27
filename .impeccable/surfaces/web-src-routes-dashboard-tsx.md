@@ -42,3 +42,11 @@ A Host resources viewer follows the fleet summary and precedes the server collec
 Readings load independently of the fleet, refresh every (5 seconds), prevent overlapping polls, and stop polling on unmount. Container sampling has bounded concurrency and a request timeout. Missing container samples produce an unavailable state rather than a partial sum labeled Live. Disk readings remain available when the runtime is down; runtime readings remain available when the data filesystem cannot be read. Loading uses skeletons and failed refreshes remove stale Live readings. A labeled refresh action supports retry. Illustrative readings remain confined to the labeled demo.
 
 Finish: ship. Desktop and mobile previews in both themes preserve the server viewer's layout with readable, unclipped readings. UI tests cover measured usage, remaining disk space, independent failures, stale readings, missing totals, retry, polling, and cleanup. Backend tests cover aggregation, CPU normalization, active-container selection, the configured data filesystem, independent failures, cancellation, authentication, and Docker/Podman capacity. The existing Operate direction and theme tokens remain in force.
+
+## Update checks extension
+
+The Updates settings tab uses the established Card, Switch, and outline Button components. Nightly checks are opt-in; direct copy names midnight, the configured timezone, contacted catalogs, and manual installation. Next/last-check readings and feedback remain within the card, with wrapping rows and actions on narrow screens.
+
+Fleet identities and server headings reuse the shared primary-tinted Badge for Update Available. The server workspace adds a quiet bordered summary with available versions, the saved check time, partial-failure feedback, and review actions leading to existing settings or installed-content tabs. Installed plugins/mods retain their inline available-version badge and Update action; last-checked text appears only when a saved timestamp exists.
+
+Finish: ship, with no material UI findings. Source inspection and the dark-theme desktop/mobile settings captures in `.impeccable/review/update-checker/` support consistency with the inherited Operate direction. Rendered badges and light-theme output were not captured. The existing visual world and shared tokens remain in force.

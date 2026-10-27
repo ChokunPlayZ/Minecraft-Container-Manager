@@ -48,6 +48,8 @@ import { ServerSettings } from '../components/server-settings';
 import { SchedulesPanel } from '../components/schedules-panel';
 import { ServerStatsGrid } from '../components/server-stats-grid';
 import { StatusBadge } from '../components/status-badge';
+import { UpdateAvailableBadge } from '../components/update-available-badge';
+import { hasAvailableUpdate, useUpdateChecker } from '../lib/use-update-checker';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Skeleton } from '../components/ui/skeleton';
@@ -67,7 +69,9 @@ export const Route = createFileRoute('/servers/$id')({
 type ServerTab = 'console' | 'performance' | 'logs' | 'players' | 'files' | 'worlds' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
 
 export function ServerDetailRoute() {
+  const { status: updateStatus } = useUpdateChecker();
   const { id } = Route.useParams();
+  const updateResult = updateStatus?.enabled ? updateStatus.servers[id] : undefined;
   const navigate = useNavigate();
   const [tab, setTab] = useState<ServerTab>('console');
   const [server, setServer] = useState<Server | null>(null);
@@ -320,6 +324,7 @@ export function ServerDetailRoute() {
                     {server.name}
                   </h1>
                   <StatusBadge state={state} />
+                  <UpdateAvailableBadge result={updateResult} />
                   {server.needs_rebuild && (
                     <span
                       data-testid="header-rebuild-badge"
@@ -496,7 +501,23 @@ export function ServerDetailRoute() {
             </div>
           </div>
 
+          {hasAvailableUpdate(updateResult) && <div className="mb-5 space-y-3 rounded-lg border bg-card p-4 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                {updateResult?.software?.available && <p className="break-words">Server software: <strong>{updateResult.software.latest_version}{updateResult.software.latest_build ? ` · Build ${updateResult.software.latest_build}` : ''}</strong> available.</p>}
+                {!!Object.keys(updateResult?.mods?.updates ?? {}).length && <p>{Object.keys(updateResult?.mods?.updates ?? {}).length} plugin/mod {Object.keys(updateResult?.mods?.updates ?? {}).length === 1 ? 'update' : 'updates'} available.</p>}
+                <p className="text-xs text-muted-foreground">Checked {updateResult?.checked_at ? new Date(updateResult.checked_at).toLocaleString() : ''}. Review compatibility before applying updates.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {updateResult?.software?.available && <Button variant="outline" size="sm" onClick={() => setTab('settings')}>Review software</Button>}
+                {!!Object.keys(updateResult?.mods?.updates ?? {}).length && <Button variant="outline" size="sm" onClick={() => setTab('mods')}>Review plugins / mods</Button>}
+              </div>
+            </div>
+            {updateResult?.error && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Some checks failed. Showing last known updates.</p>}
+          </div>}
+
           {/* Installation Progress Banner */}
+          {updateResult?.software?.reason && <p className="mb-5 text-sm text-muted-foreground">Software checks: {updateResult.software.reason}</p>}
           {isInstalling && (
             <ServerInstallProgress serverId={server.id} state={state} />
           )}

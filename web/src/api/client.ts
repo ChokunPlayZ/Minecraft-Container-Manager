@@ -1,4 +1,5 @@
 import type {
+  UpdateCheckerStatus,
   DiscordSettings,
   DiscordSettingsInput,
   ScheduledTask,
@@ -172,9 +173,24 @@ let mockDiscordSettings: DiscordSettings = {
 };
 const mockSparkReports: Record<string, SparkReport> = {};
 const mockPerformanceModes: Record<string, PerformanceCollectionMode> = {};
+let mockUpdateChecker: UpdateCheckerStatus = { enabled: false, running: false, timezone: 'UTC', servers: {} };
 
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
+
+  if (path === '/api/updates/settings' && init.method === 'PUT') {
+    const { enabled } = JSON.parse(String(init.body)) as { enabled: boolean };
+    const midnight = new Date(); midnight.setUTCHours(24, 0, 0, 0);
+    mockUpdateChecker = { ...mockUpdateChecker, enabled, next_check_at: enabled ? midnight.toISOString() : undefined };
+    return mockUpdateChecker as T;
+  }
+  if (path === '/api/updates/check') {
+    mockUpdateChecker = { ...mockUpdateChecker, last_checked: new Date().toISOString(), servers: {
+      demo: { checked_at: new Date().toISOString(), software: { supported: true, available: true, latest_version: '1.21.5' } },
+    } };
+    return { accepted: true } as T;
+  }
+  if (path === '/api/updates') return mockUpdateChecker as T;
 
   const performanceSettingsPath = path.match(/^\/api\/servers\/([^/]+)\/performance\/settings$/);
   if (performanceSettingsPath && init.method === 'PUT') {
@@ -884,6 +900,10 @@ export const api = {
 
   getSettings: () => request<{ settings: Record<string, string> }>('/api/settings'),
 
+  getUpdateChecker: () => request<UpdateCheckerStatus>('/api/updates'),
+  saveUpdateChecker: (enabled: boolean) => request<UpdateCheckerStatus>('/api/updates/settings', { method: 'PUT', body: JSON.stringify({ enabled }) }),
+  runUpdateCheck: () => request<{ accepted: boolean }>('/api/updates/check', { method: 'POST' }),
+
   putSettings: (settings: Record<string, string>) =>
     request<{ settings: Record<string, string> }>('/api/settings', {
       method: 'PUT',
@@ -1014,7 +1034,7 @@ export const api = {
       ? { 'x-curseforge-api-key': localStorage.getItem('mcm_curseforge_api_key')!.trim() }
       : undefined;
     return request<ServerModUpdatesResponse>(
-      `/api/servers/${serverId}/mods/updates${force ? '?force=true' : ''}`,
+      `/api/servers/${serverId}/mods/updates${force ? '?force=true' : '?cached=true'}`,
       { headers: cfHeader },
     );
   },

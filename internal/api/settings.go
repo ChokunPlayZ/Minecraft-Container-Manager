@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/mcm-panel/mcm/internal/notifications"
+	"github.com/mcm-panel/mcm/internal/servers"
 )
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +39,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := body.Settings[notifications.SettingsKey]; ok {
 		writeError(w, http.StatusBadRequest, "invalid_request", "use the Discord notification settings endpoint")
+		return
+	}
+	if _, ok := body.Settings[servers.UpdateCheckerEnabledKey]; ok {
+		writeError(w, http.StatusBadRequest, "invalid_request", "use the update checker settings endpoint")
 		return
 	}
 	tx, err := s.db.DB.BeginTx(r.Context(), nil)

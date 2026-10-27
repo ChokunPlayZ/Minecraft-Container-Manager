@@ -98,7 +98,7 @@ export function ModsPanel({ server }: { server: Server }) {
         if (serverRes?.last_checked) {
           setLastChecked(new Date(serverRes.last_checked));
         } else {
-          setLastChecked(new Date());
+          setLastChecked(null);
         }
       } catch {
         // Server-side update check error (handled gracefully without client-side spamming)
@@ -696,7 +696,7 @@ export function ModsPanel({ server }: { server: Server }) {
                                 className="border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[11px] px-1.5 py-0 font-medium shrink-0 flex items-center gap-1"
                               >
                                 <ArrowUpCircle className="h-2.5 w-2.5" />
-                                Update available: {updateInfo.latestVersion}
+                                Update Available: {updateInfo.latestVersion}
                               </Badge>
                             )}
                           </div>

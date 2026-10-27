@@ -168,6 +168,18 @@ a container.
 - Edit, pause/resume, and delete tasks; inspect the next run, last result, and error details. Console commands require a running server. Restart follows the manual restart behavior and also starts a stopped server.
 - Schedules persist in SQLite and run while the panel is online, within the five-second polling cadence. Missed runs are skipped after panel downtime. A task cannot overlap its own previous execution within the panel process, and pausing or deleting a task leaves an already running execution to finish. Failed runs are recorded and wait for the next scheduled occurrence.
 
+### Automatic update checks
+
+Enable **Settings → Updates → Enable nightly update checks** to check server software, plugins, and mods at **00:00 in the panel timezone** (`TZ`, UTC by default). This is off by default. **Check now** starts an immediate fleet scan after opting in; scans never install updates or restart servers.
+
+Saved results survive panel restarts. Servers with available updates display an **Update Available** badge on the dashboard and server page. The server page shows the software version/build and plugin/mod update count, with actions to review them. Opening the installed plugins/mods list reads saved results; use its re-check action for an explicit refresh. Changing software settings or installed artifacts invalidates corresponding results.
+
+Each fleet scan starts with a fresh shared response cache. Repeated provider requests, including failures, are reused throughout that scan. Modrinth hash results are reused even when servers have overlapping but different mod lists; game version and loader filters stay separate. Software catalog responses are shared too. Failed checks retain previously known updates and show a warning.
+
+Software checks compare published stable versions and builds for the installed version when a build is pinned. Platforms without a supported live catalog (including custom jars) show an explanation. Unrecognized plugin/mod jars may not be identifiable. Nightly CurseForge checks require `CURSEFORGE_API_KEY` on the panel; a browser-only key is available only for manual checks. The panel must be running at midnight; missed scans are not replayed on startup.
+
+Authenticated endpoints: `GET /api/updates` reads saved status and results, `PUT /api/updates/settings` saves `{ "enabled": true }`, and `POST /api/updates/check` starts a scan and returns `202`. Manual and scheduled fleet scans cannot overlap. `GET /api/servers/:id/mods/updates?cached=true` reads saved/in-memory results without contacting catalogs. Mutating endpoints use existing CSRF protection.
+
 ### Discord notifications
 
 Open **Settings → Notifications** to connect a Discord channel:

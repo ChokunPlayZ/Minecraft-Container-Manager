@@ -23,6 +23,7 @@ services:
       PUID: 0
       PGID: 0
       TZ: ${TZ:-UTC}
+      CURSEFORGE_API_KEY: ${CURSEFORGE_API_KEY:-}
     security_opt:
       - label=disable
     volumes:

@@ -344,12 +344,15 @@ type Store struct {
 	fileEditMu     sync.Mutex
 	worldLocks     sync.Map
 
-	proxyMu         sync.Mutex
-	proxy           *proxy.Service
-	updatesMu       sync.RWMutex
-	updatesCache    map[string]*ServerModUpdatesResponse
-	updatesFlightMu sync.Mutex
-	updatesInFlight map[string]*updatesFlightCall
+	proxyMu            sync.Mutex
+	proxy              *proxy.Service
+	updatesMu          sync.RWMutex
+	updatesCache       map[string]*ServerModUpdatesResponse
+	updatesFlightMu    sync.Mutex
+	updatesInFlight    map[string]*updatesFlightCall
+	updateCheckMu      sync.Mutex
+	updateCheckRunning bool
+	updateCheckCancel  context.CancelFunc
 
 	targetUpdatesCache    map[string]*VersionUpdateReport
 	targetUpdatesFlightMu sync.Mutex
@@ -725,6 +728,9 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, srv.JavaVersion, id)
 	if err != nil {
 		return Server{}, fmt.Errorf("update server: %w", err)
+	}
+	if in.ServerType != nil || in.Version != nil || in.Build != nil {
+		s.InvalidateModUpdatesCache(id)
 	}
 	return s.Get(ctx, id)
 }

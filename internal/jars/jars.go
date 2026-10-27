@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mcm-panel/mcm/internal/checkcache"
 )
 
 // ErrUpstream is returned when fetching metadata from an upstream provider
@@ -171,16 +173,15 @@ func RecommendJavaVersionForType(serverType, version string) int {
 	}
 }
 
-
 const (
-	defaultPaperBase      = "https://fill.papermc.io/v3"
-	defaultFabricBase     = "https://meta.fabricmc.net/v2"
-	defaultMojangManf     = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-	defaultForgeBase      = "https://files.minecraftforge.net/net/minecraftforge/forge"
-	defaultNeoForgeBase   = "https://maven.neoforged.net"
-	defaultSpigotBase     = "https://hub.spigotmc.org/versions"
-	defaultBuildToolsURL  = "https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar"
-	requestTimeout        = 20 * time.Second
+	defaultPaperBase     = "https://fill.papermc.io/v3"
+	defaultFabricBase    = "https://meta.fabricmc.net/v2"
+	defaultMojangManf    = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+	defaultForgeBase     = "https://files.minecraftforge.net/net/minecraftforge/forge"
+	defaultNeoForgeBase  = "https://maven.neoforged.net"
+	defaultSpigotBase    = "https://hub.spigotmc.org/versions"
+	defaultBuildToolsURL = "https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar"
+	requestTimeout       = 20 * time.Second
 )
 
 // Resolver queries upstream metadata APIs. The base URLs are overridable so unit
@@ -708,26 +709,37 @@ func sortedStrings(xs []string) []string {
 }
 
 func (r *Resolver) getJSON(ctx context.Context, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body, err := checkcache.Do(ctx, "jars:"+url, func() ([]byte, error) {
+		return r.getJSONBytes(ctx, url)
+	})
 	if err != nil {
 		return err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		checkcache.RecordError(ctx, err)
+		return fmt.Errorf("decode %s: %w", url, errors.Join(ErrUpstream, err))
+	}
+	return nil
+}
+
+func (r *Resolver) getJSONBytes(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "MCM-Panel/1.0 (Minecraft Container Manager; +https://github.com/mcm-panel/mcm)")
 
 	resp, err := r.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf("request %s: %w", url, errors.Join(ErrUpstream, err))
+		return nil, fmt.Errorf("request %s: %w", url, errors.Join(ErrUpstream, err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("%s returned %s: %s", url, resp.Status, string(body))
+		return nil, fmt.Errorf("%s returned %s: %s", url, resp.Status, string(body))
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode %s: %w", url, errors.Join(ErrUpstream, err))
-	}
-	return nil
+	return io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 }
 
 // CompareVersionTokens compares two version or build strings.
@@ -1304,4 +1316,3 @@ func writeEULA(destDir string) {
 	eulaFile := filepath.Join(destDir, "eula.txt")
 	_ = os.WriteFile(eulaFile, []byte("eula=true\n"), 0644)
 }
-

@@ -11,6 +11,8 @@ import { HostCapacity } from '../components/host-capacity';
 import { RequireAuth } from '../components/require-auth';
 import { ServerInstallProgress } from '../components/server-install-progress';
 import { StatusBadge } from '../components/status-badge';
+import { UpdateAvailableBadge } from '../components/update-available-badge';
+import { useUpdateChecker } from '../lib/use-update-checker';
 import { ServerQuickActions } from '../components/server-quick-actions';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -20,6 +22,7 @@ export const Route = createFileRoute('/dashboard')({ component: DashboardRoute }
 type FleetFilter = 'all' | 'running' | 'stopped' | 'attention';
 
 export function DashboardRoute() {
+  const { status: updateStatus } = useUpdateChecker();
   const [servers, setServers] = useState<Server[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyTargetServer, setCopyTargetServer] = useState<Server | null>(null);
@@ -75,7 +78,7 @@ export function DashboardRoute() {
           <div className="empty-state"><Search /><h2 className="section-heading">No matching servers</h2><p>Try another name, version, or server state.</p><Button variant="outline" className="mt-5" onClick={() => { setQuery(''); setFilter('all'); }}>Reset filters</Button></div> : <>
           <div className="fleet-row fleet-heading" aria-hidden="true"><span>Server</span><span>Status</span><span>Memory</span><span>Host port</span><span className="fleet-actions-heading text-right">Actions</span></div>
           <ul aria-label="Servers">{visible.map((server) => <li key={server.id} className="fleet-row group">
-            <div className="flex min-w-0 items-center gap-4"><div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-lg border bg-secondary/40 sm:flex"><Box className="h-5 w-5 text-primary" strokeWidth={1.6} /></div><div className="min-w-0"><Link to="/servers/$id" params={{ id: server.id }} className="block truncate text-sm font-semibold hover:text-primary hover:underline">{server.name}</Link><p className="mt-1.5 truncate text-xs text-muted-foreground"><span className="capitalize">{server.server_type}</span> <span className="mx-1.5 opacity-50">/</span> {server.version}{server.build ? ` · Build ${server.build}` : ''}</p>{server.state === 'running' && (server.started_at || server.uptime_seconds != null) && <p data-testid="dashboard-server-uptime" className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"><Clock className="h-3 w-3" />{formatUptimeFromStartedAt(server.started_at, server.uptime_seconds)} uptime</p>}{server.needs_rebuild && <p data-testid="dashboard-rebuild-badge" className="mt-2 text-xs text-amber-800 dark:text-amber-300">Rebuild required</p>}{['installing', 'building'].includes(server.state) && <div className="mt-3"><ServerInstallProgress serverId={server.id} state={server.state} compact /></div>}</div></div>
+            <div className="flex min-w-0 items-center gap-4"><div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-lg border bg-secondary/40 sm:flex"><Box className="h-5 w-5 text-primary" strokeWidth={1.6} /></div><div className="min-w-0"><Link to="/servers/$id" params={{ id: server.id }} className="block truncate text-sm font-semibold hover:text-primary hover:underline">{server.name}</Link><p className="mt-1.5 truncate text-xs text-muted-foreground"><span className="capitalize">{server.server_type}</span> <span className="mx-1.5 opacity-50">/</span> {server.version}{server.build ? ` · Build ${server.build}` : ''}</p><div className="mt-2 empty:hidden"><UpdateAvailableBadge result={updateStatus?.enabled ? updateStatus.servers[server.id] : undefined} /></div>{server.state === 'running' && (server.started_at || server.uptime_seconds != null) && <p data-testid="dashboard-server-uptime" className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"><Clock className="h-3 w-3" />{formatUptimeFromStartedAt(server.started_at, server.uptime_seconds)} uptime</p>}{server.needs_rebuild && <p data-testid="dashboard-rebuild-badge" className="mt-2 text-xs text-amber-800 dark:text-amber-300">Rebuild required</p>}{['installing', 'building'].includes(server.state) && <div className="mt-3"><ServerInstallProgress serverId={server.id} state={server.state} compact /></div>}</div></div>
             <div><StatusBadge state={server.state} /></div>
             <div className="fleet-secondary"><p className="text-sm font-medium tabular-nums">{(server.ram_mb / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} GB</p><p className="mt-1 text-xs text-muted-foreground">Allocated</p></div>
             <div className="fleet-secondary text-sm tabular-nums">{server.host_port > 0 ? server.host_port : <span className="text-xs text-muted-foreground">Behind proxy</span>}</div>
