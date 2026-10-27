@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
 import type { Server, Mod, VersionUpdateReport } from '../src/api/types';
@@ -106,6 +107,29 @@ describe('VersionUpdateHelper', () => {
     vi.restoreAllMocks();
   });
 
+  it('defaults to the latest stable target and keeps preview versions selectable', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.jarVersions).mockResolvedValue([
+      { name: '25w01a' }, { name: '1.22-rc1' }, { name: '1.20.1' }, { name: '1.21.1' },
+    ]);
+    render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
+    const selector = screen.getByRole('combobox', { name: 'Target Minecraft version' });
+    await waitFor(() => expect(selector).toHaveTextContent('MC 1.21.1'));
+    await user.click(selector);
+    await user.click(screen.getByRole('option', { name: 'MC 1.22-rc1' }));
+    expect(selector).toHaveTextContent('MC 1.22-rc1');
+    await user.click(screen.getByRole('button', { name: /Check Compatibility Now/i }));
+    await waitFor(() => expect(api.checkVersionUpgradeCompatibility).toHaveBeenCalledWith('srv-1', '1.22-rc1', true));
+  });
+
+  it('keeps the current release as the target when it is already the latest stable version', async () => {
+    vi.mocked(api.jarVersions).mockResolvedValue([
+      { name: '1.22-beta.1' }, { name: '1.20.1' }, { name: '1.21.1' },
+    ]);
+    render(<VersionUpdateHelper server={{ ...mockServer, version: '1.21.1' }} installedMods={mockMods} />);
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Target Minecraft version' })).toHaveTextContent('MC 1.21.1 (Current)'));
+  });
+
   it('renders header, current version and does not auto-scan until user initiates', async () => {
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
 
@@ -189,8 +213,9 @@ describe('VersionUpdateHelper', () => {
 
   it('copies compatibility markdown report to clipboard', async () => {
     const writeTextSpy = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, {
-      clipboard: { writeText: writeTextSpy },
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: writeTextSpy },
     });
 
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
@@ -356,7 +381,8 @@ describe('VersionUpdateHelper', () => {
     });
 
     const buildsSpy = vi.spyOn(api, 'jarBuilds').mockResolvedValue([
-      { build: '0.16.0', display_name: '0.16.0' } as any,
+      { version: '1.21.1', build: '0.17.0-beta.1', display: '0.17.0-beta.1' },
+      { version: '1.21.1', build: '0.16.0', display: '0.16.0' },
     ]);
 
     const installSpy = vi.spyOn(api, 'installServer').mockResolvedValue({

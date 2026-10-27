@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { InstallInfo, ServerType, VersionInfo, VersionMeta } from '../api/types';
+import { sortServerBuilds, sortServerVersions } from '../lib/server-releases';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Label } from './ui/label';
@@ -35,8 +36,9 @@ export function InstallPanel({
     try {
       const [i, v] = await Promise.all([api.installInfo(serverId), api.jarVersions(serverType)]);
       setInfo(i);
-      setVersions(v);
-      const curVer = i.version ?? (i as any)?.server?.version ?? v[0]?.name ?? '';
+      const sorted = sortServerVersions(v);
+      setVersions(sorted);
+      const curVer = i.version ?? (i as any)?.server?.version ?? sorted[0]?.name ?? '';
       const curBuild = i.build ?? (i as any)?.server?.build ?? '';
       setVersion(curVer);
       setBuild(curBuild);
@@ -59,19 +61,13 @@ export function InstallPanel({
       .jarBuilds(serverType, version)
       .then((b) => {
         if (cancelled) return;
-        const sorted = [...b].sort((x, y) => {
-          const nx = parseInt(x.build, 10);
-          const ny = parseInt(y.build, 10);
-          if (!isNaN(nx) && !isNaN(ny) && String(nx) === x.build && String(ny) === y.build) {
-            return ny - nx;
-          }
-          return (y.build || '').localeCompare(x.build || '', undefined, { numeric: true });
-        });
+        const sorted = sortServerBuilds(b);
         setBuilds(sorted);
+        const curVersion = info?.version ?? (info as any)?.server?.version;
         const curBuild = info?.build ?? (info as any)?.server?.build;
-        if (!curBuild || !sorted.some((x) => x.build === curBuild)) {
-          setBuild(sorted[0]?.build ?? '');
-        }
+        setBuild(curVersion === version && sorted.some((x) => x.build === curBuild)
+          ? curBuild
+          : sorted[0]?.build ?? '');
       })
       .catch((err) => !cancelled && setError(err instanceof ApiError ? err.detail : 'Failed to load builds'))
       .finally(() => !cancelled && setLoadingBuilds(false));
@@ -153,7 +149,10 @@ export function InstallPanel({
                   <Select
                     id="install-version"
                     value={version}
-                    onValueChange={(selectedValue) => setVersion(selectedValue)}
+                    onValueChange={(selectedValue) => {
+                      setVersion(selectedValue);
+                      setBuild('');
+                    }}
                     disabled={versions.length === 0}
                   >
                     {versions.map((v) => (

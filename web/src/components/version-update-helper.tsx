@@ -17,6 +17,7 @@ import {
   RotateCw,
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
+import { sortServerBuilds, sortServerVersions } from '../lib/server-releases';
 import type {
   Server,
   Mod,
@@ -103,15 +104,9 @@ export function VersionUpdateHelper({
       .jarVersions(server.server_type)
       .then((versions) => {
         if (cancelled) return;
-        setAvailableVersions(versions);
-        // Default target to the latest version or first version different from current
-        const current = server.version?.trim();
-        const newer = versions.find((v) => v.name !== current);
-        if (newer) {
-          setTargetVersion(newer.name);
-        } else if (versions[0]) {
-          setTargetVersion(versions[0].name);
-        }
+        const sorted = sortServerVersions(versions);
+        setAvailableVersions(sorted);
+        setTargetVersion(sorted[0]?.name ?? server.version ?? '');
       })
       .catch(() => {
         // Jar versions fetch failed; fallback to current version
@@ -324,7 +319,7 @@ export function VersionUpdateHelper({
       // Step 3: Upgrade server jar to target version
       setOneClickStage(`3/3: Upgrading ${server.server_type} server software to MC ${v}...`);
       const builds = await api.jarBuilds(server.server_type, v);
-      const latestBuild = builds[0]?.build ?? '';
+      const latestBuild = sortServerBuilds(builds)[0]?.build ?? '';
       await api.installServer(server.id, { version: v, build: latestBuild });
 
       setServerUpgradeSuccess(
@@ -403,7 +398,7 @@ export function VersionUpdateHelper({
     try {
       // Find latest build for target version
       const builds = await api.jarBuilds(server.server_type, v);
-      const latestBuild = builds[0]?.build ?? '';
+      const latestBuild = sortServerBuilds(builds)[0]?.build ?? '';
       await api.installServer(server.id, { version: v, build: latestBuild });
       setServerUpgradeSuccess(
         `Server jar upgraded to ${server.server_type} ${v}${latestBuild ? ` (build ${latestBuild})` : ''}! Restart the server to run the new version.`,

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { CreateServerDialog } from '../src/components/create-server-dialog';
 import { api, ApiError } from '../src/api/client';
 import type { Server } from '../src/api/types';
@@ -24,6 +25,45 @@ const mockCreatedServer: Server = {
 };
 
 describe('CreateServerDialog', () => {
+  it('defaults to the newest stable version and build while allowing preview selections', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'javaVersions').mockResolvedValue([]);
+    vi.spyOn(api, 'availablePorts').mockResolvedValue({ available: [25565], used: [] });
+    vi.spyOn(api, 'listServers').mockResolvedValue([]);
+    vi.spyOn(api, 'jarVersions').mockResolvedValue([
+      { name: '25w01a' },
+      { name: '1.22-pre1' },
+      { name: '1.21.2' },
+      { name: '1.21.11' },
+    ]);
+    vi.spyOn(api, 'jarBuilds').mockImplementation(async (_type, version) => [
+      { version, build: '0.17.0-beta.1', display: '0.17.0-beta.1' },
+      { version, build: '0.16.9', display: '0.16.9' },
+      { version, build: '0.16.10', display: '0.16.10' },
+    ]);
+
+    render(<CreateServerDialog onCreated={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /create server/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Version' })).toHaveTextContent('1.21.11');
+      expect(screen.getByRole('combobox', { name: 'Build' })).toHaveTextContent('0.16.10');
+    });
+    await user.click(screen.getByRole('combobox', { name: 'Version' }));
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      '1.21.11', '1.21.2', '25w01a', '1.22-pre1',
+    ]);
+    await user.click(screen.getByRole('option', { name: '1.22-pre1' }));
+    await waitFor(() => {
+      expect(api.jarBuilds).toHaveBeenLastCalledWith('paper', '1.22-pre1');
+      expect(screen.getByRole('combobox', { name: 'Build' })).toHaveTextContent('0.16.10');
+    });
+    await user.click(screen.getByRole('combobox', { name: 'Build' }));
+    await user.click(screen.getByRole('option', { name: '0.17.0-beta.1' }));
+    expect(screen.getByRole('combobox', { name: 'Build' })).toHaveTextContent('0.17.0-beta.1');
+    expect(screen.getByRole('combobox', { name: 'Version' })).toHaveTextContent('1.22-pre1');
+  });
+
   it('immediately closes the dialog on submit and invokes onCreated in background', async () => {
     vi.spyOn(api, 'javaVersions').mockResolvedValue([
       { version: 21, is_lts: true, name: 'Java 21' },

@@ -24,6 +24,7 @@ import type {
   VersionMeta,
 } from '../api/types';
 import { formatCount, getProjectVersions, searchModrinth } from '../api/modrinth';
+import { sortServerBuilds, sortServerVersions } from '../lib/server-releases';
 
 function recommendJava(ver: string, serverType?: ServerType): number {
   if (
@@ -235,20 +236,7 @@ export function CreateServerDialog({
       .jarVersions(serverType)
       .then((v) => {
         if (cancelled) return;
-        const sorted = [...v].sort((a, b) => {
-          const ma = (a.name || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
-          const mb = (b.name || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
-          if (ma && mb) {
-            const a1 = parseInt(ma[1], 10), b1 = parseInt(mb[1], 10);
-            if (a1 !== b1) return b1 - a1;
-            const a2 = parseInt(ma[2], 10), b2 = parseInt(mb[2], 10);
-            if (a2 !== b2) return b2 - a2;
-            const a3 = ma[3] ? parseInt(ma[3], 10) : 0;
-            const b3 = mb[3] ? parseInt(mb[3], 10) : 0;
-            if (a3 !== b3) return b3 - a3;
-          }
-          return (b.name || '').localeCompare(a.name || '');
-        });
+        const sorted = sortServerVersions(v);
         setVersions(sorted);
         const nextVer = (!version || !sorted.some((x) => x.name === version)) ? (sorted[0]?.name ?? '') : version;
         setVersion(nextVer);
@@ -271,14 +259,7 @@ export function CreateServerDialog({
       .jarBuilds(serverType, version)
       .then((b) => {
         if (cancelled) return;
-        const sorted = [...b].sort((x, y) => {
-          const nx = parseInt(x.build, 10);
-          const ny = parseInt(y.build, 10);
-          if (!isNaN(nx) && !isNaN(ny) && String(nx) === x.build && String(ny) === y.build) {
-            return ny - nx;
-          }
-          return (y.build || '').localeCompare(x.build || '', undefined, { numeric: true });
-        });
+        const sorted = sortServerBuilds(b);
         setBuilds(sorted);
         setBuild(sorted[0]?.build ?? '');
       })
