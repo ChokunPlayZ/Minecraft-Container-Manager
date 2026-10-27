@@ -193,6 +193,20 @@ export interface Settings {
   [key: string]: unknown;
 }
 
+export type DiscordEvent = 'server_started' | 'server_stopped' | 'server_crashed' | 'server_error' | 'backup_completed' | 'backup_failed';
+
+export interface DiscordSettings {
+  enabled: boolean;
+  configured: boolean;
+  events: DiscordEvent[];
+}
+
+export interface DiscordSettingsInput {
+  enabled: boolean;
+  webhook_url?: string;
+  events: DiscordEvent[];
+}
+
 export interface DNSRecord {
   server_id: string;
   record_id: string;

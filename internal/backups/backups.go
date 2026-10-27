@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mcm-panel/mcm/internal/notifications"
 )
 
 // Status values for backup records.
@@ -107,7 +108,11 @@ type Store struct {
 	mu          sync.RWMutex
 	progress    map[string]*BackupProgress
 	subscribers map[string][]chan BackupProgress
+	notifier    notifications.Notifier
 }
+
+// SetNotifier must be called before backup operations start.
+func (s *Store) SetNotifier(n notifications.Notifier) { s.notifier = n }
 
 // S3Config configures the remote object store.
 type S3Config struct {
@@ -187,9 +192,25 @@ func (s *Store) SetProgress(serverID string, p BackupProgress) {
 	s.mu.Lock()
 	p.ServerID = serverID
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	previous := s.progress[serverID]
 	s.progress[serverID] = &p
 	subs := append([]chan BackupProgress(nil), s.subscribers[serverID]...)
 	s.mu.Unlock()
+	if s.notifier != nil && p.Operation == "backup" && (p.Stage == "completed" || p.Stage == "failed") &&
+		(previous == nil || previous.ID != p.ID || previous.Stage != p.Stage) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		var name string
+		_ = s.db.QueryRowContext(ctx, `SELECT name FROM servers WHERE id=?`, serverID).Scan(&name)
+		cancel()
+		if name == "" {
+			name = serverID
+		}
+		kind := notifications.BackupCompleted
+		if p.Stage == "failed" {
+			kind = notifications.BackupFailed
+		}
+		s.notifier.Notify(notifications.Event{Kind: kind, ServerID: serverID, ServerName: name, Message: p.Message})
+	}
 
 	for _, ch := range subs {
 		select {

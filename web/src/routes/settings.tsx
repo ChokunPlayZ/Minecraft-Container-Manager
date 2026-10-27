@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { Globe, KeyRound, Network, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Bell, Globe, KeyRound, Network, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { PasskeyMeta } from '../api/types';
 import { AppShell } from '../components/app-shell';
@@ -13,14 +13,15 @@ import { Label } from '../components/ui/label';
 import { useModal } from '../components/ui/modal';
 import { CloudflareDNSSettingsCard } from '../components/cloudflare-dns-settings';
 import { PortPoolSettingsCard } from '../components/port-pool-settings';
+import { DiscordNotificationSettings } from '../components/discord-notification-settings';
 
 interface SettingsSearch {
-  tab?: 'account' | 'dns' | 'ports';
+  tab?: 'account' | 'dns' | 'ports' | 'notifications';
 }
 
 export const Route = createFileRoute('/settings')({
   validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
-    tab: search.tab === 'dns' ? 'dns' : search.tab === 'ports' ? 'ports' : 'account',
+    tab: search.tab === 'dns' ? 'dns' : search.tab === 'ports' ? 'ports' : search.tab === 'notifications' ? 'notifications' : 'account',
   }),
   component: SettingsRoute,
 });
@@ -31,7 +32,7 @@ function SettingsRoute() {
   const navigate = Route.useNavigate();
   const activeTab = search.tab ?? 'account';
 
-  const setTab = (tab: 'account' | 'dns' | 'ports') => {
+  const setTab = (tab: NonNullable<SettingsSearch['tab']>) => {
     void navigate({
       search: (prev) => ({ ...prev, tab }),
     });
@@ -43,7 +44,7 @@ function SettingsRoute() {
         <div className="page-heading">
           <div><h1 className="page-title">Settings</h1>
           <p className="page-description">
-            Manage account security, DNS, and port allocation.
+            Manage account security, notifications, DNS, and port allocation.
           </p></div>
         </div>
 
@@ -97,6 +98,18 @@ function SettingsRoute() {
             <Network className="h-4 w-4" />
             Port Pool
           </button>
+          <button
+            type="button"
+            onClick={() => setTab('notifications')}
+            role="tab"
+            aria-selected={activeTab === 'notifications'}
+            aria-controls="settings-panel"
+            id="settings-tab-notifications"
+            className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === 'notifications' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          >
+            <Bell className="h-4 w-4" />
+            Notifications
+          </button>
         </div>
 
         <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${activeTab}`}>
@@ -110,6 +123,8 @@ function SettingsRoute() {
           <div className="max-w-3xl">
             <CloudflareDNSSettingsCard />
           </div>
+        ) : activeTab === 'notifications' ? (
+          <div className="max-w-3xl"><DiscordNotificationSettings /></div>
         ) : (
           <div className="max-w-3xl">
             <PortPoolSettingsCard />

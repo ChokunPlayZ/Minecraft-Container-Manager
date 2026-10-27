@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/mcm-panel/mcm/internal/notifications"
 )
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +21,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal", "could not read settings")
 			return
 		}
-		settings[k] = v
+		if k != notifications.SettingsKey {
+			settings[k] = v
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
 }
@@ -30,6 +34,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if _, ok := body.Settings[notifications.SettingsKey]; ok {
+		writeError(w, http.StatusBadRequest, "invalid_request", "use the Discord notification settings endpoint")
 		return
 	}
 	tx, err := s.db.DB.BeginTx(r.Context(), nil)

@@ -1,4 +1,6 @@
 import type {
+  DiscordSettings,
+  DiscordSettingsInput,
   ScheduledTask,
   ScheduleInput,
   ConsoleLine,
@@ -162,6 +164,10 @@ let mockDNSRecords: DNSRecord[] = [
 ];
 
 let mockSchedules: ScheduledTask[] = [];
+let mockDiscordSettings: DiscordSettings = {
+  enabled: false, configured: false,
+  events: ['server_started', 'server_stopped', 'server_crashed', 'server_error', 'backup_completed', 'backup_failed'],
+};
 const mockSparkReports: Record<string, SparkReport> = {};
 
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
@@ -221,6 +227,18 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     const task: ScheduledTask = { id: scheduleId ?? crypto.randomUUID(), server_id: serverId, last_run_at: '', last_status: '', last_error: '', next_run_at: '', created_at: now, ...previous, ...body, updated_at: now };
     mockSchedules = [...mockSchedules.filter((item) => item.id !== task.id), task];
     return task as T;
+  }
+
+  if (path === '/api/notifications/discord/test') {
+    return { ok: true, message: 'Preview only: no message was sent to Discord.' } as T;
+  }
+  if (path === '/api/notifications/discord') {
+    if (init.method === 'PUT') {
+      const input = JSON.parse(String(init.body ?? '{}')) as DiscordSettingsInput;
+      mockDiscordSettings = { enabled: input.enabled, events: input.events,
+        configured: input.webhook_url === undefined ? mockDiscordSettings.configured : !!input.webhook_url.trim() };
+    }
+    return mockDiscordSettings as T;
   }
 
   if (path === '/api/settings') {
@@ -838,6 +856,16 @@ export const api = {
     if (protocol) params.set('protocol', protocol);
     return request<PortCheckResponse>(`/api/ports/check?${params.toString()}`);
   },
+
+  getDiscordSettings: () => request<DiscordSettings>('/api/notifications/discord'),
+
+  saveDiscordSettings: (settings: DiscordSettingsInput) =>
+    request<DiscordSettings>('/api/notifications/discord', { method: 'PUT', body: JSON.stringify(settings) }),
+
+  testDiscordWebhook: (webhook_url?: string) =>
+    request<{ ok: boolean; message: string }>('/api/notifications/discord/test', {
+      method: 'POST', body: JSON.stringify(webhook_url === undefined ? {} : { webhook_url }),
+    }),
 
   getSettings: () => request<{ settings: Record<string, string> }>('/api/settings'),
 

@@ -168,6 +168,24 @@ a container.
 - Edit, pause/resume, and delete tasks; inspect the next run, last result, and error details. Console commands require a running server. Restart follows the manual restart behavior and also starts a stopped server.
 - Schedules persist in SQLite and run while the panel is online, within the five-second polling cadence. Missed runs are skipped after panel downtime. A task cannot overlap its own previous execution within the panel process, and pausing or deleting a task leaves an already running execution to finish. Failed runs are recorded and wait for the next scheduled occurrence.
 
+### Discord notifications
+
+Open **Settings → Notifications** to connect a Discord channel:
+
+1. In Discord, open the channel's **Settings → Integrations → Webhooks**, create a webhook, and copy its URL.
+2. Paste the URL into MCM and use **Send test message** to check delivery. You can test before saving or enabling notifications.
+3. Enable notifications, choose the events to send, and save.
+
+Event switches apply to all servers: server starts, stops, crashes, server operation errors, backup completion, and backup failure. Manual actions, scheduled server actions, and automatic backups use the same notifications. A restart sends a stop followed by a start when those events are selected. Start notifications mean the container has started; Minecraft may still be loading.
+
+MCM checks container status every five seconds while the panel process is running, including when no browser is open. An unexpected container exit sends one crash alert with its exit code; deliberate stops and force stops use the stop event. Failed runtime inspections do not count as crashes. Events during panel downtime and exits between polling checks cannot be replayed.
+
+Notifications are disabled by default. Settings persist in the panel database and take effect without a restart. The webhook URL contains a secret: it is stored in the database, hidden from settings responses, and omitted from delivery errors. Leave its field blank to keep the saved URL, enter a replacement, or choose **Remove saved webhook** and save to disconnect. Treat database backups as containing this credential.
+
+Delivery runs through a bounded background queue with HTTP timeouts and bounded retries for Discord rate limits. Discord delivery failures are logged and do not fail server or backup operations. The queue is held in memory, so pending events do not survive a panel restart and may be dropped if the queue fills. Messages disable mentions. Standard HTTPS Discord webhook URLs and optional `thread_id` queries are supported; arbitrary hosts and redirects are rejected. See the [Discord webhook API](https://docs.discord.com/developers/resources/webhook) for channel and thread requirements.
+
+The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /api/notifications/discord/test`. Save `enabled`, an array of `events` (`server_started`, `server_stopped`, `server_crashed`, `server_error`, `backup_completed`, `backup_failed`), and optionally `webhook_url`. Omitting the URL preserves it; an empty URL clears it when disabled. Reads return `enabled`, `configured`, and `events`. The test endpoint accepts `{}` for the saved webhook or `{ "webhook_url": "…" }` for an unsaved URL. Mutating requests require the existing session and CSRF protection.
+
 ### 👥 Player & Permissions Management
 - **Live Player Roster**: Real-time list of online players with 3D player head avatars (powered by Minotar).
 - **Player Moderation**: Quick actions to Kick, Ban, Pardon, OP, De-OP, or Whitelist players.

@@ -19,6 +19,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/jars"
+	"github.com/mcm-panel/mcm/internal/notifications"
 	"github.com/mcm-panel/mcm/internal/proxy"
 	"github.com/mcm-panel/mcm/internal/schedules"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -27,38 +28,40 @@ import (
 
 // Server wires the API handlers and middleware together.
 type Server struct {
-	cfg        *config.Config
-	db         *db.Store
-	servers    *servers.Store
-	backups    *backups.Store
-	schedules  *schedules.Store
-	users      *auth.Users
-	sessions   *auth.Manager
-	passkeys   *auth.Passkeys
-	webAuthn   *webauthn.WebAuthn
-	ceremonies *ceremonyStore
-	jars       *jars.Resolver
-	dns        *dns.Service
-	proxy      *proxy.Service
-	logger     *log.Logger
-	mux        *http.ServeMux
-	loginLimit *loginLimiter
+	cfg           *config.Config
+	db            *db.Store
+	servers       *servers.Store
+	backups       *backups.Store
+	schedules     *schedules.Store
+	users         *auth.Users
+	sessions      *auth.Manager
+	passkeys      *auth.Passkeys
+	webAuthn      *webauthn.WebAuthn
+	ceremonies    *ceremonyStore
+	jars          *jars.Resolver
+	dns           *dns.Service
+	proxy         *proxy.Service
+	logger        *log.Logger
+	notifications *notifications.Service
+	mux           *http.ServeMux
+	loginLimit    *loginLimiter
 }
 
 // Config holds the dependencies required to build the API server.
 type Options struct {
-	Cfg       *config.Config
-	DB        *db.Store
-	Servers   *servers.Store
-	Backups   *backups.Store
-	Schedules *schedules.Store
-	Users     *auth.Users
-	Sessions  *auth.Manager
-	Passkeys  *auth.Passkeys
-	WebAuthn  *webauthn.WebAuthn
-	Jars      *jars.Resolver
-	DNS       *dns.Service
-	Logger    *log.Logger
+	Cfg           *config.Config
+	DB            *db.Store
+	Servers       *servers.Store
+	Backups       *backups.Store
+	Schedules     *schedules.Store
+	Users         *auth.Users
+	Sessions      *auth.Manager
+	Passkeys      *auth.Passkeys
+	WebAuthn      *webauthn.WebAuthn
+	Jars          *jars.Resolver
+	DNS           *dns.Service
+	Logger        *log.Logger
+	Notifications *notifications.Service
 }
 
 type ctxKey string
@@ -75,33 +78,40 @@ func New(opts Options) http.Handler {
 	if opts.Schedules == nil && opts.DB != nil {
 		opts.Schedules = schedules.NewStore(opts.DB.DB)
 	}
+	if opts.Notifications == nil && opts.DB != nil {
+		opts.Notifications = notifications.New(opts.DB.DB, opts.Logger)
+	}
 	px := proxy.NewService()
 	if opts.Servers != nil {
 		opts.Servers.SetProxy(px)
 	}
 	s := &Server{
-		cfg:        opts.Cfg,
-		db:         opts.DB,
-		servers:    opts.Servers,
-		backups:    opts.Backups,
-		schedules:  opts.Schedules,
-		users:      opts.Users,
-		sessions:   opts.Sessions,
-		passkeys:   opts.Passkeys,
-		webAuthn:   opts.WebAuthn,
-		ceremonies: newCeremonyStore(),
-		jars:       opts.Jars,
-		dns:        opts.DNS,
-		proxy:      px,
-		logger:     opts.Logger,
-		mux:        http.NewServeMux(),
-		loginLimit: newLoginLimiter(loginDefaults(opts.Cfg)),
+		cfg:           opts.Cfg,
+		db:            opts.DB,
+		servers:       opts.Servers,
+		backups:       opts.Backups,
+		schedules:     opts.Schedules,
+		users:         opts.Users,
+		sessions:      opts.Sessions,
+		passkeys:      opts.Passkeys,
+		webAuthn:      opts.WebAuthn,
+		ceremonies:    newCeremonyStore(),
+		jars:          opts.Jars,
+		dns:           opts.DNS,
+		proxy:         px,
+		logger:        opts.Logger,
+		notifications: opts.Notifications,
+		mux:           http.NewServeMux(),
+		loginLimit:    newLoginLimiter(loginDefaults(opts.Cfg)),
 	}
 	s.routes()
 	return s.withMiddleware(s.mux)
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /api/notifications/discord", s.requireAuth(s.wrapJSON(s.handleGetDiscord)))
+	s.mux.HandleFunc("PUT /api/notifications/discord", s.requireAuth(s.wrapJSON(s.handlePutDiscord)))
+	s.mux.HandleFunc("POST /api/notifications/discord/test", s.requireAuth(s.wrapJSON(s.handleTestDiscord)))
 	// Health and readiness (unauthenticated).
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)

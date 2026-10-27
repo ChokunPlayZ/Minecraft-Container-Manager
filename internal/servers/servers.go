@@ -23,6 +23,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
+	"github.com/mcm-panel/mcm/internal/notifications"
 	"github.com/mcm-panel/mcm/internal/ports"
 	"github.com/mcm-panel/mcm/internal/proxy"
 )
@@ -334,12 +335,14 @@ type Store struct {
 	// the process path and the host path are the same).
 	dataDirHost string
 	// dns optionally publishes/removes SRV records as servers start and stop.
-	dns dns.Publisher
+	dns      dns.Publisher
+	notifier notifications.Notifier
 
-	serverLocksMu sync.Mutex
-	serverLocks   map[string]*sync.Mutex
-	fileEditMu    sync.Mutex
-	worldLocks    sync.Map
+	serverLocksMu  sync.Mutex
+	lifecycleLocks sync.Map
+	serverLocks    map[string]*sync.Mutex
+	fileEditMu     sync.Mutex
+	worldLocks     sync.Map
 
 	proxyMu         sync.Mutex
 	proxy           *proxy.Service
@@ -871,6 +874,9 @@ func (s *Store) pendingInitialState(id string, srv Server) string {
 
 // Start ensures a container exists then starts it.
 func (s *Store) Start(ctx context.Context, id string) (Server, error) {
+	mu := s.lifecycleLock(id)
+	mu.Lock()
+	defer mu.Unlock()
 	unlockWorld := s.lockWorld(id, false)
 	defer unlockWorld()
 	// Use an operation context that survives client disconnection so that in-flight
@@ -881,6 +887,11 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	srv, err := s.Get(opCtx, id)
 	if err != nil {
 		return Server{}, err
+	}
+	if srv.State == StateRunning && srv.ContainerID != "" && !isDockerNil(s.docker) {
+		if insp, err := s.docker.Inspect(opCtx, srv.ContainerID); err == nil && insp.Status == "running" {
+			return srv, nil
+		}
 	}
 	srv, err = s.ensureContainer(opCtx, srv)
 	if err != nil {
@@ -955,12 +966,20 @@ func stopCommandFor(serverType string) string {
 
 // Stop stops a running container if one exists.
 func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
+	mu := s.lifecycleLock(id)
+	mu.Lock()
+	defer mu.Unlock()
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Server{}, err
 	}
 	if srv.State == StateStopped && srv.ContainerID == "" {
 		return srv, nil
+	}
+	if srv.State == StateStopped && !isDockerNil(s.docker) {
+		if insp, err := s.docker.Inspect(ctx, srv.ContainerID); err == nil && (insp.Status == "stopped" || insp.Status == "exited" || insp.Status == "created") {
+			return srv, nil
+		}
 	}
 	if err := s.setState(ctx, id, StateStopping); err != nil {
 		return Server{}, err
@@ -1033,6 +1052,11 @@ func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 // shutdown. It is the hard-stop counterpart to Stop and is useful when a
 // server is hung and will not stop cleanly.
 func (s *Store) Kill(ctx context.Context, id string) (Server, error) {
+	mu := s.lifecycleLock(id)
+	// A force stop must remain available while Start or graceful Stop is busy.
+	if mu.TryLock() {
+		defer mu.Unlock()
+	}
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Server{}, err
@@ -1123,18 +1147,32 @@ func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
 // Status returns the current server state, reconciling from docker when a
 // container exists.
 func (s *Store) Status(ctx context.Context, id string) (Server, error) {
+	mu := s.lifecycleLock(id)
+	if !mu.TryLock() {
+		return s.Get(ctx, id)
+	}
+	defer mu.Unlock()
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Server{}, err
 	}
-	if srv.ContainerID == "" {
+	if srv.ContainerID == "" || isDockerNil(s.docker) {
 		return srv, nil
 	}
 	insp, err := s.docker.Inspect(ctx, srv.ContainerID)
 	if err != nil {
 		return srv, nil
 	}
+	// Console shutdown commands leave the container running while it saves.
+	// Keep their stop intent until the container actually exits.
+	if srv.State == StateStopping && (insp.Status == "running" || insp.Status == "restarting" || insp.Status == "paused") {
+		return srv, nil
+	}
 	mapped := mapDockerState(insp.Status, insp.ExitCode)
+	// A container may still be created while Start is provisioning it.
+	if insp.Status == "created" && (srv.State == StateStarting || srv.State == StateInstalling || srv.State == StateBuilding) {
+		return srv, nil
+	}
 	if mapped == StateRunning {
 		stateFile := filepath.Join(s.dataPath(id), ".mcm_state")
 		if content, err := os.ReadFile(stateFile); err == nil {
@@ -1145,19 +1183,32 @@ func (s *Store) Status(ctx context.Context, id string) (Server, error) {
 		}
 	}
 	if mapped != srv.State {
+		var startedAt *string
 		if mapped == StateRunning {
 			started := insp.StartedAt
 			if started == "" {
 				started = time.Now().UTC().Format(time.RFC3339)
 			}
-			_ = s.setStateWithStartedAt(ctx, id, mapped, &started)
+			startedAt = &started
+		}
+		kind, message := "", ""
+		if (insp.Status == "exited" || insp.Status == "dead" || insp.Status == "stopped") &&
+			(srv.State == StateRunning || srv.State == StateStarting || srv.State == StateInstalling || srv.State == StateBuilding) {
+			kind = notifications.ServerCrashed
+			message = fmt.Sprintf("The container exited unexpectedly (exit code %d). Check the server console and crash reports.", insp.ExitCode)
+		}
+		changed, err := s.changeState(ctx, id, mapped, startedAt, &srv.State, kind, message)
+		if err != nil {
+			return srv, err
+		}
+		if !changed {
+			return s.Get(ctx, id)
+		}
+		if mapped == StateRunning {
 			if s.dns != nil && srv.HostPort > 0 {
 				_ = s.dns.Upsert(ctx, id, "", srv.HostPort)
 			}
-		} else if mapped == StateInstalling || mapped == StateBuilding {
-			_ = s.setState(ctx, id, mapped)
 		} else {
-			_ = s.setState(ctx, id, mapped)
 			if s.dns != nil && (mapped == StateStopped || mapped == StateError) {
 				_ = s.dns.Remove(ctx, id)
 			}
@@ -1553,22 +1604,13 @@ func (s *Store) dockerDataPath(id string) string {
 func (s *Store) setState(ctx context.Context, id, state string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if state != StateRunning {
-		_, err := s.db.ExecContext(ctx,
-			`UPDATE servers SET state=?, started_at=NULL, updated_at=? WHERE id=?`, state, now, id)
-		return err
+		return s.setStateWithStartedAt(ctx, id, state, nil)
 	}
 	return s.setStateWithStartedAt(ctx, id, state, &now)
 }
 
 func (s *Store) setStateWithStartedAt(ctx context.Context, id, state string, startedAt *string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	if startedAt == nil {
-		_, err := s.db.ExecContext(ctx,
-			`UPDATE servers SET state=?, started_at=NULL, updated_at=? WHERE id=?`, state, now, id)
-		return err
-	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET state=?, started_at=?, updated_at=? WHERE id=?`, state, *startedAt, now, id)
+	_, err := s.changeState(ctx, id, state, startedAt, nil, "", "")
 	return err
 }
 
