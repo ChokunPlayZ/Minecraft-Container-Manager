@@ -7,6 +7,7 @@ import type {
   Me,
   Server,
   ServerStats,
+  HostCapacity,
   ServerStatus,
   ServerType,
   JavaRelease,
@@ -161,6 +162,10 @@ let mockSchedules: ScheduledTask[] = [];
 
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
+
+  if (path === '/api/system/capacity') {
+    return { runtime: 'docker', cpu_cores: 8, memory_total_bytes: 32 * 1024 ** 3 } as T;
+  }
 
   const schedulePath = path.match(/^\/api\/servers\/([^/]+)\/schedules(?:\/([^/]+))?$/);
   if (schedulePath) {
@@ -681,6 +686,8 @@ export const api = {
 
   listServers: () =>
     request<{ servers: Server[] }>('/api/servers').then((res) => res.servers ?? []),
+
+  hostCapacity: () => request<HostCapacity>('/api/system/capacity'),
 
   createServer: (input: CreateServerInput) =>
     request<Server>('/api/servers', { method: 'POST', body: JSON.stringify(input) }),

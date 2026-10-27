@@ -36,6 +36,9 @@ func (f *fakeRuntime) Ping(context.Context) error { return nil }
 func (f *fakeRuntime) RuntimeStatus(context.Context) docker.RuntimeStatus {
 	return docker.RuntimeStatus{Reachable: true}
 }
+func (f *fakeRuntime) HostCapacity(context.Context) (docker.HostCapacity, error) {
+	return docker.HostCapacity{Runtime: "docker", CPUCores: 4, MemoryTotalBytes: 8 << 30}, nil
+}
 func (f *fakeRuntime) Remove(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

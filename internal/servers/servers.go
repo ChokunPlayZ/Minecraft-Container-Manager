@@ -32,6 +32,7 @@ import (
 type dockerRuntime interface {
 	Ping(ctx context.Context) error
 	RuntimeStatus(ctx context.Context) docker.RuntimeStatus
+	HostCapacity(ctx context.Context) (docker.HostCapacity, error)
 	Remove(ctx context.Context, containerID string) error
 	Start(ctx context.Context, containerID string) error
 	Stop(ctx context.Context, containerID string, timeout time.Duration) error
@@ -445,6 +446,14 @@ func (s *Store) DockerStatus(ctx context.Context) docker.RuntimeStatus {
 		return docker.RuntimeStatus{}
 	}
 	return s.docker.RuntimeStatus(ctx)
+}
+
+// HostCapacity returns CPU and memory totals from the selected container host.
+func (s *Store) HostCapacity(ctx context.Context) (docker.HostCapacity, error) {
+	if isDockerNil(s.docker) {
+		return docker.HostCapacity{}, errors.New("container runtime is unavailable")
+	}
+	return s.docker.HostCapacity(ctx)
 }
 
 // Pool exposes the underlying port pool for the available-ports endpoint.

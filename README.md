@@ -121,6 +121,7 @@ a container.
 - **Mod Management**: Enable/disable mods with `.disabled` toggling, view installed metadata, and delete mods.
 
 ### 📊 Real-Time Metrics & Container Monitoring
+- **Dashboard Host Capacity**: CPU cores and total memory reported by the selected Docker or Podman daemon, compared with configured limits across all servers. Includes uncapped CPU counts, memory overhead, overcapacity warnings, automatic refresh, and retry when the host is unavailable. These are configured limits, not live usage or reserved resources.
 - **Live Container Resource Metrics**: Real-time stats polled directly from the Docker daemon:
   - **CPU Utilization %**: Normalized across available host cores.
   - **Memory Usage & Limits**: Real-time memory consumption, limits, and usage percentage.
@@ -470,6 +471,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `GET` | `/api/jars/:kind/versions` | Fetch upstream Minecraft versions for a given server type. |
 | `GET` | `/api/jars/:kind/versions/:v/builds` | Fetch builds for a specific version. |
 | `GET` | `/api/system/java-versions` | List available Java runtime versions supported by the system. |
+| `GET` | `/api/system/capacity` | Get the container host's CPU cores, total memory in bytes, and runtime name. Requires authentication; returns `503` when the runtime is unavailable. |
 
 ### Modpack Management
 | Method | Path | Description |

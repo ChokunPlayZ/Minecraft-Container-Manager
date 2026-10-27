@@ -223,6 +223,7 @@ func (s *Server) routes() {
 
 	// Jars and Java runtime.
 	s.mux.HandleFunc("GET /api/system/java-versions", s.requireAuth(s.wrapJSON(s.handleSystemJavaVersions)))
+	s.mux.HandleFunc("GET /api/system/capacity", s.requireAuth(s.wrapJSON(s.handleHostCapacity)))
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions", s.requireAuth(s.wrapJSON(s.handleJarVersions)))
 	s.mux.HandleFunc("GET /api/jars/{kind}/versions/{v}/builds", s.requireAuth(s.wrapJSON(s.handleJarBuilds)))
 

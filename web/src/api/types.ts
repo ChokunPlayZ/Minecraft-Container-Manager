@@ -95,6 +95,12 @@ export interface ServerStatus {
   rebuild_reasons?: string[];
 }
 
+export interface HostCapacity {
+  runtime: 'docker' | 'podman';
+  cpu_cores: number;
+  memory_total_bytes: number;
+}
+
 export interface ServerStats {
   server_id: string;
   online: boolean;

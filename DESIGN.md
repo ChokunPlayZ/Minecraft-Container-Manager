@@ -457,6 +457,8 @@ Menus use a popover surface, one-pixel border, large corners, (6px) padding, a m
 
 Fleet search matches name, type, version, and host port immediately. State filters expose their selected state, a result count announces changes, and the empty result provides Reset filters. Loading uses skeletons; errors state the failure and offer the implemented recovery action. Mock previews carry the Demo data label.
 
+The dashboard places a Host capacity panel between the fleet summary and server collection. CPU and memory totals come from the container host and are compared with configured limits in two divided columns, stacked below (640px). Labeled meters expose the configured amount and total; overcapacity also has explicit text. Uncapped CPUs, missing totals, loading, runtime failure, and manual refresh have distinct states. This panel reuses the existing card, border, primary, destructive, muted, and typography tokens in both themes.
+
 Resource cells share dividers and tabular values. Console output uses the console token pair, (16px) padding, a (384px) normal height, a (320px) minimum height, and a (420px) height from the small breakpoint. Progress bars expose progress semantics, use labeled percentages when determinate, and animate value changes over (300ms, ease-out); indeterminate states use a pulse. Keep real state and progress supplied by the existing implementation.
 
 ## Do's and Don'ts
