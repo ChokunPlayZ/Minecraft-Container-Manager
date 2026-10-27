@@ -275,6 +275,7 @@ describe('VersionUpdateHelper', () => {
     render(<VersionUpdateHelper server={mockServer} installedMods={mockMods} />);
 
     const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    await waitFor(() => expect(checkBtn).toBeEnabled());
     fireEvent.click(checkBtn);
 
     await waitFor(() => {
@@ -376,6 +377,7 @@ describe('VersionUpdateHelper', () => {
     );
 
     const checkBtn = await screen.findByRole('button', { name: /Check Compatibility Now/i });
+    await waitFor(() => expect(checkBtn).toBeEnabled());
     fireEvent.click(checkBtn);
 
     // Wait for the ready report and upgrade button

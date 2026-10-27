@@ -1,3 +1,4 @@
+import { Select } from './ui/select';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -403,10 +404,10 @@ export function SpigetBrowser({
             </div>
 
             <div className="flex items-center gap-2">
-              <select
+              <Select
                 aria-label="Sort by"
                 value={sort}
-                onChange={(e) => setSort(e.target.value as typeof sort)}
+                onValueChange={(selectedValue) => setSort(selectedValue as typeof sort)}
                 className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs  focus:outline-hidden focus:ring-1 focus:ring-ring"
               >
                 {SPIGET_SORT_OPTIONS.map((opt) => (
@@ -414,7 +415,7 @@ export function SpigetBrowser({
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
         </CardContent>

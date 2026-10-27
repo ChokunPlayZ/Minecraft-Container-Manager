@@ -153,7 +153,7 @@ export function InstallPanel({
                   <Select
                     id="install-version"
                     value={version}
-                    onChange={(e) => setVersion(e.target.value)}
+                    onValueChange={(selectedValue) => setVersion(selectedValue)}
                     disabled={versions.length === 0}
                   >
                     {versions.map((v) => (
@@ -173,7 +173,7 @@ export function InstallPanel({
                     <Select
                       id="install-build"
                       value={build}
-                      onChange={(e) => setBuild(e.target.value)}
+                      onValueChange={(selectedValue) => setBuild(selectedValue)}
                       disabled={builds.length === 0}
                     >
                       {builds.map((b) => (

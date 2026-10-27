@@ -561,12 +561,13 @@ export function VersionUpdateHelper({
                 ) : (
                   <Select
                     id="target-version-select"
+                    aria-label="Target Minecraft version"
                     value={targetVersion}
-                    onChange={(e) => {
-                      if (e.target.value === '__custom__') {
+                    onValueChange={(selectedValue) => {
+                      if (selectedValue === '__custom__') {
                         setIsCustom(true);
                       } else {
-                        setTargetVersion(e.target.value);
+                        setTargetVersion(selectedValue);
                       }
                     }}
                     disabled={loadingVersions || availableVersions.length === 0}

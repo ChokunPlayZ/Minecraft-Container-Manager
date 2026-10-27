@@ -462,7 +462,7 @@ function MinecraftPropertiesEditor({ server }: { server: Server }) {
                               <Select
                                 id={`prop-${schema.key}`}
                                 value={currentValue}
-                                onChange={(e) => handlePropertyChange(schema.key, e.target.value)}
+                                onValueChange={(selectedValue) => handlePropertyChange(schema.key, selectedValue)}
                                 className="h-10 text-sm"
                               >
                                 {schema.options?.map((opt) => (

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError } from '../src/api/client';
@@ -39,23 +39,27 @@ describe('LogBrowser', () => {
     const read = vi.spyOn(api, 'readServerLog').mockImplementation(async (_id, path, entry) => content(path, `Contents of ${entry ?? path}`));
     render(<LogBrowser serverId="server-1" />);
     expect(await screen.findByText('Contents of logs/2026-10-25-1.log.gz')).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText('Log file'), 'logs/history.tar.gz');
+    await user.click(screen.getByLabelText('Log file'));
+    await user.click(screen.getByRole('option', { name: 'logs/history.tar.gz' }));
     expect(await screen.findByText('Contents of old/first.log')).toBeInTheDocument();
     expect(list).toHaveBeenCalledWith('server-1', 'logs/history.tar.gz');
-    await user.selectOptions(screen.getByLabelText('Log inside archive'), 'old/second.log.gz');
+    await user.click(screen.getByLabelText('Log inside archive'));
+    await user.click(screen.getByRole('option', { name: 'old/second.log.gz' }));
     expect(await screen.findByText('Contents of old/second.log.gz')).toBeInTheDocument();
     expect(read).toHaveBeenLastCalledWith('server-1', 'logs/history.tar.gz', 'old/second.log.gz');
   });
 
   it('ignores responses from a previously selected log', async () => {
+    const user = userEvent.setup();
     vi.spyOn(api, 'listServerLogs').mockResolvedValue({ files: [logFile('logs/latest.log'), logFile('logs/old.log.gz')] });
     let resolveOld: (value: ServerLogContent) => void = () => {};
     vi.spyOn(api, 'readServerLog').mockImplementation(async (_id, path) => path === 'logs/latest.log'
       ? new Promise<ServerLogContent>((resolve) => { resolveOld = resolve; })
       : content(path, 'Correct selected log'));
     render(<LogBrowser serverId="server-1" />);
-    await waitFor(() => expect(screen.getByLabelText('Log file')).toHaveValue('logs/latest.log'));
-    fireEvent.change(screen.getByLabelText('Log file'), { target: { value: 'logs/old.log.gz' } });
+    await waitFor(() => expect(screen.getByLabelText('Log file')).toHaveTextContent('logs/latest.log'));
+    await user.click(screen.getByLabelText('Log file'));
+    await user.click(screen.getByRole('option', { name: 'logs/old.log.gz' }));
     expect(await screen.findByText('Correct selected log')).toBeInTheDocument();
     await act(async () => resolveOld(content('logs/latest.log', 'Stale log content')));
     expect(screen.queryByText('Stale log content')).not.toBeInTheDocument();

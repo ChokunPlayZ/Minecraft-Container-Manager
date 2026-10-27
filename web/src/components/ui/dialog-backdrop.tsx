@@ -44,7 +44,7 @@ export function DialogBackdrop({ children, className, onDismiss, ...props }: Dia
 
     const handleKey = (event: KeyboardEvent) => {
       if (layers.at(-1) !== backdrop) return;
-      if (event.target instanceof Element && event.target.closest('[role="menu"]')) return;
+      if (event.target instanceof Element && event.target.closest('[role="menu"], [role="listbox"]')) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -66,7 +66,7 @@ export function DialogBackdrop({ children, className, onDismiss, ...props }: Dia
       }
     };
     const keepFocus = (event: FocusEvent) => {
-      if (event.target instanceof Element && event.target.closest('[role="menu"]')) return;
+      if (event.target instanceof Element && event.target.closest('[role="menu"], [role="listbox"]')) return;
       if (layers.at(-1) === backdrop && !backdrop.contains(event.target as Node)) focusInside();
     };
     document.addEventListener('keydown', handleKey, true);

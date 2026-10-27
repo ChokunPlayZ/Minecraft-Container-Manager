@@ -180,6 +180,26 @@ components:
     padding: "4px 12px"
     height: "40px"
     width: "100%"
+  select:
+    backgroundColor: "{colors.card}"
+    textColor: "{colors.foreground}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: "4px 12px"
+    height: "40px"
+    width: "100%"
+  select-menu:
+    backgroundColor: "{colors.popover}"
+    textColor: "{colors.popover-foreground}"
+    typography: "{typography.body}"
+    rounded: "{rounded.lg}"
+    padding: "6px"
+  select-item-highlighted:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.accent-foreground}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: "8px 36px 8px 12px"
   badge:
     backgroundColor: "color-mix(in oklab, #236d61 10%, transparent)"
     textColor: "{colors.primary}"
@@ -246,6 +266,26 @@ components:
     padding: "4px 12px"
     height: "40px"
     width: "100%"
+  select-dark:
+    backgroundColor: "{colors.dark-card}"
+    textColor: "{colors.dark-foreground}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: "4px 12px"
+    height: "40px"
+    width: "100%"
+  select-menu-dark:
+    backgroundColor: "{colors.dark-popover}"
+    textColor: "{colors.dark-popover-foreground}"
+    typography: "{typography.body}"
+    rounded: "{rounded.lg}"
+    padding: "6px"
+  select-item-highlighted-dark:
+    backgroundColor: "{colors.dark-accent}"
+    textColor: "{colors.dark-accent-foreground}"
+    typography: "{typography.body}"
+    rounded: "{rounded.md}"
+    padding: "8px 36px 8px 12px"
   badge-dark:
     backgroundColor: "color-mix(in oklab, #93cbb9 10%, transparent)"
     textColor: "{colors.dark-primary}"
@@ -381,7 +421,11 @@ Default buttons are (40px) high with (16px) horizontal padding. Small buttons ar
 
 ### Inputs / Fields
 
-Inputs and native selects are (40px) high, full width, with a card fill, input stroke, medium corners, and (12px) horizontal padding. Textareas begin at (100px) high. Focus changes the border to primary and adds a tinted ring. Disabled fields use muted fill and (60%) opacity. Native select affordances remain functional with a (16px) chevron. Labels are explicitly associated with their fields. Below (768px), non-checkbox/radio inputs, selects, and textareas use (16px) text to keep mobile entry readable.
+Inputs are (40px) high, full width, with a card fill, input stroke, medium corners, and (12px) horizontal padding. Textareas begin at (100px) high. Focus changes the border to primary and adds a tinted ring. Disabled inputs use muted fill and (60%) opacity. Labels are explicitly associated with their fields. Below (768px), non-checkbox/radio inputs and textareas use (16px) text to keep mobile entry readable.
+
+The shared custom Select replaces visible native select fields across the application. Its trigger follows the select token mapping, with an input stroke, a muted (16px) chevron, and single-line selected text that truncates. Hover strengthens the stroke; focus and the open state use the primary border and tinted ring with (150ms) feedback. Disabled triggers use muted fill and (45%) opacity. The listbox follows the select-menu mapping, one-pixel border, and medium menu shadow. Items have a minimum height of (36px), wrapped labels, an accent highlighted state, and a trailing selected checkmark; disabled items remain unavailable. Groups retain labels and long lists expose scroll buttons.
+
+Select supports keyboard navigation and typeahead. It preserves option values as strings, named form fields, required state, and disabled choices; numeric consumers convert values explicitly. An empty option supplies the placeholder. The menu is portaled above dialogs at layer (150), offset (4px), and kept inside a (12px) viewport gutter. Its width is at least the trigger width and at most the viewport minus (24px); height is bounded by (320px) and available space. Escape closes the listbox first and returns focus to its trigger. Existing action menus retain their separate menu pattern.
 
 The switch is (44px by 24px) with a (20px) white thumb. It uses primary when checked and input when unchecked, moves the thumb (20px), exposes its checked state, and supports Space and Enter. Its feedback lasts (200ms).
 

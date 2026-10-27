@@ -199,8 +199,8 @@ player-info-forwarding-mode = "modern"
     expect(screen.getByText(/Quick Select from MCM Panel Servers/i)).toBeInTheDocument();
 
     // Select the panel server from the dropdown
-    const select = screen.getByRole('combobox');
-    await user.selectOptions(select, 'lobby-srv-123');
+    await user.click(screen.getByRole('combobox', { name: 'Quick Select from MCM Panel Servers' }));
+    await user.click(screen.getByRole('option', { name: /Lobby SMP/ }));
 
     // Confirm that address is populated with mcm-<id>:25565
     const addrInput = screen.getByDisplayValue('mcm-lobby-srv-123:25565');

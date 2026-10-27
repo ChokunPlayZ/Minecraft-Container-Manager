@@ -1,3 +1,4 @@
+import { Select } from './ui/select';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -849,20 +850,20 @@ export function CurseForgeBrowser({
             </div>
 
             <div className="flex items-center gap-2">
-              <select
+              <Select
                 aria-label="Filter category"
                 value={classId}
-                onChange={(e) => setClassId(Number(e.target.value))}
+                onValueChange={(selectedValue) => setClassId(Number(selectedValue))}
                 className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs  focus:outline-hidden focus:ring-1 focus:ring-ring"
               >
                 <option value={6}>Mods</option>
                 <option value={5}>Bukkit Plugins</option>
-              </select>
+              </Select>
 
-              <select
+              <Select
                 aria-label="Sort by"
                 value={sortField}
-                onChange={(e) => setSortField(Number(e.target.value))}
+                onValueChange={(selectedValue) => setSortField(Number(selectedValue))}
                 className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs  focus:outline-hidden focus:ring-1 focus:ring-ring"
               >
                 {CF_SORT_OPTIONS.map((opt) => (
@@ -870,7 +871,7 @@ export function CurseForgeBrowser({
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
         </CardContent>

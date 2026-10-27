@@ -743,9 +743,10 @@ export function CreateServerDialog({
                         </div>
 
                         <div className="flex items-center gap-1.5">
-                          <select
+                          <Select
+                            aria-label="Filter modpack loaders"
                             value={loaderFilter}
-                            onChange={(e) => setLoaderFilter(e.target.value)}
+                            onValueChange={(selectedValue) => setLoaderFilter(selectedValue)}
                             className="h-8 rounded-lg border border-border bg-card px-2 text-[11px] font-medium text-foreground focus:outline-hidden"
                           >
                             <option value="all">All Loaders</option>
@@ -753,23 +754,25 @@ export function CreateServerDialog({
                             <option value="forge">Forge</option>
                             <option value="neoforge">NeoForge</option>
                             <option value="quilt">Quilt</option>
-                          </select>
+                          </Select>
 
                           {searchSource === 'modrinth' ? (
-                            <select
+                            <Select
+                              aria-label="Sort modpacks"
                               value={mrSort}
-                              onChange={(e) => setMrSort(e.target.value as typeof mrSort)}
+                              onValueChange={(selectedValue) => setMrSort(selectedValue as typeof mrSort)}
                               className="h-8 rounded-lg border border-border bg-card px-2 text-[11px] font-medium text-foreground focus:outline-hidden"
                             >
                               <option value="downloads">Most Downloaded</option>
                               <option value="relevance">Relevance</option>
                               <option value="updated">Recently Updated</option>
                               <option value="newest">Newest</option>
-                            </select>
+                            </Select>
                           ) : (
-                            <select
+                            <Select
+                              aria-label="Sort modpacks"
                               value={cfSort}
-                              onChange={(e) => setCfSort(Number(e.target.value))}
+                              onValueChange={(selectedValue) => setCfSort(Number(selectedValue))}
                               className="h-8 rounded-lg border border-border bg-card px-2 text-[11px] font-medium text-foreground focus:outline-hidden"
                             >
                               {CF_SORT_OPTIONS.map((opt) => (
@@ -777,7 +780,7 @@ export function CreateServerDialog({
                                   {opt.label}
                                 </option>
                               ))}
-                            </select>
+                            </Select>
                           )}
                         </div>
                       </div>
@@ -955,9 +958,10 @@ export function CreateServerDialog({
                       {selectedPack.availableVersions.length > 1 && (
                         <div className="flex items-center gap-2 pt-1 border-t border-border/60">
                           <span className="text-[11px] text-muted-foreground shrink-0 font-medium">Pack Version:</span>
-                          <select
+                          <Select
+                            aria-label="Modpack version"
                             value={selectedPack.selectedVersion}
-                            onChange={(e) => handleVersionChange(e.target.value)}
+                            onValueChange={(selectedValue) => handleVersionChange(selectedValue)}
                             className="h-7 rounded-lg border border-border bg-card px-2 text-xs font-semibold text-foreground flex-1 focus:outline-hidden"
                           >
                             {selectedPack.availableVersions.map((v) => (
@@ -965,7 +969,7 @@ export function CreateServerDialog({
                                 {v.name} ({v.game_versions[0] || selectedPack.minecraft_version})
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </div>
                       )}
 
@@ -1147,8 +1151,8 @@ export function CreateServerDialog({
                     <Select
                       id="server-type"
                       value={serverType}
-                      onChange={(e) => {
-                        const nextType = e.target.value as ServerType;
+                      onValueChange={(selectedValue) => {
+                        const nextType = selectedValue as ServerType;
                         setServerType(nextType);
                         setVersion('');
                         setBuild('');
@@ -1216,7 +1220,7 @@ export function CreateServerDialog({
                       <Select
                         id="server-java"
                         value={String(javaVersion)}
-                        onChange={(e) => setJavaVersion(parseInt(e.target.value, 10))}
+                        onValueChange={(selectedValue) => setJavaVersion(parseInt(selectedValue, 10))}
                       >
                         {javaReleases.map((jr) => (
                           <option key={jr.version} value={jr.version}>
@@ -1255,8 +1259,8 @@ export function CreateServerDialog({
                           <Select
                             id="server-version"
                             value={version}
-                            onChange={(e) => {
-                              const nextVer = e.target.value;
+                            onValueChange={(selectedValue) => {
+                              const nextVer = selectedValue;
                               setVersion(nextVer);
                               setBuild('');
                               setBuilds([]);
@@ -1282,7 +1286,7 @@ export function CreateServerDialog({
                           <Select
                             id="server-build"
                             value={build}
-                            onChange={(e) => setBuild(e.target.value)}
+                            onValueChange={(selectedValue) => setBuild(selectedValue)}
                             disabled={builds.length === 0}
                           >
                             {builds.map((b, idx) => (

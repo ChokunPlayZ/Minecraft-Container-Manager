@@ -190,7 +190,8 @@ describe('BackupsPanel', () => {
     vi.spyOn(api, 'subscribeBackupEvents').mockReturnValue(() => {});
     render(<BackupsPanel server={mockServer} />);
     await screen.findByText('before-upgrade');
-    await userEvent.selectOptions(screen.getByLabelText('Filter backup storage'), 'local');
+    await userEvent.click(screen.getByLabelText('Filter backup storage'));
+    await userEvent.click(screen.getByRole('option', { name: /^Local disk$/ }));
     expect(screen.queryByText('daily-cloud')).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Search backups'), 'daily');
     expect(screen.getByText('No matching backups')).toBeInTheDocument();
@@ -208,7 +209,8 @@ describe('BackupsPanel', () => {
     render(<BackupsPanel server={mockServer} />);
     await screen.findByText('No backups yet');
     await userEvent.type(screen.getByLabelText('Backup name (optional)'), ' before-update ');
-    await userEvent.selectOptions(screen.getByLabelText('Storage target'), 's3');
+    await userEvent.click(screen.getByLabelText('Storage target'));
+    await userEvent.click(screen.getByRole('option', { name: 'S3 Cloud' }));
     await userEvent.click(screen.getByRole('button', { name: 'Create backup' }));
     expect(await screen.findByText('before-update')).toBeInTheDocument();
     expect(create).toHaveBeenCalledWith(mockServer.id, 'before-update', 's3');

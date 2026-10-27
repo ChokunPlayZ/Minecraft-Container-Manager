@@ -120,8 +120,8 @@ describe('PlayersPanel with Large Player Counts', () => {
     });
 
     // Change sort to Z-A
-    const sortSelect = screen.getByDisplayValue('Name (A-Z)');
-    await user.selectOptions(sortSelect, 'desc');
+    await user.click(screen.getByLabelText('Sort players'));
+    await user.click(screen.getByRole('option', { name: 'Name (Z-A)' }));
 
     // Now Player_010 should appear before Player_001
     const names = screen.getAllByText(/Player_0/i).map((el) => el.textContent);
@@ -174,8 +174,8 @@ describe('PlayersPanel with Large Player Counts', () => {
       expect(screen.getByText(/Showing 1–24 of 60/i)).toBeInTheDocument();
     });
 
-    const pageSizeSelect = screen.getByDisplayValue('24');
-    await user.selectOptions(pageSizeSelect, '9999');
+    await user.click(screen.getByLabelText('Players per page'));
+    await user.click(screen.getByRole('option', { name: /^All$/ }));
 
     expect(screen.getByText(/Showing 1–60 of 60/i)).toBeInTheDocument();
     expect(screen.getByText('Player_060')).toBeInTheDocument();
@@ -221,8 +221,8 @@ describe('PlayersPanel with Large Player Counts', () => {
     });
 
     // Select Operators role filter
-    const roleSelect = screen.getByDisplayValue('All Roles');
-    await user.selectOptions(roleSelect, 'ops');
+    await user.click(screen.getByLabelText('Filter player roles'));
+    await user.click(screen.getByRole('option', { name: 'Operators' }));
 
     expect(screen.getByText('Player_001')).toBeInTheDocument();
     expect(screen.getByText('Player_005')).toBeInTheDocument();

@@ -245,7 +245,7 @@ export function BackupsPanel({ server }: { server: Server }) {
               <Select
                 id="backup-storage"
                 value={storage}
-                onChange={(event) => setStorage(event.target.value as 'local' | 's3')}
+                onValueChange={(selectedValue) => setStorage(selectedValue as 'local' | 's3')}
                 disabled={disabled}
               >
                 <option value="local">Local Disk</option>
@@ -340,7 +340,7 @@ export function BackupsPanel({ server }: { server: Server }) {
 
           {backups.length > 0 && <div className="flex flex-wrap gap-3 border-t pt-5">
             <div className="relative min-w-0 flex-1 basis-48"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input aria-label="Search backups" placeholder="Search backups…" value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" /></div>
-            <Select aria-label="Filter backup storage" className="w-full sm:w-40" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}><option value="all">All storage</option><option value="local">Local disk</option><option value="s3">S3 cloud</option></Select>
+            <Select aria-label="Filter backup storage" className="w-full sm:w-40" value={locationFilter} onValueChange={(selectedValue) => setLocationFilter(selectedValue)}><option value="all">All storage</option><option value="local">Local disk</option><option value="s3">S3 cloud</option></Select>
           </div>}
 
           <div className="space-y-2">

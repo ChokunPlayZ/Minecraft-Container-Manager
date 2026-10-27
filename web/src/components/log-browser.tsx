@@ -135,8 +135,8 @@ export function LogBrowser({ serverId }: { serverId: string }) {
             <div className={`grid min-w-0 gap-4 ${isArchive ? 'sm:grid-cols-2' : ''}`}>
               <div className="min-w-0 space-y-2">
                 <Label htmlFor="server-log-file">Log file</Label>
-                <Select id="server-log-file" value={selectedPath} disabled={loadingFiles || !files.length} onChange={(event) => {
-                  setSelectedPath(event.target.value);
+                <Select id="server-log-file" value={selectedPath} disabled={loadingFiles || !files.length} onValueChange={(selectedValue) => {
+                  setSelectedPath(selectedValue);
                   setSelectedEntry('');
                 }}>
                   {!files.length && <option value="">{loadingFiles ? 'Loading logs…' : 'No logs available'}</option>}
@@ -147,7 +147,7 @@ export function LogBrowser({ serverId }: { serverId: string }) {
               {isArchive && (
                 <div className="min-w-0 space-y-2">
                   <Label htmlFor="server-log-entry">Log inside archive</Label>
-                  <Select id="server-log-entry" value={selectedEntry} disabled={loadingMembers || !members.length} onChange={(event) => setSelectedEntry(event.target.value)}>
+                  <Select id="server-log-entry" value={selectedEntry} disabled={loadingMembers || !members.length} onValueChange={(selectedValue) => setSelectedEntry(selectedValue)}>
                     {!members.length && <option value="">{loadingMembers ? 'Reading archive…' : 'No log files in this archive'}</option>}
                     {members.map((file) => <option key={file.path} value={file.path}>{file.path}</option>)}
                   </Select>

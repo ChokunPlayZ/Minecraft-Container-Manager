@@ -36,7 +36,7 @@ export function useModal() {
   useEffect(() => {
     if (!request) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') finish(null);
+      if (event.key === 'Escape' && !event.defaultPrevented && !(event.target instanceof Element && event.target.closest('[role="menu"], [role="listbox"]'))) finish(null);
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);

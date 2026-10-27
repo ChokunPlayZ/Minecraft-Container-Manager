@@ -32,7 +32,8 @@ describe('dedicated backup manager', () => {
     await screen.findByText('No backups yet');
     expect(list).toHaveBeenCalledWith('creative');
     await userEvent.type(screen.getByLabelText('Backup name (optional)'), 'creative-only');
-    await userEvent.selectOptions(screen.getByLabelText('Server'), 'survival');
+    await userEvent.click(screen.getByLabelText('Server'));
+    await userEvent.click(screen.getByRole('option', { name: 'Survival' }));
     expect(onSelect).toHaveBeenCalledWith('survival');
     view.rerender(<BackupManager serverId="survival" onSelect={onSelect} />);
     await waitFor(() => expect(list).toHaveBeenCalledWith('survival'));

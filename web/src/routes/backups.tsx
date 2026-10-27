@@ -50,7 +50,7 @@ export function BackupManager({ serverId, onSelect }: { serverId?: string; onSel
     {servers === null ? loading && <div className="space-y-5" aria-label="Loading backup manager"><Skeleton className="h-24 w-full" /><Skeleton className="h-64 w-full" /></div> : servers.length === 0 ?
       <div className="empty-state rounded-lg border bg-card"><Archive /><h2 className="section-heading">No servers to back up</h2><p>Create a server to start managing its backups.</p><Button className="mt-5" asChild><Link to="/dashboard">Go to servers<ArrowRight /></Link></Button></div> : <div className="space-y-6">
         <div className="flex flex-wrap items-end gap-4 rounded-lg border bg-card p-5 sm:p-6">
-          <div className="w-full space-y-2 sm:max-w-sm"><Label htmlFor="backup-server">Server</Label><Select id="backup-server" value={selected?.id ?? ''} onChange={(event) => onSelect(event.target.value)}>
+          <div className="w-full space-y-2 sm:max-w-sm"><Label htmlFor="backup-server">Server</Label><Select id="backup-server" value={selected?.id ?? ''} onValueChange={(selectedValue) => onSelect(selectedValue)}>
             {!selected && <option value="" disabled>Select a server</option>}
             {servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}
           </Select></div>

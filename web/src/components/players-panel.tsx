@@ -385,8 +385,9 @@ export function PlayersPanel({ server }: { server: Server }) {
 
                   {/* Role filter */}
                   <Select
+                    aria-label="Filter player roles"
                     value={roleFilter}
-                    onChange={(e) => setRoleFilter(e.target.value as 'all' | 'ops' | 'regular')}
+                    onValueChange={(selectedValue) => setRoleFilter(selectedValue as 'all' | 'ops' | 'regular')}
                     className="h-8 text-xs w-28"
                   >
                     <option value="all">All Roles</option>
@@ -396,8 +397,9 @@ export function PlayersPanel({ server }: { server: Server }) {
 
                   {/* Sort order */}
                   <Select
+                    aria-label="Sort players"
                     value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as 'asc' | 'desc')}
+                    onValueChange={(selectedValue) => setSortBy(selectedValue as 'asc' | 'desc')}
                     className="h-8 text-xs w-28"
                   >
                     <option value="asc">Name (A-Z)</option>
@@ -634,8 +636,9 @@ export function PlayersPanel({ server }: { server: Server }) {
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span>Show</span>
                   <Select
+                    aria-label="Players per page"
                     value={String(pageSize)}
-                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    onValueChange={(selectedValue) => setPageSize(Number(selectedValue))}
                     className="h-7 w-20 text-xs"
                   >
                     <option value="12">12</option>
@@ -813,7 +816,7 @@ export function PlayersPanel({ server }: { server: Server }) {
 
               {activeDef.fields.mode && (
                 <Field label="Gamemode">
-                  <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                  <Select aria-label="Gamemode" value={mode} onValueChange={(selectedValue) => setMode(selectedValue)}>
                     {Object.entries(MODE_LABELS).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}

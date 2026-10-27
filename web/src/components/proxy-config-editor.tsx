@@ -438,8 +438,9 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                           Quick Select from MCM Panel Servers
                         </label>
                         <Select
+                          aria-label="Quick Select from MCM Panel Servers"
                           value={selectedMcmServerId}
-                          onChange={(e) => handleSelectPanelServer(e.target.value)}
+                          onValueChange={(selectedValue) => handleSelectPanelServer(selectedValue)}
                           className="text-xs"
                         >
                           <option value="">-- Choose an existing panel server --</option>
@@ -704,12 +705,13 @@ export function ProxyConfigEditor({ server }: { server: Server }) {
                     <span>Player Info Forwarding Mode</span>
                   </label>
                   <Select
+                    aria-label="Player info forwarding mode"
                     value={config.playerInfoForwardingMode}
-                    onChange={(e) => {
+                    onValueChange={(selectedValue) => {
                       setSaved(false);
                       setConfig((prev) => ({
                         ...prev,
-                        playerInfoForwardingMode: e.target.value as PlayerForwardingMode,
+                        playerInfoForwardingMode: selectedValue as PlayerForwardingMode,
                       }));
                     }}
                     className="text-xs"

@@ -1,3 +1,4 @@
+import { Select } from './ui/select';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -978,10 +979,10 @@ export function ModrinthBrowser({
 
           <div className="flex items-center gap-2">
             {/* Sort Select */}
-            <select
+            <Select
               aria-label="Sort search results"
               value={sort}
-              onChange={(e) => setSort(e.target.value as typeof sort)}
+              onValueChange={(selectedValue) => setSort(selectedValue as typeof sort)}
               className="h-9 rounded-md border border-input bg-background px-3 py-1 text-xs font-medium text-foreground  focus:outline-none focus:ring-1 focus:ring-ring"
             >
               {SORT_OPTIONS.map((opt) => (
@@ -989,7 +990,7 @@ export function ModrinthBrowser({
                   {opt.label}
                 </option>
               ))}
-            </select>
+            </Select>
 
             <Button aria-label="Refresh results"
               variant="outline"

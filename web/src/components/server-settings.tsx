@@ -314,7 +314,7 @@ export function ServerSettings({
                 <Select
                   id="edit-java"
                   value={String(javaVersion)}
-                  onChange={(e) => setJavaVersion(parseInt(e.target.value, 10))}
+                  onValueChange={(selectedValue) => setJavaVersion(parseInt(selectedValue, 10))}
                 >
                   {javaReleases.map((jr) => (
                     <option key={jr.version} value={jr.version}>
@@ -463,7 +463,7 @@ export function ServerSettings({
                           <Select
                             id={`ep-proto-${p.id}`}
                             value={p.protocol}
-                            onChange={(e) => updatePort(p.id, { protocol: e.target.value as 'tcp' | 'udp' })}
+                            onValueChange={(selectedValue) => updatePort(p.id, { protocol: selectedValue as 'tcp' | 'udp' })}
                           >
                             <option value="tcp">TCP</option>
                             <option value="udp">UDP</option>
