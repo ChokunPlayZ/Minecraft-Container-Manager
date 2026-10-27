@@ -623,7 +623,7 @@ export function CurseForgeBrowser({
   if (!apiKey || showKeyConfig) {
     return (
       <Card className="max-w-xl mx-auto border-orange-500/30 ">
-        <CardContent className="p-6 space-y-4">
+        <CardContent className="space-y-4 p-5 sm:p-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 text-orange-600">
               <Flame className="h-5 w-5" />
@@ -641,8 +641,9 @@ export function CurseForgeBrowser({
           </p>
 
           <div className="space-y-2">
-            <label className="text-xs font-medium text-foreground">API Key</label>
+            <label htmlFor="curseforge-api-key" className="text-xs font-medium text-foreground">API Key</label>
             <Input
+              id="curseforge-api-key"
               type="password"
               placeholder="Paste your CurseForge API key (e.g. $2a$10$...)"
               value={tempKey}

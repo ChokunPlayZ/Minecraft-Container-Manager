@@ -168,7 +168,7 @@ function UsersRoute() {
           )}
           {users.map((u) => (
             <Card key={u.id}>
-              <CardContent className="pt-6">
+              <CardContent className="pt-5 sm:pt-6">
                 {editingId === u.id ? (
                   <div className="space-y-3">
                     <div className="grid gap-3 sm:grid-cols-2">

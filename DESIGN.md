@@ -391,11 +391,13 @@ Badges use small text, fully rounded ends, and (4px by 10px) padding. The defaul
 
 ### Cards / Containers
 
-Cards use a one-pixel border, card fill, card foreground, large corners, and no ambient shadow. Headers use (20px) padding, growing to (24px) at the small breakpoint, with (8px) between title and description. Content and footers align to those edges; footers wrap actions. Inset settings sections use muted or lightly tinted backgrounds rather than a separate visual system.
+Cards use a one-pixel border, card fill, card foreground, large corners, and no ambient shadow. Headers use (20px) padding, growing to (24px) at the small breakpoint, with (8px) between title and description. Content and footers align to those edges; footers wrap actions. Headerless content in the CurseForge API key prompt and administrator cards retains the same top inset. Inset settings sections use muted or lightly tinted backgrounds rather than a separate visual system.
 
 ### Navigation
 
 Rail and mobile navigation links combine an icon and a (14px) label for Servers, Backups, Settings, and Users, without supporting descriptions. The active item uses a card surface, foreground text, a one-pixel border ring, a primary icon, and a trailing chevron. Inactive links use muted text and an accent hover surface. The current page is exposed to assistive technology. A skip link becomes visible on focus.
+
+The desktop profile identity and mobile header avatar link directly to Account Security at `/settings?tab=account`. The expanded mobile navigation also contains Account settings and Log out.
 
 Workspace tabs use a transparent surface and a two-pixel bottom rule for selection. They are separated by (6px), have (13px by 15px) padding on wide screens, and use (12px) padding on narrow screens. They retain horizontal scrolling instead of compressing labels.
 

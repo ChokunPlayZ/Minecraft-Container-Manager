@@ -261,6 +261,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (path === '/api/auth/me') {
     return { id: 'admin-1', email: 'admin@mcm.panel' } as T;
   }
+  if (path === '/api/users' && (!init.method || init.method === 'GET')) {
+    return { users: [{ id: 'admin-1', email: 'admin@mcm.panel', totp_enabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] } as T;
+  }
   if (path === '/api/auth/csrf') {
     return { csrf_token: 'mock-csrf-token' } as T;
   }
