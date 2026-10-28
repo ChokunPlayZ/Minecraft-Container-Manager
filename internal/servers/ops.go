@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mcm-panel/mcm/internal/storage"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // OP is a single entry in a Minecraft server's ops.json file.
@@ -28,7 +31,23 @@ func (s *Store) opsPath(id string) string {
 // readOps loads the operators list from ops.json, treating a missing file as an
 // empty list.
 func (s *Store) readOps(id string) ([]OP, error) {
-	data, err := os.ReadFile(s.opsPath(id))
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := storage.OpenRegular(root, "ops.json")
+	if os.IsNotExist(err) {
+		return []OP{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxEditBytes+1))
+	if int64(len(data)) > maxEditBytes {
+		return nil, ErrReadTooLarge
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []OP{}, nil
@@ -49,14 +68,17 @@ func (s *Store) writeOps(id string, ops []OP) error {
 	if ops == nil {
 		ops = []OP{}
 	}
-	if err := os.MkdirAll(s.dataPath(id), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(ops, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.opsPath(id), data, 0o644)
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	_, err = storage.Write(context.Background(), root, "ops.json", strings.NewReader(string(data)), maxEditBytes, 0644)
+	return err
 }
 
 // ListOps returns the operators configured for a server.
@@ -70,6 +92,15 @@ func (s *Store) ListOps(ctx context.Context, id string) ([]OP, error) {
 // AddOP adds a player to the operator list, persisting it to ops.json and, when
 // the server is running, promoting the player live via RCON.
 func (s *Store) AddOP(ctx context.Context, id, name string, level int) ([]OP, error) {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
+	s.fileEditMu.Lock()
+	defer s.fileEditMu.Unlock()
+	identity, identityErr := s.playerUUID(ctx, id, name)
+	if identityErr != nil {
+		return nil, identityErr
+	}
+
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -83,14 +114,15 @@ func (s *Store) AddOP(ctx context.Context, id, name string, level int) ([]OP, er
 	}
 	found := false
 	for i := range ops {
-		if equalFold(ops[i].Name, name) || ops[i].UUID == placeholderUUID {
+		if equalFold(ops[i].Name, name) || ops[i].UUID == identity {
+			ops[i].UUID = identity
 			ops[i].Name = name
 			ops[i].Level = level
 			found = true
 		}
 	}
 	if !found {
-		ops = append(ops, OP{UUID: placeholderUUID, Name: name, Level: level})
+		ops = append(ops, OP{UUID: identity, Name: name, Level: level})
 	}
 	if err := s.writeOps(id, ops); err != nil {
 		return nil, err

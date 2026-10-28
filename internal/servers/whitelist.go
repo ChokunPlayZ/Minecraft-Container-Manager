@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mcm-panel/mcm/internal/storage"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // WhitelistEntry is a single entry in a Minecraft server's whitelist.json file.
@@ -22,7 +25,23 @@ func (s *Store) whitelistPath(id string) string {
 // readWhitelist loads the whitelist from whitelist.json, treating a missing
 // file as an empty list.
 func (s *Store) readWhitelist(id string) ([]WhitelistEntry, error) {
-	data, err := os.ReadFile(s.whitelistPath(id))
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := storage.OpenRegular(root, "whitelist.json")
+	if os.IsNotExist(err) {
+		return []WhitelistEntry{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxEditBytes+1))
+	if int64(len(data)) > maxEditBytes {
+		return nil, ErrReadTooLarge
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []WhitelistEntry{}, nil
@@ -43,14 +62,17 @@ func (s *Store) writeWhitelist(id string, entries []WhitelistEntry) error {
 	if entries == nil {
 		entries = []WhitelistEntry{}
 	}
-	if err := os.MkdirAll(s.dataPath(id), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.whitelistPath(id), data, 0o644)
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	_, err = storage.Write(context.Background(), root, "whitelist.json", strings.NewReader(string(data)), maxEditBytes, 0644)
+	return err
 }
 
 // ListWhitelist returns the whitelisted players configured for a server.
@@ -64,6 +86,15 @@ func (s *Store) ListWhitelist(ctx context.Context, id string) ([]WhitelistEntry,
 // AddWhitelist adds a player to the whitelist, persisting it to whitelist.json
 // and, when the server is running, whitelisting the player live via RCON.
 func (s *Store) AddWhitelist(ctx context.Context, id, name string) ([]WhitelistEntry, error) {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
+	s.fileEditMu.Lock()
+	defer s.fileEditMu.Unlock()
+	identity, identityErr := s.playerUUID(ctx, id, name)
+	if identityErr != nil {
+		return nil, identityErr
+	}
+
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -75,12 +106,13 @@ func (s *Store) AddWhitelist(ctx context.Context, id, name string) ([]WhitelistE
 	found := false
 	for i := range entries {
 		if equalFold(entries[i].Name, name) {
+			entries[i].UUID = identity
 			entries[i].Name = name
 			found = true
 		}
 	}
 	if !found {
-		entries = append(entries, WhitelistEntry{UUID: placeholderUUID, Name: name})
+		entries = append(entries, WhitelistEntry{UUID: identity, Name: name})
 	}
 	if err := s.writeWhitelist(id, entries); err != nil {
 		return nil, err

@@ -6,7 +6,7 @@ import (
 )
 
 func TestWhitelistReadMissingIsEmpty(t *testing.T) {
-	s := &Store{dataDir: t.TempDir()}
+	s := minimalStore(t, t.TempDir())
 	entries, err := s.readWhitelist("some-id")
 	if err != nil {
 		t.Fatalf("readWhitelist(missing) returned error: %v", err)
@@ -18,7 +18,7 @@ func TestWhitelistReadMissingIsEmpty(t *testing.T) {
 
 func TestWhitelistWriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	s := &Store{dataDir: dir}
+	s := minimalStore(t, dir)
 	id := "abc"
 	entries := []WhitelistEntry{
 		{UUID: placeholderUUID, Name: "Steve"},
