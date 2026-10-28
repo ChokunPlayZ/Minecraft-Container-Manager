@@ -1,21 +1,23 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { Archive, Box, ChevronRight, LogOut, Menu, Server, Settings2, Users, X } from 'lucide-react';
-import { useAuth } from '../lib/auth';
+import { useAuth, useIsAdmin } from '../lib/auth';
 import { ThemeToggle } from './theme-toggle';
 import { Button } from './ui/button';
 
-const destinations = [
-  { to: '/dashboard', label: 'Servers', icon: Server },
-  { to: '/backups', label: 'Backups', icon: Archive },
-  { to: '/settings', label: 'App Settings', icon: Settings2 },
-  { to: '/users', label: 'Users', icon: Users },
+const allDestinations = [
+  { to: '/dashboard', label: 'Servers', icon: Server, adminOnly: false },
+  { to: '/backups', label: 'Backups', icon: Archive, adminOnly: false },
+  { to: '/settings', label: 'App Settings', icon: Settings2, adminOnly: true },
+  { to: '/users', label: 'Users', icon: Users, adminOnly: true },
 ] as const;
 
 const userSettings = { to: '/user-settings', label: 'User Settings' } as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  const isAdmin = useIsAdmin();
+  const destinations = allDestinations.filter((item) => isAdmin || !item.adminOnly);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
   const isServer = pathname.startsWith('/servers/');

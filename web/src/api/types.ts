@@ -63,9 +63,13 @@ export interface Server {
   updated_at: string;
 }
 
+/** Admins manage everything; members manage only their assigned servers. */
+export type UserRole = 'admin' | 'member';
+
 export interface Me {
   id: string;
   email: string;
+  role?: UserRole;
   totp_enabled?: boolean;
   created_at?: string;
 }
@@ -78,9 +82,19 @@ export interface PasskeyMeta {
 export interface User {
   id: string;
   email: string;
+  role: UserRole;
+  /** Servers a member may manage. Always empty for admins. */
+  server_ids: string[];
   totp_enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface UserInput {
+  email?: string;
+  password?: string;
+  role?: UserRole;
+  server_ids?: string[];
 }
 
 export interface ServerStatus {

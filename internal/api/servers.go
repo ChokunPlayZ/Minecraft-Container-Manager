@@ -21,6 +21,14 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not list servers")
 		return
 	}
+	if !s.isAdmin(r) {
+		allowed, err := s.users.ServerIDs(r.Context(), s.currentUserID(r))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "could not list servers")
+			return
+		}
+		list = filterServers(list, allowed)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": list})
 }
 
@@ -77,6 +85,17 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
+	}
+	if !s.isAdmin(r) {
+		cur, err := s.servers.Get(r.Context(), r.PathValue("id"))
+		if err != nil {
+			s.writeServerErr(w, err)
+			return
+		}
+		if in.ChangesResources(cur) {
+			writeError(w, http.StatusForbidden, "forbidden", "Only administrators can change memory, CPU, or ports.")
+			return
+		}
 	}
 	srv, err := s.servers.Update(r.Context(), r.PathValue("id"), in)
 	if err != nil {

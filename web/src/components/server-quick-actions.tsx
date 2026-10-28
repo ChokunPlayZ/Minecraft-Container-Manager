@@ -12,7 +12,8 @@ type PowerAction = 'start' | 'stop' | 'restart' | 'kill';
 export function ServerQuickActions({ server, onUpdated, onCopy }: {
   server: Server;
   onUpdated: (server: Server) => void;
-  onCopy: () => void;
+  /** Omit to hide Copy server, e.g. for members. */
+  onCopy?: () => void;
 }) {
   const [pending, setPending] = useState<PowerAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +57,7 @@ export function ServerQuickActions({ server, onUpdated, onCopy }: {
         <DropdownMenuContent align="end">
           <DropdownMenuItem disabled={server.state !== 'running'} onSelect={() => void run('restart')}><RotateCw className="h-4 w-4" />Restart</DropdownMenuItem>
           <DropdownMenuItem asChild><Link to="/backups" search={{ server: server.id }}><Archive className="h-4 w-4" />Backups</Link></DropdownMenuItem>
-          <DropdownMenuItem onSelect={onCopy}><Copy className="h-4 w-4" />Copy server</DropdownMenuItem>
+          {onCopy && <DropdownMenuItem onSelect={onCopy}><Copy className="h-4 w-4" />Copy server</DropdownMenuItem>}
           <DropdownMenuSeparator />
           <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={!canKill} onSelect={() => void run('kill')}><Zap className="h-4 w-4" />Force kill</DropdownMenuItem>
         </DropdownMenuContent>

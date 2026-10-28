@@ -1,8 +1,9 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
-import { Bell, Globe, Network, RefreshCw } from 'lucide-react';
+import { Bell, Globe, Network, RefreshCw, Settings2 } from 'lucide-react';
 import { AppShell } from '../components/app-shell';
 import { RequireAuth } from '../components/require-auth';
 import { SettingsTabs } from '../components/settings-tabs';
+import { useIsAdmin } from '../lib/auth';
 import { DNSSettingsCard } from '../components/dns-settings';
 import { PortPoolSettingsCard } from '../components/port-pool-settings';
 import { DiscordNotificationSettings } from '../components/discord-notification-settings';
@@ -32,6 +33,7 @@ export const Route = createFileRoute('/settings')({
 });
 
 function AppSettingsRoute() {
+  const isAdmin = useIsAdmin();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const activeTab = search.tab === 'account' ? 'updates' : search.tab;
@@ -39,6 +41,13 @@ function AppSettingsRoute() {
   return (
     <RequireAuth>
       <AppShell>
+        {!isAdmin ? (
+          <div className="empty-state rounded-lg border bg-card">
+            <Settings2 />
+            <h1 className="section-heading">App Settings</h1>
+            <p>Only administrators can change app settings.</p>
+          </div>
+        ) : (<>
         <div className="page-heading">
           <div>
             <h1 className="page-title">App Settings</h1>
@@ -63,6 +72,7 @@ function AppSettingsRoute() {
             <div className="max-w-3xl"><PortPoolSettingsCard /></div>
           )}
         </div>
+        </>)}
       </AppShell>
     </RequireAuth>
   );

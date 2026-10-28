@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server, ServerState } from '../api/types';
+import { useIsAdmin } from '../lib/auth';
 import { useLiveUptime } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
 import { RequireAuth } from '../components/require-auth';
@@ -69,6 +70,7 @@ export const Route = createFileRoute('/servers/$id')({
 type ServerTab = 'console' | 'performance' | 'logs' | 'players' | 'files' | 'worlds' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
 
 export function ServerDetailRoute() {
+  const isAdmin = useIsAdmin();
   const { status: updateStatus } = useUpdateChecker();
   const { id } = Route.useParams();
   const updateResult = updateStatus?.enabled ? updateStatus.servers[id] : undefined;
@@ -481,10 +483,12 @@ export function ServerDetailRoute() {
                       <Download className="h-4 w-4 mr-2" />
                       <span>Export server (.zip)</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem disabled={busy} onSelect={() => setCopyDialogOpen(true)}>
-                      <Copy className="h-4 w-4 mr-2" />
-                      <span>Copy server</span>
-                    </DropdownMenuItem>
+                    {isAdmin && (
+                      <DropdownMenuItem disabled={busy} onSelect={() => setCopyDialogOpen(true)}>
+                        <Copy className="h-4 w-4 mr-2" />
+                        <span>Copy server</span>
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem disabled={busy} onSelect={() => void handleRecreate()}>
                       <RotateCcw className="h-4 w-4 mr-2" />
                       <span>Rebuild container</span>
@@ -497,15 +501,19 @@ export function ServerDetailRoute() {
                       <Zap className="h-4 w-4 mr-2" />
                       <span>Force-kill server</span>
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      disabled={busy}
-                      onSelect={() => void handleDelete()}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      <span>Delete server</span>
-                    </DropdownMenuItem>
+                    {isAdmin && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={busy}
+                          onSelect={() => void handleDelete()}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          <span>Delete server</span>
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
@@ -678,7 +686,7 @@ export function ServerDetailRoute() {
           )}
 
           </div>
-          {server && (
+          {server && isAdmin && (
             <CopyServerDialog
               server={server}
               open={copyDialogOpen}

@@ -13,6 +13,22 @@ import (
 // ErrNoUsers is returned when no user accounts exist yet.
 var ErrNoUsers = errors.New("no users exist")
 
+// ErrUnknownServer is returned when a server access list names a server that
+// does not exist.
+var ErrUnknownServer = errors.New("unknown server")
+
+// Panel roles. Admins manage everything; members manage only the servers
+// assigned to them.
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+)
+
+// ValidRole reports whether role is a known panel role.
+func ValidRole(role string) bool {
+	return role == RoleAdmin || role == RoleMember
+}
+
 // User is a row in the users table.
 type User struct {
 	ID           string `json:"id"`
@@ -21,8 +37,11 @@ type User struct {
 	TOTPSecret   string `json:"-"`
 	TOTPEnabled  bool   `json:"totp_enabled"`
 	WebAuthnID   string `json:"-"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	Role         string `json:"role"`
+	// ServerIDs lists the servers a member may manage. It is empty for admins.
+	ServerIDs []string `json:"server_ids"`
+	CreatedAt string   `json:"created_at"`
+	UpdatedAt string   `json:"updated_at"`
 }
 
 // Users provides user account persistence.
@@ -35,14 +54,19 @@ func NewUsers(db *sql.DB) *Users {
 	return &Users{db: db}
 }
 
-// Create inserts a new user with the given email and argon2id password hash.
+// Create inserts a new admin with the given email and argon2id password hash.
 func (u *Users) Create(ctx context.Context, email, passwordHash string) (User, error) {
+	return u.CreateWithRole(ctx, email, passwordHash, RoleAdmin)
+}
+
+// CreateWithRole inserts a new user with the given role.
+func (u *Users) CreateWithRole(ctx context.Context, email, passwordHash, role string) (User, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := uuid.NewString()
 	_, err := u.db.ExecContext(ctx,
-		`INSERT INTO users (id, email, password_hash, totp_secret, totp_enabled, webauthn_id, created_at, updated_at) VALUES (?, ?, ?, '', 0, '', ?, ?)`,
-		id, email, passwordHash, now, now)
+		`INSERT INTO users (id, email, password_hash, totp_secret, totp_enabled, webauthn_id, role, created_at, updated_at) VALUES (?, ?, ?, '', 0, '', ?, ?, ?)`,
+		id, email, passwordHash, role, now, now)
 	if err != nil {
 		return User{}, err
 	}
@@ -61,7 +85,7 @@ func (u *Users) Count(ctx context.Context) (int, error) {
 // struct's json tags.
 func (u *Users) List(ctx context.Context) ([]User, error) {
 	rows, err := u.db.QueryContext(ctx,
-		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users ORDER BY created_at`)
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), role, created_at, updated_at FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -71,13 +95,133 @@ func (u *Users) List(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var usr User
 		var totpEnabled int
-		if err := rows.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &totpEnabled, &usr.WebAuthnID, &usr.CreatedAt, &usr.UpdatedAt); err != nil {
+		if err := rows.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &totpEnabled, &usr.WebAuthnID, &usr.Role, &usr.CreatedAt, &usr.UpdatedAt); err != nil {
 			return nil, err
 		}
 		usr.TOTPEnabled = totpEnabled == 1
 		users = append(users, usr)
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	access, err := u.allServerAccess(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		users[i].ServerIDs = access[users[i].ID]
+		if users[i].ServerIDs == nil {
+			users[i].ServerIDs = []string{}
+		}
+	}
+	return users, nil
+}
+
+// Role returns a user's panel role.
+func (u *Users) Role(ctx context.Context, id string) (string, error) {
+	var role string
+	err := u.db.QueryRowContext(ctx, `SELECT role FROM users WHERE id = ?`, id).Scan(&role)
+	return role, err
+}
+
+// UpdateRole changes a user's panel role.
+func (u *Users) UpdateRole(ctx context.Context, id, role string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := u.db.ExecContext(ctx,
+		`UPDATE users SET role = ?, updated_at = ? WHERE id = ?`, role, now, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// HasServerAccess reports whether a member has been assigned a server. It does
+// not consider roles; callers grant admins access separately.
+func (u *Users) HasServerAccess(ctx context.Context, userID, serverID string) (bool, error) {
+	var n int
+	err := u.db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM server_access WHERE user_id = ? AND server_id = ?`, userID, serverID).Scan(&n)
+	return n > 0, err
+}
+
+// ServerIDs returns the servers assigned to a user.
+func (u *Users) ServerIDs(ctx context.Context, userID string) ([]string, error) {
+	rows, err := u.db.QueryContext(ctx,
+		`SELECT server_id FROM server_access WHERE user_id = ? ORDER BY created_at, server_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SetServerAccess replaces the servers assigned to a user. It returns
+// ErrUnknownServer, and changes nothing, if any id does not name a server.
+func (u *Users) SetServerAccess(ctx context.Context, userID string, serverIDs []string) error {
+	tx, err := u.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM server_access WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, serverID := range serverIDs {
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO server_access (user_id, server_id, created_at) SELECT ?, id, ? FROM servers WHERE id = ?`,
+			userID, now, serverID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			var exists int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM servers WHERE id = ?`, serverID).Scan(&exists); err != nil {
+				return err
+			}
+			if exists == 0 {
+				return ErrUnknownServer
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (u *Users) allServerAccess(ctx context.Context) (map[string][]string, error) {
+	rows, err := u.db.QueryContext(ctx,
+		`SELECT user_id, server_id FROM server_access ORDER BY created_at, server_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	access := map[string][]string{}
+	for rows.Next() {
+		var userID, serverID string
+		if err := rows.Scan(&userID, &serverID); err != nil {
+			return nil, err
+		}
+		access[userID] = append(access[userID], serverID)
+	}
+	return access, rows.Err()
 }
 
 // ErrEmailTaken is returned when an email update would violate the unique
@@ -134,6 +278,9 @@ func (u *Users) Delete(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM server_access WHERE user_id = ?`, id); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	if err != nil {
 		return err
@@ -151,13 +298,21 @@ func (u *Users) Delete(ctx context.Context, id string) error {
 // GetByEmail returns a user by email address.
 func (u *Users) GetByEmail(ctx context.Context, email string) (User, error) {
 	return u.scan(u.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users WHERE LOWER(email) = ?`, strings.ToLower(strings.TrimSpace(email))))
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), role, created_at, updated_at FROM users WHERE LOWER(email) = ?`, strings.ToLower(strings.TrimSpace(email))))
 }
 
-// GetByID returns a user by id.
+// GetByID returns a user by id, including their assigned servers.
 func (u *Users) GetByID(ctx context.Context, id string) (User, error) {
-	return u.scan(u.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users WHERE id = ?`, id))
+	usr, err := u.scan(u.db.QueryRowContext(ctx,
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), role, created_at, updated_at FROM users WHERE id = ?`, id))
+	if err != nil {
+		return User{}, err
+	}
+	usr.ServerIDs, err = u.ServerIDs(ctx, id)
+	if err != nil {
+		return User{}, err
+	}
+	return usr, nil
 }
 
 // SetTOTPSecret stores the base32 TOTP secret for a user without marking it
@@ -188,7 +343,7 @@ func (u *Users) DisableTOTP(ctx context.Context, userID string) error {
 func (u *Users) scan(row *sql.Row) (User, error) {
 	var usr User
 	var totpEnabled int
-	err := row.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &totpEnabled, &usr.WebAuthnID, &usr.CreatedAt, &usr.UpdatedAt)
+	err := row.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &totpEnabled, &usr.WebAuthnID, &usr.Role, &usr.CreatedAt, &usr.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, sql.ErrNoRows
 	}
@@ -196,6 +351,7 @@ func (u *Users) scan(row *sql.Row) (User, error) {
 		return User{}, err
 	}
 	usr.TOTPEnabled = totpEnabled == 1
+	usr.ServerIDs = []string{}
 	return usr, nil
 }
 

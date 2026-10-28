@@ -8,6 +8,7 @@ import { Label } from './ui/label';
 import { Select } from './ui/select';
 import { Plus, Trash2, Globe, AlertTriangle, RotateCcw } from 'lucide-react';
 import { ServerDNSCard } from './server-dns-card';
+import { useIsAdmin } from '../lib/auth';
 
 type SettingsTab = 'general' | 'advanced' | 'dns';
 
@@ -31,6 +32,8 @@ export function ServerSettings({
   onRebuild?: () => void;
   onDnsChanged?: (joinAddress: string) => void;
 }) {
+  // Members may not change host resources, ports, or DNS.
+  const isAdmin = useIsAdmin();
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
   const [hostPort, setHostPort] = useState(server.host_port);
@@ -72,6 +75,7 @@ export function ServerSettings({
   }, []);
 
   useEffect(() => {
+    if (!isAdmin) return;
     let cancelled = false;
     Promise.all([api.listServers(), api.availablePorts()])
       .then(([allServers, portsRes]) => {
@@ -116,7 +120,7 @@ export function ServerSettings({
     return () => {
       cancelled = true;
     };
-  }, [server.id]);
+  }, [server.id, isAdmin]);
 
   function getExtraPortConflict(p: ExtraPort): string | null {
     if (!p.host_port || p.host_port <= 0) return null;
@@ -207,7 +211,9 @@ export function ServerSettings({
         <CardDescription>
           {tab === 'dns'
             ? 'Configure SRV records and domain routing.'
-            : 'Update the server name, resources, backups, and published ports.'}
+            : isAdmin
+              ? 'Update the server name, resources, backups, and published ports.'
+              : 'Update the server name, Java version, and backups.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -235,18 +241,20 @@ export function ServerSettings({
             >
               Advanced
             </button>
-            <button aria-pressed={tab === 'dns'}
-              type="button"
-              onClick={() => setTab('dns')}
-              className={
-                tab === 'dns'
-                  ? 'inline-flex items-center border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
-                  : 'inline-flex items-center border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
-              }
-            >
-              <Globe className="h-3.5 w-3.5 mr-1.5" />
-              DNS / Routing
-            </button>
+            {isAdmin && (
+              <button aria-pressed={tab === 'dns'}
+                type="button"
+                onClick={() => setTab('dns')}
+                className={
+                  tab === 'dns'
+                    ? 'inline-flex items-center border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
+                    : 'inline-flex items-center border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+                }
+              >
+                <Globe className="h-3.5 w-3.5 mr-1.5" />
+                DNS / Routing
+              </button>
+            )}
           </div>
 
           {tab === 'dns' ? (
@@ -289,6 +297,11 @@ export function ServerSettings({
                 </div>
               )}
 
+          {!isAdmin && (
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              Only administrators can change memory, CPU, and ports.
+            </p>
+          )}
           {tab === 'general' ? (
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -303,6 +316,7 @@ export function ServerSettings({
                   min={512}
                   step={256}
                   value={ramMb}
+                  disabled={!isAdmin}
                   onChange={(e) => setRamMb(Number(e.target.value))}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -333,6 +347,7 @@ export function ServerSettings({
                     <input
                       type="checkbox"
                       checked={hostPort === 0}
+                      disabled={!isAdmin}
                       onChange={(e) => setHostPort(e.target.checked ? 0 : 25565)}
                       className="rounded border-border text-primary focus:ring-primary h-3.5 w-3.5"
                     />
@@ -351,6 +366,7 @@ export function ServerSettings({
                     min={0}
                     max={65535}
                     value={hostPort}
+                    disabled={!isAdmin}
                     onChange={(e) => setHostPort(Number(e.target.value))}
                   />
                 )}
@@ -401,7 +417,7 @@ export function ServerSettings({
                   </div>
                 )}
               </div>
-              <fieldset className="space-y-3">
+              <fieldset className="space-y-3" disabled={!isAdmin}>
                 <legend className="text-sm font-medium">Additional ports</legend>
                 <p className="text-xs text-muted-foreground">
                   Publish extra container ports to the host (e.g. a WebUI over TCP or
@@ -498,6 +514,7 @@ export function ServerSettings({
                   min={0}
                   step={0.5}
                   value={cpuLimit}
+                  disabled={!isAdmin}
                   onChange={(e) => setCpuLimit(Number(e.target.value))}
                 />
                 <p className="text-xs text-muted-foreground">0 means no CPU quota.</p>
@@ -510,6 +527,7 @@ export function ServerSettings({
                   min={0}
                   step={64}
                   value={memoryLimitMb}
+                  disabled={!isAdmin}
                   onChange={(e) => setMemoryLimitMb(Number(e.target.value))}
                 />
                 <p className="text-xs text-muted-foreground">0 allows the configured server RAM plus 2 GiB of overhead.</p>

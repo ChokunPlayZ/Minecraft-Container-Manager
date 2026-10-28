@@ -11,18 +11,23 @@ import (
 
 const minPasswordLen = 8
 
-// Every authenticated user currently has the same privileges; user management
-// is treated as an admin capability for all authenticated session holders. A
-// dedicated RBAC system is intentionally out of scope.
+// User management is admin-only (see routes), except that members may update
+// their own email and password. Admins manage everything; members manage only
+// the servers listed in their server_ids.
 
 type createUserRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// Role defaults to admin, matching accounts created before roles existed.
+	Role      string   `json:"role"`
+	ServerIDs []string `json:"server_ids"`
 }
 
 type updateUserRequest struct {
-	Email    *string `json:"email"`
-	Password *string `json:"password"`
+	Email     *string   `json:"email"`
+	Password  *string   `json:"password"`
+	Role      *string   `json:"role"`
+	ServerIDs *[]string `json:"server_ids"`
 }
 
 // handleListUsers returns all panel users.
@@ -51,6 +56,13 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "password must be at least 8 characters")
 		return
 	}
+	if req.Role == "" {
+		req.Role = auth.RoleAdmin
+	}
+	if !auth.ValidRole(req.Role) {
+		writeError(w, http.StatusBadRequest, "invalid_request", "role must be admin or member")
+		return
+	}
 	if _, err := s.users.GetByEmail(r.Context(), req.Email); err == nil {
 		writeError(w, http.StatusConflict, "email_taken", "a user with that email already exists")
 		return
@@ -61,10 +73,22 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not hash password")
 		return
 	}
-	user, err := s.users.Create(r.Context(), req.Email, hash)
+	user, err := s.users.CreateWithRole(r.Context(), req.Email, hash, req.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "could not create user")
 		return
+	}
+	if req.Role == auth.RoleMember && len(req.ServerIDs) > 0 {
+		if err := s.users.SetServerAccess(r.Context(), user.ID, req.ServerIDs); err != nil {
+			// Do not leave a half-configured account behind.
+			_ = s.users.Delete(r.Context(), user.ID)
+			s.writeServerAccessErr(w, err)
+			return
+		}
+		if user, err = s.users.GetByID(r.Context(), user.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "could not load created user")
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, user)
 }
@@ -80,18 +104,38 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	if req.Email == nil && req.Password == nil {
+	if req.Email == nil && req.Password == nil && req.Role == nil && req.ServerIDs == nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "nothing to update")
 		return
 	}
+	// Members may change only their own email and password.
+	if !s.isAdmin(r) && (id != s.currentUserID(r) || req.Role != nil || req.ServerIDs != nil) {
+		writeError(w, http.StatusForbidden, "forbidden", "Only administrators can do this.")
+		return
+	}
 
-	if _, err := s.users.GetByID(r.Context(), id); err != nil {
+	target, err := s.users.GetByID(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "not_found", "user not found")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal", "could not look up user")
 		return
+	}
+	role := target.Role
+	if req.Role != nil && *req.Role != target.Role {
+		if !auth.ValidRole(*req.Role) {
+			writeError(w, http.StatusBadRequest, "invalid_request", "role must be admin or member")
+			return
+		}
+		// Only admins reach this handler, so blocking self-changes also keeps
+		// at least one admin.
+		if id == s.currentUserID(r) {
+			writeError(w, http.StatusBadRequest, "invalid_request", "You cannot change your own role")
+			return
+		}
+		role = *req.Role
 	}
 
 	var hash *string
@@ -130,12 +174,39 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if role != target.Role {
+		if err := s.users.UpdateRole(r.Context(), id, role); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "could not update role")
+			return
+		}
+	}
+	// Admins can reach every server, so they keep no assignments.
+	if role == auth.RoleAdmin && len(target.ServerIDs) > 0 {
+		if err := s.users.SetServerAccess(r.Context(), id, nil); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "could not update server access")
+			return
+		}
+	} else if role == auth.RoleMember && req.ServerIDs != nil {
+		if err := s.users.SetServerAccess(r.Context(), id, *req.ServerIDs); err != nil {
+			s.writeServerAccessErr(w, err)
+			return
+		}
+	}
+
 	user, err := s.users.GetByID(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "could not load updated user")
 		return
 	}
 	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) writeServerAccessErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, auth.ErrUnknownServer) {
+		writeError(w, http.StatusBadRequest, "invalid_request", "One or more selected servers no longer exist")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal", "could not update server access")
 }
 
 // handleDeleteUser deletes a user, their passkeys, and revokes their sessions.

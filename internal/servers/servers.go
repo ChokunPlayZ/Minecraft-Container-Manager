@@ -165,6 +165,17 @@ type UpdateInput struct {
 	ExtraPorts            *[]ExtraPort  `json:"extra_ports"`
 }
 
+// ChangesResources reports whether the update would change the server's host
+// resources or published ports. Fields resent with their current values do
+// not count as changes.
+func (in UpdateInput) ChangesResources(cur Server) bool {
+	return (in.RAMMB != nil && *in.RAMMB != cur.RAMMB) ||
+		(in.CPULimit != nil && *in.CPULimit != cur.CPULimit) ||
+		(in.MemoryLimitMB != nil && *in.MemoryLimitMB != cur.MemoryLimitMB) ||
+		(in.HostPort != nil && *in.HostPort != cur.HostPort) ||
+		(in.ExtraPorts != nil && !extraPortsEqual(*in.ExtraPorts, cur.ExtraPorts))
+}
+
 // CopyInput is the payload for duplicating an existing server.
 type CopyInput struct {
 	Name              string   `json:"name"`

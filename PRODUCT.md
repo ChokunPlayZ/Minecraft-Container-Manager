@@ -20,7 +20,7 @@ The existing React/Vite application talks to a Go backend. Administrators move b
 
 ## Capabilities and Constraints
 
-Preserve existing APIs, authentication, light/dark/system themes, destructive-action confirmations, installation progress, and all server management capabilities. All panel accounts are administrators. The user's request covers every page, action, and modal. Do not fabricate operational statistics or add capabilities without implementation.
+Preserve existing APIs, authentication, light/dark/system themes, destructive-action confirmations, installation progress, and all server management capabilities. Panel accounts are admins or members. Members manage only the servers an admin assigns to them; they cannot create, copy, or delete servers, change memory, CPU, or ports, publish DNS, or use panel settings and user management. The user's request covers every page, action, and modal. Do not fabricate operational statistics or add capabilities without implementation.
 
 ## Brand Commitments
 

@@ -46,6 +46,7 @@ import type {
   ServerLogContent,
   UnzipResult,
   User,
+  UserInput,
   PasskeyMeta,
   DNSRecord,
   DNSStatusResponse,
@@ -345,10 +346,10 @@ export const api = {
   listUsers: () =>
     request<{ users: User[] }>('/api/users').then((res) => res.users ?? []),
 
-  createUser: (email: string, password: string) =>
-    request<User>('/api/users', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  createUser: (input: UserInput & { email: string; password: string }) =>
+    request<User>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
 
-  updateUser: (id: string, input: { email?: string; password?: string }) =>
+  updateUser: (id: string, input: UserInput) =>
     request<User>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
 
   deleteUser: (id: string) =>

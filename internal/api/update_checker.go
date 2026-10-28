@@ -13,6 +13,20 @@ func (s *Server) handleGetUpdateChecker(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal", "could not read update checks")
 		return
 	}
+	if !s.isAdmin(r) {
+		allowed, err := s.users.ServerIDs(r.Context(), s.currentUserID(r))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "could not read update checks")
+			return
+		}
+		visible := make(map[string]servers.ServerUpdateCheck, len(allowed))
+		for _, id := range allowed {
+			if check, ok := status.Servers[id]; ok {
+				visible[id] = check
+			}
+		}
+		status.Servers = visible
+	}
 	writeJSON(w, http.StatusOK, status)
 }
 

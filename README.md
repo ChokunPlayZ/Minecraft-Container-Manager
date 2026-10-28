@@ -268,6 +268,7 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
   - **TOTP Two-Factor Authentication**: Authenticator app enrollment with QR code generation.
   - **WebAuthn / Passkeys**: Hardware security keys (YubiKey), Apple Touch ID / Face ID, and Windows Hello.
 - **Multi-User Administration**: Manage panel user accounts, user creation, password updates, and user deletion.
+- **Per-Server Access**: Give an account the **Member** role and choose which servers it can manage. Members see and operate only those servers (console, files, mods, players, worlds, backups, schedules, properties, and versions). They cannot create, copy, or delete servers, change memory, CPU, or ports, publish DNS, or open panel settings and user management. Existing accounts remain admins.
 - **Hardening**: Built-in double-submit CSRF cookie protection, brute-force login lockout (5 failed attempts / 15 min), and sliding-window rate limiting.
 - **Native TLS Support**: HTTPS on the configured panel port, with a persistent, automatically renewed self-signed certificate when no certificate is supplied.
 
@@ -745,9 +746,9 @@ Choose the provider under **App Settings → DNS Providers** and use **Test Conn
 ### User Management, Ports, Settings & Health
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/users` | List all registered user accounts. |
-| `POST` | `/api/users` | Create a new user account. |
-| `PATCH` | `/api/users/:id` | Update user email or password. |
+| `GET` | `/api/users` | List all registered user accounts with their `role` and assigned `server_ids`. |
+| `POST` | `/api/users` | Create a new user account. Optional `role` (`admin` default, or `member`) and `server_ids`. |
+| `PATCH` | `/api/users/:id` | Update email, password, `role`, or a member's `server_ids`. Members may update only their own email and password. |
 | `DELETE` | `/api/users/:id` | Delete user account and associated passkeys/sessions. |
 | `GET` | `/api/ports/available` | Check available host ports in allocation range. |
 | `GET` | `/api/settings` | Fetch global panel settings (DNS, port range). |
