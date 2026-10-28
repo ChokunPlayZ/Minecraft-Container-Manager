@@ -47,9 +47,6 @@ func main() {
 	if err != nil {
 		logger.Fatalf("invalid config: %v", err)
 	}
-	if os.Getenv(config.EnvSessionSecret) == "" {
-		logger.Println("warning: MCM_SESSION_SECRET is empty; using an ephemeral secret, sessions will not survive restarts")
-	}
 
 	handle, err := db.Open(cfg.DBPath)
 	if err != nil {

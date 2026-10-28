@@ -84,9 +84,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DBPath != filepath.Join("./data", "mcm.db") {
 		t.Errorf("DBPath = %q", cfg.DBPath)
 	}
-	if len(cfg.SessionSecret) == 0 {
-		t.Error("expected a non-empty ephemeral session secret")
-	}
+
 	if cfg.HTTPOnly || !cfg.SecureCookies {
 		t.Error("native HTTPS and secure cookies should be enabled by default")
 	}

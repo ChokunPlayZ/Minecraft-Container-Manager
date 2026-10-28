@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,7 @@ func NewUsers(db *sql.DB) *Users {
 
 // Create inserts a new user with the given email and argon2id password hash.
 func (u *Users) Create(ctx context.Context, email, passwordHash string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := uuid.NewString()
 	_, err := u.db.ExecContext(ctx,
@@ -149,7 +151,7 @@ func (u *Users) Delete(ctx context.Context, id string) error {
 // GetByEmail returns a user by email address.
 func (u *Users) GetByEmail(ctx context.Context, email string) (User, error) {
 	return u.scan(u.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users WHERE email = ?`, email))
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users WHERE LOWER(email) = ?`, strings.ToLower(strings.TrimSpace(email))))
 }
 
 // GetByID returns a user by id.
@@ -195,4 +197,51 @@ func (u *Users) scan(row *sql.Row) (User, error) {
 	}
 	usr.TOTPEnabled = totpEnabled == 1
 	return usr, nil
+}
+
+// CreateFirst is a single conditional database write: concurrent onboarding
+// requests cannot both create the first administrator.
+func (u *Users) CreateFirst(ctx context.Context, email, passwordHash string) (User, error) {
+	id := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := u.db.ExecContext(ctx, `INSERT INTO users (id,email,password_hash,totp_secret,totp_enabled,webauthn_id,created_at,updated_at) SELECT ?,?,?,'',0,'',?,? WHERE NOT EXISTS (SELECT 1 FROM users)`, id, email, passwordHash, now, now)
+	if err != nil {
+		return User{}, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return User{}, err
+	}
+	if n == 0 {
+		return User{}, ErrOnboardingComplete
+	}
+	return u.GetByID(ctx, id)
+}
+
+var ErrOnboardingComplete = errors.New("onboarding already complete")
+
+// UpdateAccount commits identity, password and session revocation together.
+func (u *Users) UpdateAccount(ctx context.Context, id string, email, passwordHash *string, keepToken string) error {
+	tx, err := u.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE users SET email=COALESCE(?,email),password_hash=COALESCE(?,password_hash),updated_at=? WHERE id=?`, email, passwordHash, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	if passwordHash != nil {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, id, HashToken(keepToken)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

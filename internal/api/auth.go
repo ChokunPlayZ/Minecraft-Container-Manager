@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/mcm-panel/mcm/internal/auth"
@@ -51,8 +52,9 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	if req.Email == "" || req.Password == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "email and password are required")
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	if req.Email == "" || len(req.Password) < minPasswordLen {
+		writeError(w, http.StatusBadRequest, "invalid_request", "email and a password of at least 8 characters are required")
 		return
 	}
 
@@ -61,7 +63,11 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not hash password")
 		return
 	}
-	user, err := s.users.Create(r.Context(), req.Email, hash)
+	user, err := s.users.CreateFirst(r.Context(), req.Email, hash)
+	if errors.Is(err, auth.ErrOnboardingComplete) {
+		writeError(w, http.StatusConflict, "onboarding_complete", "a user already exists")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "could not create user")
 		return
@@ -77,7 +83,7 @@ type loginRequest struct {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	ipKey := s.clientIP(r)
+	ipKey := "ip:" + s.clientIP(r)
 	now := time.Now()
 	if ok, retryAfter := s.loginLimit.allow(ipKey, now); !ok {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())))
@@ -90,10 +96,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	accountKey := "account:" + req.Email
+	if ok, retry := s.loginLimit.allow(accountKey, now); !ok {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retry.Seconds())+1))
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts, try again later")
+		return
+	}
 	user, err := s.users.GetByEmail(r.Context(), req.Email)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.loginLimit.record(ipKey, true, now)
-		s.loginLimit.record(req.Email, true, now)
+		s.loginLimit.record(accountKey, true, now)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
@@ -103,7 +116,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := auth.VerifyPassword(req.Password, user.PasswordHash); err != nil {
 		s.loginLimit.record(ipKey, true, now)
-		s.loginLimit.record(req.Email, true, now)
+		s.loginLimit.record(accountKey, true, now)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")
 		return
 	}
@@ -114,13 +127,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		if !auth.VerifyTOTP(user.TOTPSecret, req.TOTPCode, 1) {
 			s.loginLimit.record(ipKey, true, now)
-			s.loginLimit.record(req.Email, true, now)
+			s.loginLimit.record(accountKey, true, now)
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid or missing totp code")
 			return
 		}
 	}
 	s.loginLimit.record(ipKey, false, now)
-	s.loginLimit.record(req.Email, false, now)
+	s.loginLimit.record(accountKey, false, now)
 	s.issueSession(w, r, user.ID)
 	writeJSON(w, http.StatusOK, user)
 }

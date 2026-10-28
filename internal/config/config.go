@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,7 +23,7 @@ type Config struct {
 	// DockerHost is the resolved API endpoint for either Docker or Podman.
 	DockerHost       string
 	ContainerRuntime string
-	SessionSecret    []byte
+	TrustedProxies   []netip.Prefix
 	WebAuthn         WebAuthnConfig
 	HTTPOnly         bool
 	TLSCert          string
@@ -115,7 +116,6 @@ const (
 	defaultPortRange        = "25565-25665"
 	defaultDataDir          = "./data"
 	defaultDockerHost       = "unix:///var/run/docker.sock"
-	defaultSessionSecret    = ""
 	defaultRPID             = "localhost"
 	defaultRPName           = "Minecraft Container Manager"
 	defaultLoginMaxAttempts = 5
@@ -206,12 +206,21 @@ func Load() (*Config, error) {
 	}
 	cfg.DBPath = dbPath
 
-	secret := getenv(EnvSessionSecret, defaultSessionSecret)
-	if secret == "" {
-		// Ephemeral in-memory secret: sessions will not survive a restart.
-		secret = randomSecret()
+	for _, raw := range strings.Split(os.Getenv("MCM_TRUSTED_PROXIES"), ",") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		prefix, parseErr := netip.ParsePrefix(raw)
+		if parseErr != nil {
+			if addr, addressErr := netip.ParseAddr(raw); addressErr == nil {
+				prefix = netip.PrefixFrom(addr, addr.BitLen())
+			} else {
+				return nil, fmt.Errorf("invalid trusted proxy %q", raw)
+			}
+		}
+		cfg.TrustedProxies = append(cfg.TrustedProxies, prefix)
 	}
-	cfg.SessionSecret = []byte(secret)
 
 	cfg.SecureCookies = !cfg.HTTPOnly || parseBoolEnv(EnvTLS, false)
 	if len(cfg.WebAuthn.RPOrigins) == 0 {
@@ -345,10 +354,4 @@ func ParsePortRange(s string) (PortRange, error) {
 		return PortRange{}, fmt.Errorf("invalid port range %q", s)
 	}
 	return PortRange{Start: start, End: end}, nil
-}
-
-func randomSecret() string {
-	// Ephemeral secret used only so that empty MCM_SESSION_SECRET does not
-	// leave an empty signing key. It is replaced on every restart.
-	return fmt.Sprintf("ephemeral-%d", os.Getpid())
 }

@@ -34,6 +34,16 @@ func (l *loginLimiter) allow(key string, now time.Time) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	for k, attempts := range l.attempts {
+		until := l.lockouts[k]
+		if !until.After(now) && (len(attempts) == 0 || now.Sub(attempts[len(attempts)-1]) > l.window) {
+			delete(l.attempts, k)
+			delete(l.lockouts, k)
+		}
+	}
+	if _, exists := l.attempts[key]; !exists && len(l.attempts) >= 10000 {
+		return false, l.window
+	}
 	if until, ok := l.lockouts[key]; ok {
 		if now.Before(until) {
 			return false, until.Sub(now)

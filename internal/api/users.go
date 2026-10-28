@@ -42,7 +42,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	req.Email = strings.TrimSpace(req.Email)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "email is required")
 		return
@@ -94,45 +94,40 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var hash *string
 	if req.Email != nil {
-		email := strings.TrimSpace(*req.Email)
+		email := strings.ToLower(strings.TrimSpace(*req.Email))
 		if email == "" {
 			writeError(w, http.StatusBadRequest, "invalid_request", "email cannot be empty")
 			return
 		}
-		if err := s.users.UpdateEmail(r.Context(), id, email); err != nil {
-			if isUniqueViolation(err) {
-				writeError(w, http.StatusConflict, "email_taken", "a user with that email already exists")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "internal", "could not update email")
-			return
-		}
+		req.Email = &email
 	}
-
 	if req.Password != nil {
 		if len(*req.Password) < minPasswordLen {
 			writeError(w, http.StatusBadRequest, "invalid_request", "password must be at least 8 characters")
 			return
 		}
-		hash, err := auth.HashPassword(*req.Password)
+		value, err := auth.HashPassword(*req.Password)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "could not hash password")
 			return
 		}
-		if err := s.users.UpdatePassword(r.Context(), id, hash); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "could not update password")
+		hash = &value
+	}
+	keepToken := ""
+	if id == s.currentUserID(r) {
+		if cookie, err := r.Cookie(auth.CookieName); err == nil {
+			keepToken = cookie.Value
+		}
+	}
+	if err := s.users.UpdateAccount(r.Context(), id, req.Email, hash, keepToken); err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "email_taken", "a user with that email already exists")
 			return
 		}
-
-		if id == s.currentUserID(r) {
-			// Preserve the acting admin's current session.
-			if cookie, err := r.Cookie(auth.CookieName); err == nil {
-				_ = s.sessions.RevokeByUserExcept(r.Context(), id, cookie.Value)
-			}
-		} else {
-			_ = s.sessions.RevokeByUser(r.Context(), id)
-		}
+		writeError(w, http.StatusInternalServerError, "internal", "could not update account")
+		return
 	}
 
 	user, err := s.users.GetByID(r.Context(), id)

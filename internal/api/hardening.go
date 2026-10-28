@@ -5,6 +5,8 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,7 +36,37 @@ func (s *Server) clientIP(r *http.Request) string {
 	if err != nil {
 		host = r.RemoteAddr
 	}
+	if s.trustedProxy(host) {
+		// Walk the forwarded chain from the closest hop, trusting only configured proxies.
+		hops := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+		for i := len(hops) - 1; i >= 0; i-- {
+			candidate := strings.TrimSpace(hops[i])
+			addr, err := netip.ParseAddr(candidate)
+			if err != nil {
+				return host
+			}
+			host = addr.Unmap().String()
+			if !s.trustedProxy(host) {
+				break
+			}
+		}
+	}
 	return host
+}
+func (s *Server) trustedProxy(host string) bool {
+	if s.cfg == nil {
+		return false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	for _, prefix := range s.cfg.TrustedProxies {
+		if prefix.Contains(addr.Unmap()) {
+			return true
+		}
+	}
+	return false
 }
 
 // ipLimiter is a sliding-window per-client request limiter used by the general
@@ -60,6 +92,16 @@ func (l *ipLimiter) allow(key string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if _, exists := l.window[key]; !exists {
+		for k, times := range l.window {
+			if len(times) == 0 || now.Sub(times[len(times)-1]) >= l.win {
+				delete(l.window, k)
+			}
+		}
+		if len(l.window) >= 10000 {
+			return false
+		}
+	}
 	cutoff := now.Add(-l.win)
 	kept := l.window[key][:0]
 	for _, t := range l.window[key] {
