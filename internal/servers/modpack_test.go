@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/mcm-panel/mcm/internal/jars"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -152,8 +153,8 @@ func TestInspectCurseForgeModpack(t *testing.T) {
 
 func TestInspectGenericModpack(t *testing.T) {
 	zr := createTestZip(t, map[string]string{
-		"mods/mod1.jar": "jarcontent1",
-		"mods/mod2.jar": "jarcontent2",
+		"mods/mod1.jar":  "jarcontent1",
+		"mods/mod2.jar":  "jarcontent2",
 		"config/cfg.txt": "cfgcontent",
 	})
 
@@ -178,7 +179,7 @@ func TestInstallModrinthModpackEndToEnd(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/download/test-mod.jar" {
 			w.Header().Set("Content-Type", "application/java-archive")
-			w.Write([]byte("mock jar binary content"))
+			w.Write(fixtureJar(t))
 			return
 		}
 		http.NotFound(w, r)
@@ -187,6 +188,7 @@ func TestInstallModrinthModpackEndToEnd(t *testing.T) {
 
 	// Setup temporary store
 	store := newTestStore(t, "srv-modpack", StateStopped)
+	store.jars = fixtureJarResolver(t, jars.NewResolver())
 	ctx := context.Background()
 	serverID := "srv-modpack"
 
@@ -294,13 +296,14 @@ func TestInstallModrinthModpackEndToEnd(t *testing.T) {
 
 func TestInstallGenericModpack(t *testing.T) {
 	store := newTestStore(t, "srv-generic", StateStopped)
+	store.jars = fixtureJarResolver(t, jars.NewResolver())
 	ctx := context.Background()
 	serverID := "srv-generic"
 
 	packPath := filepath.Join(t.TempDir(), "Generic_Adventure_Pack.zip")
 	packZip := createTestZip(t, map[string]string{
-		"mods/adventure-mod.jar":    "dummy jar content",
-		"config/adventure.cfg":      "config line",
+		"mods/adventure-mod.jar": string(fixtureJar(t)),
+		"config/adventure.cfg":   "config line",
 	})
 	data, _ := io.ReadAll(packZip)
 	if err := os.WriteFile(packPath, data, 0o644); err != nil {
@@ -334,6 +337,7 @@ func TestInstallGenericModpack(t *testing.T) {
 
 func TestCreatedWithModpackLockingAndUpdate(t *testing.T) {
 	store := newTestStore(t, "srv-locked", StateStopped)
+	store.jars = fixtureJarResolver(t, jars.NewResolver())
 	ctx := context.Background()
 	serverID := "srv-locked"
 
@@ -352,7 +356,7 @@ func TestCreatedWithModpackLockingAndUpdate(t *testing.T) {
 				Env: struct {
 					Client string `json:"client"`
 					Server string `json:"server"`
-				}{Client: "required", Server: "required"},
+				}{Client: "required", Server: "optional"},
 			},
 		},
 	}
@@ -449,6 +453,7 @@ func TestCreatedWithModpackLockingAndUpdate(t *testing.T) {
 
 func TestModpackAutoConfigureJavaVersion(t *testing.T) {
 	store := newTestStore(t, "srv-autoconfig-java", StateStopped)
+	store.jars = fixtureJarResolver(t, jars.NewResolver())
 	ctx := context.Background()
 	serverID := "srv-autoconfig-java"
 
@@ -493,6 +498,7 @@ func TestModpackAutoConfigureJavaVersion(t *testing.T) {
 func TestModpackCleansStaleBinariesOnLoaderChange(t *testing.T) {
 	serverID := "srv-clean-stale-binaries"
 	store := newTestStore(t, serverID, StateStopped)
+	store.jars = fixtureJarResolver(t, jars.NewResolver())
 	ctx := context.Background()
 	dataDir := store.dataPath(serverID)
 
@@ -538,8 +544,8 @@ func TestModpackCleansStaleBinariesOnLoaderChange(t *testing.T) {
 	if _, err := os.Stat(oldRunSh); !os.IsNotExist(err) {
 		t.Errorf("expected old run.sh to be removed when switching to forge modpack")
 	}
-	if _, err := os.Stat(oldInstallerJar); !os.IsNotExist(err) {
-		t.Errorf("expected old installer.jar to be removed when switching to forge modpack")
+	if data, err := os.ReadFile(oldInstallerJar); err != nil || string(data) == "old-installer" {
+		t.Fatalf("expected new Forge installer: %v", err)
 	}
 
 	srv, err := store.Get(ctx, serverID)
@@ -550,4 +556,3 @@ func TestModpackCleansStaleBinariesOnLoaderChange(t *testing.T) {
 		t.Errorf("expected serverType to be forge, got %q", srv.ServerType)
 	}
 }
-

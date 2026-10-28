@@ -278,6 +278,7 @@ func TestModMetadataTrackingAndProviderUpdates(t *testing.T) {
 						FileInfo: &struct {
 							Name      string `json:"name"`
 							SizeBytes int64  `json:"sizeBytes"`
+							SHA256    string `json:"sha256Hash"`
 						}{
 							Name:      "Chunky-1.4.12.jar",
 							SizeBytes: 1024,
@@ -335,7 +336,7 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 	manifest1 := ModManifest{ModID: "lithium", Title: "Lithium", Version: "0.12.0", SHA1: "lithium_sha1"}
 	manifestCacheMu.Lock()
 	fi1, _ := os.Stat(mod1)
-	manifestCache[mod1] = manifestCacheEntry{modTime: fi1.ModTime(), size: fi1.Size(), manifest: manifest1}
+	manifestCache[mod1] = manifestCacheEntry{cachedAt: time.Now(), modTime: fi1.ModTime(), size: fi1.Size(), manifest: manifest1}
 	manifestCacheMu.Unlock()
 	writeModMeta(srvDir, "lithium-fabric-0.12.0.jar", ModDownloadMeta{
 		ProjectID: "lithium_proj",
@@ -348,7 +349,7 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 	manifest2 := ModManifest{ModID: "fabric-api", Title: "Fabric API", Version: "0.90.0", SHA1: "fapi_sha1"}
 	manifestCacheMu.Lock()
 	fi2, _ := os.Stat(mod2)
-	manifestCache[mod2] = manifestCacheEntry{modTime: fi2.ModTime(), size: fi2.Size(), manifest: manifest2}
+	manifestCache[mod2] = manifestCacheEntry{cachedAt: time.Now(), modTime: fi2.ModTime(), size: fi2.Size(), manifest: manifest2}
 	manifestCacheMu.Unlock()
 
 	// Mod 3: Incompatible Mod (Modrinth project exists, but 0 versions for 1.21.1)
@@ -357,7 +358,7 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 	manifest3 := ModManifest{ModID: "oldmod", Title: "Old Mod", Version: "1.0", SHA1: "old_sha1"}
 	manifestCacheMu.Lock()
 	fi3, _ := os.Stat(mod3)
-	manifestCache[mod3] = manifestCacheEntry{modTime: fi3.ModTime(), size: fi3.Size(), manifest: manifest3}
+	manifestCache[mod3] = manifestCacheEntry{cachedAt: time.Now(), modTime: fi3.ModTime(), size: fi3.Size(), manifest: manifest3}
 	manifestCacheMu.Unlock()
 	writeModMeta(srvDir, "old-mod-1.0.jar", ModDownloadMeta{
 		ProjectSlug: "oldmod",
@@ -370,7 +371,7 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 	manifest4 := ModManifest{Title: "Private Mod", Version: "1.0"}
 	manifestCacheMu.Lock()
 	fi4, _ := os.Stat(mod4)
-	manifestCache[mod4] = manifestCacheEntry{modTime: fi4.ModTime(), size: fi4.Size(), manifest: manifest4}
+	manifestCache[mod4] = manifestCacheEntry{cachedAt: time.Now(), modTime: fi4.ModTime(), size: fi4.Size(), manifest: manifest4}
 	manifestCacheMu.Unlock()
 
 	// Setup mock Modrinth API responses
@@ -387,7 +388,7 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 					Filename: "lithium-fabric-0.14.0.jar",
 					URL:      "https://cdn.modrinth.com/data/lithium/lithium-fabric-0.14.0.jar",
 					Primary:  true,
-					Hashes:   map[string]string{"sha1": "lithium_new_sha1"},
+					Hashes:   map[string]string{"sha1": fixtureJarSHA1(t)},
 				},
 			},
 		},
@@ -430,7 +431,7 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 			if strings.Contains(r.URL.Path, "lithium-fabric-0.14.0.jar") {
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(bytes.NewReader([]byte("new lithium content"))),
+					Body:       io.NopCloser(bytes.NewReader(fixtureJar(t))),
 				}
 			}
 			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(bytes.NewReader(nil))}
@@ -525,7 +526,7 @@ func TestBatchUpdateModsCurrentVersion(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/java-archive")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("fake-new-appleskin-jar-payload"))
+		_, _ = w.Write(fixtureJar(t))
 	}))
 	defer fakeDownloadServer.Close()
 
@@ -597,4 +598,3 @@ func TestBatchUpdateModsCurrentVersion(t *testing.T) {
 		t.Errorf("expected original jar to still exist after failed download, err: %v", err)
 	}
 }
-

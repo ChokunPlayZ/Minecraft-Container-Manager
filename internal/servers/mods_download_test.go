@@ -24,6 +24,7 @@ func newModTestStore(t *testing.T, serverType string) (*Store, string) {
 		t.Fatalf("open db: %v", err)
 	}
 	s := &Store{db: dbHandle.DB, dataDir: dir}
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := dbHandle.DB.ExecContext(context.Background(),
@@ -36,7 +37,7 @@ func newModTestStore(t *testing.T, serverType string) (*Store, string) {
 }
 
 func TestDownloadModSuccess(t *testing.T) {
-	jarContent := []byte("PK\x03\x04dummy-jar-content")
+	jarContent := fixtureJar(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/java-archive")
 		w.WriteHeader(http.StatusOK)
@@ -112,7 +113,7 @@ func TestDownloadModHTTPError(t *testing.T) {
 }
 
 func TestDeleteModAndDownloadNew(t *testing.T) {
-	jarContent := []byte("PK\x03\x04new-jar")
+	jarContent := fixtureJar(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/java-archive")
 		w.WriteHeader(http.StatusOK)
@@ -206,5 +207,3 @@ func TestDownloadAndListUniversalGravesWithManifest(t *testing.T) {
 		t.Errorf("unexpected item fields in ListMods: %+v", item)
 	}
 }
-
-

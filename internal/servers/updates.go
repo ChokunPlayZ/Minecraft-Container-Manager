@@ -41,21 +41,23 @@ func cleanVersionString(v string) string {
 
 // AvailableModJar describes a single installable build of a mod or plugin.
 type AvailableModJar struct {
-	VersionID     string   `json:"version_id"`
-	VersionName   string   `json:"version_name"`
-	VersionNumber string   `json:"version_number"`
-	Filename      string   `json:"filename"`
-	DownloadURL   string   `json:"download_url"`
-	SizeBytes     int64    `json:"size_bytes,omitempty"`
-	ReleaseType   string   `json:"release_type,omitempty"`
-	GameVersions  []string `json:"game_versions,omitempty"`
-	Loaders       []string `json:"loaders,omitempty"`
-	DatePublished string   `json:"date_published,omitempty"`
-	IsCurrent     bool     `json:"is_current,omitempty"`
+	Hashes        map[string]string `json:"hashes,omitempty"`
+	VersionID     string            `json:"version_id"`
+	VersionName   string            `json:"version_name"`
+	VersionNumber string            `json:"version_number"`
+	Filename      string            `json:"filename"`
+	DownloadURL   string            `json:"download_url"`
+	SizeBytes     int64             `json:"size_bytes,omitempty"`
+	ReleaseType   string            `json:"release_type,omitempty"`
+	GameVersions  []string          `json:"game_versions,omitempty"`
+	Loaders       []string          `json:"loaders,omitempty"`
+	DatePublished string            `json:"date_published,omitempty"`
+	IsCurrent     bool              `json:"is_current,omitempty"`
 }
 
 // ModUpdateInfo describes an update available for an installed mod.
 type ModUpdateInfo struct {
+	Hashes            map[string]string `json:"hashes,omitempty"`
 	ModName           string            `json:"mod_name"`
 	ModFile           string            `json:"mod_file"`
 	Provider          string            `json:"provider"`
@@ -108,6 +110,7 @@ type hangarVersionDownload struct {
 	FileInfo *struct {
 		Name      string `json:"name"`
 		SizeBytes int64  `json:"sizeBytes"`
+		SHA256    string `json:"sha256Hash"`
 	} `json:"fileInfo"`
 	DownloadURL string `json:"downloadUrl"`
 }
@@ -126,15 +129,20 @@ type spigetVersion struct {
 }
 
 // CurseForge API structs
+type curseForgeHash struct {
+	Value string `json:"value"`
+	Algo  int    `json:"algo"`
+}
 type curseForgeFile struct {
-	ID           int      `json:"id"`
-	DisplayName  string   `json:"displayName"`
-	FileName     string   `json:"fileName"`
-	FileDate     string   `json:"fileDate"`
-	FileLength   int64    `json:"fileLength"`
-	DownloadURL  string   `json:"downloadUrl"`
-	GameVersions []string `json:"gameVersions"`
-	ReleaseType  int      `json:"releaseType"`
+	Hashes       []curseForgeHash `json:"hashes"`
+	ID           int              `json:"id"`
+	DisplayName  string           `json:"displayName"`
+	FileName     string           `json:"fileName"`
+	FileDate     string           `json:"fileDate"`
+	FileLength   int64            `json:"fileLength"`
+	DownloadURL  string           `json:"downloadUrl"`
+	GameVersions []string         `json:"gameVersions"`
+	ReleaseType  int              `json:"releaseType"`
 }
 
 type curseForgeFilesResponse struct {
@@ -199,6 +207,7 @@ const (
 
 // ModTargetCompatibility describes the compatibility status of an installed mod for a target MC version.
 type ModTargetCompatibility struct {
+	Hashes            map[string]string      `json:"hashes,omitempty"`
 	ModName           string                 `json:"mod_name"`
 	ModFile           string                 `json:"mod_file"`
 	Title             string                 `json:"title"`
@@ -468,6 +477,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 						LatestVersion:     ver.VersionNumber,
 						LatestJar:         primaryFile.Filename,
 						LatestDownloadURL: primaryFile.URL,
+						Hashes:            primaryFile.Hashes,
 						LatestReleaseType: ver.VersionType,
 						LatestReleaseDate: ver.DatePublished,
 						Changelog:         ver.Changelog,
@@ -541,6 +551,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 								LatestVersion:     latest.Name,
 								LatestJar:         dl.FileInfo.Name,
 								LatestDownloadURL: dl.DownloadURL,
+								Hashes:            map[string]string{"sha256": dl.FileInfo.SHA256},
 								LatestReleaseDate: latest.CreatedAt,
 							}
 						}
@@ -633,6 +644,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 									LatestVersion:     latestVer,
 									LatestJar:         latest.FileName,
 									LatestDownloadURL: dlURL,
+									Hashes:            curseForgeHashes(latest.Hashes),
 									LatestReleaseDate: latest.FileDate,
 								}
 							}
@@ -719,6 +731,7 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 								LatestVersion:     latestVer,
 								LatestJar:         primaryFile.Filename,
 								LatestDownloadURL: primaryFile.URL,
+								Hashes:            primaryFile.Hashes,
 								LatestReleaseType: latest.VersionType,
 								LatestReleaseDate: latest.DatePublished,
 								Changelog:         latest.Changelog,
@@ -810,6 +823,7 @@ func (s *Store) GetModAvailableJars(ctx context.Context, serverID, modName strin
 							VersionNumber: v.VersionNumber,
 							Filename:      f.Filename,
 							DownloadURL:   f.URL,
+							Hashes:        f.Hashes,
 							SizeBytes:     f.Size,
 							ReleaseType:   v.VersionType,
 							GameVersions:  v.GameVersions,
@@ -861,6 +875,7 @@ func (s *Store) GetModAvailableJars(ctx context.Context, serverID, modName strin
 								VersionNumber: v.Name,
 								Filename:      dl.FileInfo.Name,
 								DownloadURL:   dl.DownloadURL,
+								Hashes:        map[string]string{"sha256": dl.FileInfo.SHA256},
 								SizeBytes:     dl.FileInfo.SizeBytes,
 								DatePublished: v.CreatedAt,
 								IsCurrent:     isCur,
@@ -938,6 +953,7 @@ func (s *Store) GetModAvailableJars(ctx context.Context, serverID, modName strin
 							VersionNumber: f.DisplayName,
 							Filename:      f.FileName,
 							DownloadURL:   f.DownloadURL,
+							Hashes:        curseForgeHashes(f.Hashes),
 							SizeBytes:     f.FileLength,
 							ReleaseType:   relType,
 							GameVersions:  f.GameVersions,
@@ -1142,6 +1158,7 @@ func (s *Store) CheckTargetVersionCompatibility(ctx context.Context, serverID, t
 						CompatibleVersion: verNum,
 						CompatibleJar:     primaryFile.Filename,
 						DownloadURL:       primaryFile.URL,
+						Hashes:            primaryFile.Hashes,
 						ReleaseType:       ver.VersionType,
 						ReleaseDate:       ver.DatePublished,
 						Changelog:         ver.Changelog,
@@ -1209,6 +1226,7 @@ func (s *Store) CheckTargetVersionCompatibility(ctx context.Context, serverID, t
 								CompatibleVersion: v.Name,
 								CompatibleJar:     dl.FileInfo.Name,
 								DownloadURL:       dl.DownloadURL,
+								Hashes:            map[string]string{"sha256": dl.FileInfo.SHA256},
 								ReleaseDate:       v.CreatedAt,
 							}
 							foundMatch = true
@@ -1275,6 +1293,7 @@ func (s *Store) CheckTargetVersionCompatibility(ctx context.Context, serverID, t
 								CompatibleVersion: latestVer,
 								CompatibleJar:     latest.FileName,
 								DownloadURL:       dlURL,
+								Hashes:            curseForgeHashes(latest.Hashes),
 								ReleaseDate:       latest.FileDate,
 							}
 							continue
@@ -1419,6 +1438,7 @@ func (s *Store) CheckTargetVersionCompatibility(ctx context.Context, serverID, t
 							CompatibleVersion: verNum,
 							CompatibleJar:     primaryFile.Filename,
 							DownloadURL:       primaryFile.URL,
+							Hashes:            primaryFile.Hashes,
 							ReleaseType:       latest.VersionType,
 							ReleaseDate:       latest.DatePublished,
 							Changelog:         latest.Changelog,
@@ -1549,6 +1569,7 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 		})
 
 		meta := ModDownloadMeta{
+			Hashes:      item.Hashes,
 			ProjectID:   item.ProjectID,
 			ProjectSlug: item.ProjectSlug,
 			Provider:    item.Provider,
@@ -1568,7 +1589,11 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 		} else {
 			// Download succeeded! Only delete old mod jar if filename is different from new jar
 			if !strings.EqualFold(item.ModFile, item.CompatibleJar) {
-				_ = s.DeleteMod(ctx, serverID, item.ModFile)
+				if deleteErr := s.DeleteMod(ctx, serverID, item.ModFile); deleteErr != nil {
+					res.Failed++
+					res.Items = append(res.Items, BatchUpdateModItem{ModName: item.ModName, Original: item.ModFile, Success: false, Error: "replacement saved but old artifact could not be removed: " + deleteErr.Error()})
+					continue
+				}
 			}
 			res.Updated++
 			res.Items = append(res.Items, BatchUpdateModItem{
@@ -1653,6 +1678,7 @@ func (s *Store) BatchUpdateMods(ctx context.Context, serverID string, modNames [
 		})
 
 		meta := ModDownloadMeta{
+			Hashes:      item.Hashes,
 			ProjectID:   item.ProjectID,
 			ProjectSlug: item.ProjectSlug,
 			Provider:    item.Provider,
@@ -1672,7 +1698,11 @@ func (s *Store) BatchUpdateMods(ctx context.Context, serverID string, modNames [
 		} else {
 			// Download succeeded! Only delete old mod jar if filename is different from new jar
 			if !strings.EqualFold(item.ModFile, item.LatestJar) {
-				_ = s.DeleteMod(ctx, serverID, item.ModFile)
+				if deleteErr := s.DeleteMod(ctx, serverID, item.ModFile); deleteErr != nil {
+					res.Failed++
+					res.Items = append(res.Items, BatchUpdateModItem{ModName: item.ModName, Original: item.ModFile, Success: false, Error: "replacement saved but old artifact could not be removed: " + deleteErr.Error()})
+					continue
+				}
 			}
 			res.Updated++
 			res.Items = append(res.Items, BatchUpdateModItem{
@@ -1688,4 +1718,17 @@ func (s *Store) BatchUpdateMods(ctx context.Context, serverID string, modNames [
 	s.InvalidateModUpdatesCache(serverID)
 
 	return res, nil
+}
+
+func curseForgeHashes(hashes []curseForgeHash) map[string]string {
+	result := map[string]string{}
+	for _, hash := range hashes {
+		switch hash.Algo {
+		case 1:
+			result["sha1"] = hash.Value
+		case 2:
+			result["md5"] = hash.Value
+		}
+	}
+	return result
 }

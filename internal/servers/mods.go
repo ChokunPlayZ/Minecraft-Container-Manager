@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/mcm-panel/mcm/internal/storage"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,7 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
+	"sync"
 )
 
 // ModType identifies the artifact directory a server uses.
@@ -51,11 +53,15 @@ type Mod struct {
 
 // ModDownloadMeta stores catalog metadata associated with an installed mod.
 type ModDownloadMeta struct {
-	ProjectID        string `json:"project_id,omitempty"`
-	ProjectSlug      string `json:"project_slug,omitempty"`
-	Provider         string `json:"provider,omitempty"`
-	InstalledVersion string `json:"installed_version,omitempty"`
-	DownloadURL      string `json:"download_url,omitempty"`
+	Hashes           map[string]string `json:"hashes,omitempty"`
+	ProjectID        string            `json:"project_id,omitempty"`
+	ProjectSlug      string            `json:"project_slug,omitempty"`
+	Provider         string            `json:"provider,omitempty"`
+	InstalledVersion string            `json:"installed_version,omitempty"`
+	DownloadURL      string            `json:"download_url,omitempty"`
+	SHA1             string            `json:"sha1,omitempty"`
+	SHA256           string            `json:"sha256,omitempty"`
+	SHA512           string            `json:"sha512,omitempty"`
 }
 
 func modsMetaFile(modsDir string) string {
@@ -63,47 +69,82 @@ func modsMetaFile(modsDir string) string {
 }
 
 func readModsMeta(modsDir string) map[string]ModDownloadMeta {
-	data, err := os.ReadFile(modsMetaFile(modsDir))
+	m, err := readModsMetaChecked(modsDir)
 	if err != nil {
-		return make(map[string]ModDownloadMeta)
+		return map[string]ModDownloadMeta{}
 	}
-	var res map[string]ModDownloadMeta
-	if err := json.Unmarshal(data, &res); err != nil {
-		return make(map[string]ModDownloadMeta)
-	}
-	return res
+	return m
 }
 
-func writeModMeta(modsDir, filename string, meta ModDownloadMeta, extraKeys ...string) {
+var modMetadataMu sync.Mutex
+
+func writeModMeta(modsDir, filename string, meta ModDownloadMeta, extraKeys ...string) error {
 	if meta.ProjectID == "" && meta.ProjectSlug == "" && meta.Provider == "" {
-		return
+		return nil
 	}
-	m := readModsMeta(modsDir)
-	base := modDisplayBase(filename)
+	modMetadataMu.Lock()
+	defer modMetadataMu.Unlock()
+	m, err := readModsMetaChecked(modsDir)
+	if err != nil {
+		return err
+	}
 	m[filename] = meta
-	m[base] = meta
-	for _, k := range extraKeys {
-		if k != "" {
-			m[k] = meta
-			m[strings.ToLower(k)] = meta
+	m[modDisplayBase(filename)] = meta
+	for _, key := range extraKeys {
+		if key != "" {
+			m[key] = meta
+			m[strings.ToLower(key)] = meta
 		}
 	}
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err == nil {
-		_ = os.WriteFile(modsMetaFile(modsDir), data, 0o644)
-	}
+	return saveModsMeta(modsDir, m)
 }
-
-func deleteModMeta(modsDir, filename string) {
-	m := readModsMeta(modsDir)
-	base := modDisplayBase(filename)
+func readModsMetaChecked(dir string) (map[string]ModDownloadMeta, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := storage.OpenRegular(root, ".mcm_mods_meta.json")
+	if os.IsNotExist(err) {
+		return map[string]ModDownloadMeta{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var m map[string]ModDownloadMeta
+	if err = json.NewDecoder(io.LimitReader(f, 8<<20)).Decode(&m); err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m = map[string]ModDownloadMeta{}
+	}
+	return m, nil
+}
+func saveModsMeta(dir string, m map[string]ModDownloadMeta) error {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	_, err = storage.Write(context.Background(), root, ".mcm_mods_meta.json", strings.NewReader(string(data)), 8<<20, 0644)
+	return err
+}
+func deleteModMeta(modsDir, filename string) error {
+	modMetadataMu.Lock()
+	defer modMetadataMu.Unlock()
+	m, err := readModsMetaChecked(modsDir)
+	if err != nil {
+		return err
+	}
 	delete(m, filename)
 	delete(m, filename+".disabled")
-	delete(m, base)
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err == nil {
-		_ = os.WriteFile(modsMetaFile(modsDir), data, 0o644)
-	}
+	delete(m, modDisplayBase(filename))
+	return saveModsMeta(modsDir, m)
 }
 
 func getModMeta(modsDir, filename string, modIDs ...string) (ModDownloadMeta, bool) {
@@ -182,6 +223,14 @@ func (s *Store) modsPath(id, serverType string) (string, ModType, error) {
 	if err != nil {
 		return "", ModTypeNone, err
 	}
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return "", ModTypeNone, err
+	}
+	defer root.Close()
+	if err = storage.Check(root, string(t)); err != nil {
+		return "", ModTypeNone, err
+	}
 	return filepath.Join(s.dataPath(id), string(t)), t, nil
 }
 
@@ -204,7 +253,7 @@ func (s *Store) ListMods(ctx context.Context, id string) (ModListResult, error) 
 	}
 	byName := map[string]*Mod{}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || e.Type()&os.ModeType != 0 {
 			continue
 		}
 		fname := e.Name()
@@ -263,69 +312,118 @@ func (s *Store) GetMod(ctx context.Context, id, name string) (Mod, error) {
 
 // UploadMod writes an uploaded artifact into the server's mod/plugin directory.
 func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader, meta ...ModDownloadMeta) (Mod, error) {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
+	return s.uploadModLocked(ctx, id, filename, r, meta...)
+}
+func (s *Store) uploadModLocked(ctx context.Context, id, filename string, r io.Reader, meta ...ModDownloadMeta) (Mod, error) {
+	s.fileEditMu.Lock()
+	defer s.fileEditMu.Unlock()
+
+	if !validModFileName(filename) {
+		return Mod{}, ErrInvalidModName
+	}
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Mod{}, err
 	}
-	if !validModFileName(filename) {
-		return Mod{}, ErrInvalidModName
-	}
-	dir, _, err := s.modsPath(id, srv.ServerType)
+	kind, err := modDirForType(srv.ServerType)
 	if err != nil {
 		return Mod{}, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return Mod{}, err
-	}
-	target := filepath.Join(dir, filename)
-	dst, err := os.Create(target)
+	root, err := s.openDataRoot(id)
 	if err != nil {
 		return Mod{}, err
 	}
-	_, werr := io.Copy(dst, r)
-	cerr := dst.Close()
-	if werr != nil {
-		return Mod{}, werr
+	defer root.Close()
+	if err = storage.Check(root, string(kind)); err != nil {
+		return Mod{}, err
 	}
-	if cerr != nil {
-		return Mod{}, cerr
+	stage := ".mcm-artifact-stage-" + uuid.NewString()
+	if err = root.Mkdir(stage, 0700); err != nil {
+		return Mod{}, err
 	}
-	manifest, _ := inspectModJar(target)
-
+	defer root.RemoveAll(stage)
+	stageRoot, err := root.OpenRoot(stage)
+	if err != nil {
+		return Mod{}, err
+	}
+	defer stageRoot.Close()
+	rel := string(kind) + "/" + filename
+	if _, err = storage.Write(ctx, stageRoot, rel, r, maxDownloadBytes, 0644); err != nil {
+		return Mod{}, err
+	}
 	var dMeta ModDownloadMeta
 	if len(meta) > 0 {
 		dMeta = meta[0]
 	}
-	if dMeta.Provider == "" && dMeta.ProjectID == "" {
-		if existing, ok := getModMeta(dir, filename, manifest.ModID); ok {
-			dMeta = existing
+	temp := root.Name() + "/" + stage + "/" + rel
+	hashes := map[string]string{}
+	for key, value := range dMeta.Hashes {
+		hashes[key] = value
+	}
+	for key, value := range map[string]string{"sha1": dMeta.SHA1, "sha256": dMeta.SHA256, "sha512": dMeta.SHA512} {
+		if value != "" {
+			hashes[key] = value
 		}
 	}
-	if dMeta.Provider != "" || dMeta.ProjectID != "" || dMeta.ProjectSlug != "" {
-		writeModMeta(dir, filename, dMeta, manifest.ModID)
+	if err = validateArtifact(ctx, temp, hashes); err != nil {
+		return Mod{}, err
 	}
-
+	manifest, err := inspectModJar(temp)
+	if err != nil {
+		return Mod{}, err
+	}
+	modMetadataMu.Lock()
+	defer modMetadataMu.Unlock()
+	if err = root.MkdirAll(string(kind), 0755); err != nil {
+		return Mod{}, err
+	}
+	dir := root.Name() + "/" + string(kind)
+	m, err := readModsMetaChecked(dir)
+	if err != nil {
+		return Mod{}, err
+	}
+	if dMeta.Provider == "" && dMeta.ProjectID == "" {
+		for _, key := range []string{filename, modDisplayBase(filename), manifest.ModID, strings.ToLower(manifest.ModID)} {
+			if existing, ok := m[key]; ok && (existing.Provider != "" || existing.ProjectID != "") {
+				dMeta = existing
+				break
+			}
+		}
+	}
+	m[filename] = dMeta
+	m[modDisplayBase(filename)] = dMeta
+	if manifest.ModID != "" {
+		m[manifest.ModID] = dMeta
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return Mod{}, err
+	}
+	if _, err = storage.Write(ctx, stageRoot, string(kind)+"/.mcm_mods_meta.json", strings.NewReader(string(data)), 8<<20, 0644); err != nil {
+		return Mod{}, err
+	}
+	undo, finish, err := storage.PublishTree(root, stage, []string{rel + ".disabled"})
+	if err != nil {
+		return Mod{}, err
+	}
+	_ = undo // Publication already rolls back on any failed write.
+	if err = finish(); err != nil {
+		return Mod{}, err
+	}
 	s.InvalidateModUpdatesCache(id)
-	return Mod{
-		Name:             modDisplayBase(filename),
-		File:             filename,
-		Enabled:          true,
-		ModID:            manifest.ModID,
-		Title:            manifest.Title,
-		Version:          manifest.Version,
-		SHA1:             manifest.SHA1,
-		Description:      manifest.Description,
-		ProjectID:        dMeta.ProjectID,
-		ProjectSlug:      dMeta.ProjectSlug,
-		Provider:         dMeta.Provider,
-		IsClientOnly:     manifest.IsClientOnly,
-		ClientOnlyReason: manifest.ClientOnlyReason,
-	}, nil
+	return Mod{Name: modDisplayBase(filename), File: filename, Enabled: true, ModID: manifest.ModID, Title: manifest.Title, Version: manifest.Version, SHA1: manifest.SHA1, Description: manifest.Description, ProjectID: dMeta.ProjectID, ProjectSlug: dMeta.ProjectSlug, Provider: dMeta.Provider, IsClientOnly: manifest.IsClientOnly, ClientOnlyReason: manifest.ClientOnlyReason}, nil
 }
 
 // SetModEnabled enables or disables a mod/plugin by renaming the underlying file
 // between foo.jar and foo.jar.disabled.
 func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool) (Mod, error) {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
+	s.fileEditMu.Lock()
+	defer s.fileEditMu.Unlock()
+
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Mod{}, err
@@ -338,7 +436,7 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 	if !ok {
 		return Mod{}, fmt.Errorf("mod not found: %s", name)
 	}
-	if enabled != !strings.HasSuffix(base, ".disabled") {
+	if enabled == !strings.HasSuffix(base, ".disabled") {
 		// Nothing to change.
 		targetPath := filepath.Join(dir, base)
 		manifest, _ := inspectModJar(targetPath)
@@ -365,7 +463,20 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 	} else {
 		target = base + ".disabled"
 	}
-	if err := os.Rename(filepath.Join(dir, base), filepath.Join(dir, target)); err != nil {
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return Mod{}, err
+	}
+	defer root.Close()
+	oldRel := storage.Relative(root, filepath.Join(dir, base))
+	newRel := storage.Relative(root, filepath.Join(dir, target))
+	if err = storage.Check(root, oldRel); err != nil {
+		return Mod{}, err
+	}
+	if err = storage.Check(root, newRel); err != nil {
+		return Mod{}, err
+	}
+	if err := root.Rename(oldRel, newRel); err != nil {
 		return Mod{}, err
 	}
 	targetPath := filepath.Join(dir, target)
@@ -393,6 +504,11 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 
 // DeleteMod removes an installed mod/plugin file.
 func (s *Store) DeleteMod(ctx context.Context, id, name string) error {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
+	s.fileEditMu.Lock()
+	defer s.fileEditMu.Unlock()
+
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -405,8 +521,19 @@ func (s *Store) DeleteMod(ctx context.Context, id, name string) error {
 	if !ok {
 		return fmt.Errorf("mod not found: %s", name)
 	}
-	deleteModMeta(dir, base)
-	err = os.Remove(filepath.Join(dir, base))
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	rel := storage.Relative(root, filepath.Join(dir, base))
+	if err = storage.Check(root, rel); err != nil {
+		return err
+	}
+	err = root.Remove(rel)
+	if err == nil {
+		err = deleteModMeta(dir, base)
+	}
 	if err == nil {
 		s.InvalidateModUpdatesCache(id)
 	}
@@ -422,7 +549,7 @@ func resolveModDirEntry(dir, name string) (string, bool) {
 		return "", false
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || e.Type()&os.ModeType != 0 {
 			continue
 		}
 		fname := e.Name()
@@ -440,8 +567,13 @@ func resolveModDirEntry(dir, name string) (string, bool) {
 // DownloadMod fetches an artifact file from a remote URL (e.g. Modrinth CDN) and saves it
 // into the server's mod/plugin directory.
 func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL string, meta ...ModDownloadMeta) (Mod, error) {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
 	srv, err := s.Get(ctx, id)
 	if err != nil {
+		return Mod{}, err
+	}
+	if _, err = modDirForType(srv.ServerType); err != nil {
 		return Mod{}, err
 	}
 	if !validModFileName(filename) {
@@ -451,22 +583,12 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return Mod{}, ErrInvalidPath
 	}
-	dir, _, err := s.modsPath(id, srv.ServerType)
-	if err != nil {
-		return Mod{}, err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return Mod{}, err
-	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return Mod{}, err
 	}
-	req.Header.Set("User-Agent", "mcm-panel/1.0 (https://github.com/mcm-panel/mcm)")
-
-	client := s.getProxy().Client()
-	resp, err := client.Do(req)
+	req.Header.Set("User-Agent", "mcm-panel/1.0")
+	resp, err := s.getProxy().Client().Do(req)
 	if err != nil {
 		return Mod{}, ErrDownloadFailed
 	}
@@ -474,70 +596,7 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 	if resp.StatusCode != http.StatusOK {
 		return Mod{}, fmt.Errorf("%w: status %d", ErrDownloadFailed, resp.StatusCode)
 	}
-
-	tmpFile := filepath.Join(dir, fmt.Sprintf(".tmp_%d_%s", time.Now().UnixNano(), filename))
-	dst, err := os.Create(tmpFile)
-	if err != nil {
-		return Mod{}, err
-	}
-	_, werr := io.Copy(dst, io.LimitReader(resp.Body, maxDownloadBytes+1))
-	cerr := dst.Close()
-	if werr != nil {
-		_ = os.Remove(tmpFile)
-		return Mod{}, werr
-	}
-	if cerr != nil {
-		_ = os.Remove(tmpFile)
-		return Mod{}, cerr
-	}
-
-	if fi, ferr := os.Stat(tmpFile); ferr == nil && fi.Size() > maxDownloadBytes {
-		_ = os.Remove(tmpFile)
-		return Mod{}, fmt.Errorf("%w: file too large", ErrDownloadFailed)
-	}
-
-	target := filepath.Join(dir, filename)
-	// If a .disabled version exists for the same base name, remove it so there's no duplicate
-	disabledTarget := target + ".disabled"
-	_ = os.Remove(disabledTarget)
-
-	if err := os.Rename(tmpFile, target); err != nil {
-		_ = os.Remove(tmpFile)
-		return Mod{}, err
-	}
-
-	manifest, _ := inspectModJar(target)
-
-	var dMeta ModDownloadMeta
-	if len(meta) > 0 {
-		dMeta = meta[0]
-	}
-	if dMeta.Provider == "" && dMeta.ProjectID == "" {
-		if existing, ok := getModMeta(dir, filename, manifest.ModID); ok {
-			dMeta = existing
-		}
-	}
-	if dMeta.Provider != "" || dMeta.ProjectID != "" || dMeta.ProjectSlug != "" {
-		writeModMeta(dir, filename, dMeta, manifest.ModID)
-	}
-
-	result := Mod{
-		Name:             modDisplayBase(filename),
-		File:             filename,
-		Enabled:          true,
-		ModID:            manifest.ModID,
-		Title:            manifest.Title,
-		Version:          manifest.Version,
-		SHA1:             manifest.SHA1,
-		Description:      manifest.Description,
-		ProjectID:        dMeta.ProjectID,
-		ProjectSlug:      dMeta.ProjectSlug,
-		Provider:         dMeta.Provider,
-		IsClientOnly:     manifest.IsClientOnly,
-		ClientOnlyReason: manifest.ClientOnlyReason,
-	}
-	s.InvalidateModUpdatesCache(id)
-	return result, nil
+	return s.uploadModLocked(ctx, id, filename, resp.Body, meta...)
 }
 
 // SanitizeClientMods inspects all enabled jar files in a server's mods directory

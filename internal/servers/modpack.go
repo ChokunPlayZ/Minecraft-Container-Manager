@@ -13,12 +13,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mcm-panel/mcm/internal/jars"
+	"github.com/mcm-panel/mcm/internal/storage"
 )
 
 // ModpackFormat describes the packaging standard of a modpack.
@@ -141,6 +144,10 @@ func InspectModpackArchive(r io.ReaderAt, size int64, fallbackName ...string) (*
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArchive, err)
+	}
+
+	if err = validatePackZIP(zr); err != nil {
+		return nil, err
 	}
 
 	// 1. Check for Modrinth .mrpack index
@@ -309,8 +316,20 @@ func inspectCurseForgeManifest(man *curseForgeManifest) *ModpackManifest {
 
 // GetInstalledModpack returns the currently installed modpack for a server if any.
 func (s *Store) GetInstalledModpack(ctx context.Context, serverID string) (*InstalledModpack, error) {
-	dataDir := s.dataPath(serverID)
-	data, err := os.ReadFile(modpackMetaFile(dataDir))
+	root, err := s.openDataRoot(serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	f, err := storage.OpenRegular(root, ".mcm_modpack.json")
+	if os.IsNotExist(err) {
+		return nil, ErrModpackNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 8<<20))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrModpackNotFound
@@ -326,32 +345,39 @@ func (s *Store) GetInstalledModpack(ctx context.Context, serverID string) (*Inst
 
 // UninstallModpack deletes all files recorded for the installed modpack and removes metadata.
 func (s *Store) UninstallModpack(ctx context.Context, serverID string) error {
-	modpack, err := s.GetInstalledModpack(ctx, serverID)
+	mu := s.lifecycleLock(serverID)
+	mu.Lock()
+	defer mu.Unlock()
+	unlock := s.lockWorld(serverID, true)
+	defer unlock()
+	pack, err := s.GetInstalledModpack(ctx, serverID)
 	if err != nil {
 		return err
 	}
-	if modpack.CreatedWithModpack {
+	if pack.CreatedWithModpack {
 		return ErrModpackLocked
 	}
-
-	dataDir := s.dataPath(serverID)
-	modsDir := filepath.Join(dataDir, "mods")
-
-	for _, rel := range modpack.InstalledFiles {
-		if rel == "" {
-			continue
-		}
-		p := filepath.Join(dataDir, filepath.FromSlash(rel))
-		if strings.HasPrefix(p, dataDir+string(os.PathSeparator)) {
-			_ = os.Remove(p)
-			if strings.HasPrefix(rel, "mods/") {
-				fname := filepath.Base(rel)
-				deleteModMeta(modsDir, fname)
-			}
-		}
+	if _, err = s.stopLocked(ctx, serverID); err != nil {
+		return err
 	}
-
-	_ = os.Remove(modpackMetaFile(dataDir))
+	root, err := s.openDataRoot(serverID)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	stage := ".mcm-pack-stage-" + uuid.NewString()
+	if err = root.Mkdir(stage, 0700); err != nil {
+		return err
+	}
+	defer root.RemoveAll(stage)
+	obsolete := append(append([]string{}, pack.InstalledFiles...), ".mcm_modpack.json")
+	_, finish, err := storage.PublishTree(root, stage, obsolete)
+	if err != nil {
+		return err
+	}
+	if err = finish(); err != nil {
+		return err
+	}
 	s.InvalidateModUpdatesCache(serverID)
 	return nil
 }
@@ -374,6 +400,15 @@ func (s *Store) InspectModpackFile(filePath string) (*ModpackManifest, error) {
 
 // InstallModpack installs a modpack from an archive file onto the specified server.
 func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath string, opts InstallModpackOpts) (installed *InstalledModpack, err error) {
+	mu := s.lifecycleLock(serverID)
+	mu.Lock()
+	defer mu.Unlock()
+	unlock := s.lockWorld(serverID, true)
+	defer unlock()
+	if _, err = s.stopLocked(ctx, serverID); err != nil {
+		return nil, err
+	}
+
 	_ = s.setState(ctx, serverID, StateInstalling)
 
 	stageOffset := 0
@@ -446,7 +481,10 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		Message:    fmt.Sprintf("Configuring server runtime (%s %s)", manifest.Loader, manifest.MinecraftVersion),
 	})
 
-	existing, _ := s.GetInstalledModpack(ctx, serverID)
+	existing, existingErr := s.GetInstalledModpack(ctx, serverID)
+	if existingErr != nil && !errors.Is(existingErr, ErrModpackNotFound) {
+		return nil, existingErr
+	}
 	createdWithModpack := opts.CreatedWithModpack
 	if existing != nil {
 		if existing.CreatedWithModpack {
@@ -471,79 +509,56 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		}
 	}
 
-	dataDir := s.dataPath(serverID)
+	liveRoot, err := s.openDataRoot(serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer liveRoot.Close()
+	stageName := ".mcm-pack-stage-" + uuid.NewString()
+	if err = liveRoot.Mkdir(stageName, 0700); err != nil {
+		return nil, err
+	}
+	defer liveRoot.RemoveAll(stageName)
+	dataDir := filepath.Join(liveRoot.Name(), stageName)
 	modsDir := filepath.Join(dataDir, "mods")
-	if err := os.MkdirAll(modsDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create mods directory: %w", err)
+	if err = os.MkdirAll(modsDir, 0755); err != nil {
+		return nil, err
 	}
-
-	// If AutoConfigureServer is enabled and manifest declares loader & version,
-	// synchronize server configuration to ensure container starts compatible runtime.
+	// Keep catalog identity for user-owned artifacts while reconciling tracked pack files.
+	if old, readErr := readModsMetaChecked(filepath.Join(liveRoot.Name(), "mods")); readErr == nil {
+		if err = saveModsMeta(modsDir, old); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(readErr) {
+		return nil, readErr
+	}
+	proposed := srv
+	obsolete := []string{}
 	if opts.AutoConfigureServer && manifest.Loader != "" && manifest.MinecraftVersion != "" {
-		targetType := manifest.Loader
-		targetVersion := manifest.MinecraftVersion
-		targetBuild := manifest.LoaderVersion
-		targetJava := jars.RecommendJavaVersion(targetVersion)
-		if targetJava <= 0 {
-			targetJava = 21
+		if s.jars == nil {
+			return nil, fmt.Errorf("server software resolver unavailable")
 		}
-
-		if s.jars != nil {
-			srvType := jars.JarType(targetType)
-			upd := UpdateInput{
-				ServerType:  &srvType,
-				Version:     &targetVersion,
-				Build:       &targetBuild,
-				JavaVersion: &targetJava,
-			}
-			if _, err := s.Update(ctx, serverID, upd); err == nil {
-				// Detach old container if it exists so next start provision uses new runtime
-				if srv.ContainerID != "" && s.docker != nil {
-					_ = s.docker.Remove(ctx, srv.ContainerID)
-					_ = s.clearContainerID(ctx, serverID)
-				}
-			} else {
-				// Direct update fallback if Validate fails due to upstream metadata differences
-				now := time.Now().UTC().Format(time.RFC3339)
-				_, _ = s.db.ExecContext(ctx, "UPDATE servers SET server_type=?, version=?, build=?, java_version=?, updated_at=? WHERE id=?",
-					targetType, targetVersion, targetBuild, targetJava, now, serverID)
-				if srv.ContainerID != "" && s.docker != nil {
-					_ = s.docker.Remove(ctx, srv.ContainerID)
-					_ = s.clearContainerID(ctx, serverID)
-				}
-			}
-		} else {
-			// Direct DB update when jars resolver is not wired (e.g. lightweight test)
-			now := time.Now().UTC().Format(time.RFC3339)
-			_, _ = s.db.ExecContext(ctx, "UPDATE servers SET server_type=?, version=?, build=?, java_version=?, updated_at=? WHERE id=?",
-				targetType, targetVersion, targetBuild, targetJava, now, serverID)
+		jt, parseErr := jars.ParseJarType(manifest.Loader)
+		if parseErr != nil {
+			return nil, parseErr
 		}
-
-		// Modpacks (e.g. Modrinth .mrpack or CurseForge) only contain mods and configs;
-		// they do not include the server software JAR/installer.
-		// If the server was previously on a different loader or version, clean up stale executables.
-		if srv.ServerType != targetType || srv.Version != targetVersion {
-			_ = os.Remove(filepath.Join(dataDir, "server.jar"))
-			_ = os.Remove(filepath.Join(dataDir, "run.sh"))
-			_ = os.Remove(filepath.Join(dataDir, "installer.jar"))
-			matches, _ := filepath.Glob(filepath.Join(dataDir, "*forge*.jar"))
-			for _, m := range matches {
-				_ = os.Remove(m)
-			}
+		resolved, resolveErr := s.jars.Validate(ctx, jt, manifest.MinecraftVersion, manifest.LoaderVersion)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("validate modpack runtime: %w", resolveErr)
 		}
-
-		// Download the required server software / installer JAR for the modpack's loader.
-		if s.jars != nil {
-			currSrv, err := s.Get(ctx, serverID)
-			if err == nil && currSrv.ServerType != "custom" {
-				if jt, err := jars.ParseJarType(currSrv.ServerType); err == nil {
-					dlCtx, dlCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
-					_ = s.jars.DownloadServerJar(dlCtx, jt, currSrv.Version, currSrv.Build, dataDir)
-					dlCancel()
-				}
-			}
+		proposed.ServerType = string(jt)
+		proposed.Version = resolved.Version
+		proposed.Build = resolved.Build
+		proposed.JavaVersion = jars.RecommendJavaVersion(resolved.Version)
+		if err = s.jars.DownloadServerJar(ctx, jt, proposed.Version, proposed.Build, dataDir); err != nil {
+			return nil, fmt.Errorf("download modpack runtime: %w", err)
+		}
+		obsolete, err = runtimePaths(liveRoot)
+		if err != nil {
+			return nil, err
 		}
 	}
+	budget := storage.NewBudget(storage.MaxArchiveBytes)
 
 	installedFiles := make([]string, 0)
 	var fileMu sync.Mutex
@@ -563,6 +578,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		return nil, err
 	}
 
+	// Dedicated server overrides take precedence regardless of ZIP member order.
+	sort.SliceStable(zr.File, func(i, j int) bool {
+		return !strings.HasPrefix(zr.File[i].Name, "server-overrides/") && strings.HasPrefix(zr.File[j].Name, "server-overrides/")
+	})
+
 	extractStageIndex := stageOffset + 2
 	extractBasePct := (extractStageIndex - 1) * 100 / stageTotal
 	dlStageIndex := stageOffset + 3
@@ -581,7 +601,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 				if err != nil {
 					return nil, err
 				}
-				_ = json.NewDecoder(rc).Decode(&idx)
+				decodeErr := json.NewDecoder(io.LimitReader(rc, 8<<20)).Decode(&idx)
+				if decodeErr != nil {
+					rc.Close()
+					return nil, decodeErr
+				}
 				_ = rc.Close()
 				break
 			}
@@ -617,7 +641,7 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			targetPath := filepath.Join(dataDir, filepath.FromSlash(relPath))
 			// Zip-slip containment
 			if !strings.HasPrefix(targetPath, dataDir+string(os.PathSeparator)) {
-				continue
+				return nil, ErrInvalidPath
 			}
 
 			if zf.FileInfo().IsDir() {
@@ -633,7 +657,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 				}
 			}
 
-			if err := extractZipFile(zf, targetPath); err == nil {
+			if err := extractZipFileBounded(ctx, zf, targetPath, budget); err != nil {
+				return nil, fmt.Errorf("extract %s: %w", zf.Name, err)
+			} else {
 				recordFile(relPath)
 				// Deep inspection (Tier 2) on extracted mod jar
 				if strings.HasPrefix(filepath.ToSlash(relPath), "mods/") && !strings.HasSuffix(targetPath, ".disabled") {
@@ -734,6 +760,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 
 		for _, mf := range eligibleFiles {
 			if len(mf.Downloads) == 0 {
+				if strings.ToLower(mf.Env.Server) != "optional" {
+					return nil, fmt.Errorf("required modpack file %s has no download", mf.Path)
+				}
 				userRequiredMu.Lock()
 				userRequiredFiles = append(userRequiredFiles, mf.Path)
 				userRequiredMu.Unlock()
@@ -755,8 +784,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 					}
 					targetRel := mf.Path
 					targetAbs := filepath.Join(dataDir, filepath.FromSlash(targetRel))
-					if !strings.HasPrefix(targetAbs, dataDir+string(os.PathSeparator)) {
-						continue
+					if clean, pathErr := storage.Clean(targetRel); pathErr != nil || clean == "." {
+						errMu.Lock()
+						downloadErr = ErrInvalidPath
+						errMu.Unlock()
+						return
 					}
 					if err := os.MkdirAll(filepath.Dir(targetAbs), 0o755); err != nil {
 						errMu.Lock()
@@ -766,12 +798,31 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 					}
 
 					dlURL := mf.Downloads[0]
-					if err := downloadToFile(ctx, client, dlURL, targetAbs); err != nil {
+					if err := downloadToFile(ctx, client, dlURL, targetAbs, budget); err != nil {
+						if strings.ToLower(mf.Env.Server) != "optional" {
+							errMu.Lock()
+							downloadErr = err
+							errMu.Unlock()
+							return
+						}
 						// Non-fatal if one file fails, but record as requiring manual provision
 						userRequiredMu.Lock()
 						userRequiredFiles = append(userRequiredFiles, mf.Path)
 						userRequiredMu.Unlock()
 						continue
+					}
+					if strings.HasSuffix(strings.ToLower(targetAbs), ".jar") {
+						if verifyErr := validateArtifact(ctx, targetAbs, mf.Hashes); verifyErr != nil {
+							errMu.Lock()
+							downloadErr = verifyErr
+							errMu.Unlock()
+							return
+						}
+					} else if verifyErr := verifyPackHashes(ctx, targetAbs, mf.Hashes); verifyErr != nil {
+						errMu.Lock()
+						downloadErr = verifyErr
+						errMu.Unlock()
+						return
 					}
 					recordFile(targetRel)
 
@@ -783,11 +834,16 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 						if sha1Hash == "" {
 							sha1Hash = manifest.SHA1
 						}
-						writeModMeta(modsDir, fname, ModDownloadMeta{
+						if metaErr := writeModMeta(modsDir, fname, ModDownloadMeta{
 							Provider:         "modrinth",
 							InstalledVersion: manifest.Version,
 							DownloadURL:      dlURL,
-						}, manifest.ModID)
+						}, manifest.ModID); metaErr != nil {
+							errMu.Lock()
+							downloadErr = metaErr
+							errMu.Unlock()
+							return
+						}
 					}
 
 					curr := downloadedCount.Add(1)
@@ -809,7 +865,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 				if err != nil {
 					return nil, err
 				}
-				_ = json.NewDecoder(rc).Decode(&man)
+				decodeErr := json.NewDecoder(io.LimitReader(rc, 8<<20)).Decode(&man)
+				if decodeErr != nil {
+					rc.Close()
+					return nil, decodeErr
+				}
 				_ = rc.Close()
 				break
 			}
@@ -844,7 +904,7 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 
 			targetPath := filepath.Join(dataDir, filepath.FromSlash(relPath))
 			if !strings.HasPrefix(targetPath, dataDir+string(os.PathSeparator)) {
-				continue
+				return nil, ErrInvalidPath
 			}
 
 			if zf.FileInfo().IsDir() {
@@ -852,7 +912,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 				continue
 			}
 
-			if err := extractZipFile(zf, targetPath); err == nil {
+			if err := extractZipFileBounded(ctx, zf, targetPath, budget); err != nil {
+				return nil, fmt.Errorf("extract %s: %w", zf.Name, err)
+			} else {
 				recordFile(relPath)
 			}
 			extractedOverrides++
@@ -927,25 +989,39 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		cfCh := make(chan struct {
 			ProjectID int
 			FileID    int
+			Required  bool
 		}, len(man.Files))
 		for _, cfFile := range man.Files {
 			cfCh <- struct {
 				ProjectID int
 				FileID    int
-			}{ProjectID: cfFile.ProjectID, FileID: cfFile.FileID}
+				Required  bool
+			}{ProjectID: cfFile.ProjectID, FileID: cfFile.FileID, Required: cfFile.Required}
 		}
 		close(cfCh)
 
 		client := &http.Client{Timeout: 90 * time.Second}
 		var wg sync.WaitGroup
+		var cfErr error
+		var cfErrMu sync.Mutex
+		failCF := func(e error) {
+			cfErrMu.Lock()
+			if cfErr == nil {
+				cfErr = e
+			}
+			cfErrMu.Unlock()
+		}
 
 		for i := 0; i < concurrency; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				for item := range cfCh {
-					dlURL, fileName, err := resolveCurseForgeDownload(ctx, client, item.ProjectID, item.FileID, opts.CurseForgeAPIKey)
+					dlURL, fileName, hashes, err := resolveCurseForgeDownload(ctx, client, item.ProjectID, item.FileID, opts.CurseForgeAPIKey)
 					if err != nil || dlURL == "" {
+						if item.Required {
+							failCF(fmt.Errorf("required CurseForge file %d unavailable: %v", item.FileID, err))
+						}
 						userRequiredMu.Lock()
 						userRequiredFiles = append(userRequiredFiles, fmt.Sprintf("CurseForge File #%d (Project %d)", item.FileID, item.ProjectID))
 						userRequiredMu.Unlock()
@@ -956,6 +1032,10 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 					if fileName == "" {
 						fileName = fmt.Sprintf("cf_%d_%d.jar", item.ProjectID, item.FileID)
 					}
+					if !validModFileName(fileName) {
+						failCF(ErrInvalidModName)
+						return
+					}
 					// Tier 1 check on filename before downloading
 					if isClient, _ := IsClientOnlyFilename(fileName); isClient {
 						curr := downloadedCF.Add(1)
@@ -964,13 +1044,20 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 					}
 
 					targetAbs := filepath.Join(modsDir, fileName)
-					if err := downloadToFile(ctx, client, dlURL, targetAbs); err != nil {
+					if err := downloadToFile(ctx, client, dlURL, targetAbs, budget); err != nil {
+						if item.Required {
+							failCF(err)
+						}
 						userRequiredMu.Lock()
 						userRequiredFiles = append(userRequiredFiles, fileName)
 						userRequiredMu.Unlock()
 						curr := downloadedCF.Add(1)
 						emitCFProgress(curr, fileName+" (download failed)")
 						continue
+					}
+					if err := validateArtifact(ctx, targetAbs, hashes); err != nil {
+						failCF(err)
+						return
 					}
 					rel := filepath.Join("mods", fileName)
 
@@ -980,12 +1067,15 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 						disabledTarget := targetAbs + ".disabled"
 						if err := os.Rename(targetAbs, disabledTarget); err == nil {
 							recordFile(rel + ".disabled")
-							writeModMeta(modsDir, fileName+".disabled", ModDownloadMeta{
+							if metaErr := writeModMeta(modsDir, fileName+".disabled", ModDownloadMeta{
 								ProjectID:        fmt.Sprint(item.ProjectID),
 								Provider:         "curseforge",
 								InstalledVersion: manifest.Version,
 								DownloadURL:      dlURL,
-							}, manifest.ModID)
+							}, manifest.ModID); metaErr != nil {
+								failCF(metaErr)
+								return
+							}
 							curr := downloadedCF.Add(1)
 							emitCFProgress(curr, fileName+" (client-only disabled)")
 							continue
@@ -993,12 +1083,15 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 					}
 
 					recordFile(rel)
-					writeModMeta(modsDir, fileName, ModDownloadMeta{
+					if metaErr := writeModMeta(modsDir, fileName, ModDownloadMeta{
 						ProjectID:        fmt.Sprint(item.ProjectID),
 						Provider:         "curseforge",
 						InstalledVersion: manifest.Version,
 						DownloadURL:      dlURL,
-					}, manifest.ModID)
+					}, manifest.ModID); metaErr != nil {
+						failCF(metaErr)
+						return
+					}
 
 					curr := downloadedCF.Add(1)
 					emitCFProgress(curr, fileName)
@@ -1006,6 +1099,9 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			}()
 		}
 		wg.Wait()
+		if cfErr != nil {
+			return nil, cfErr
+		}
 
 	case ModpackFormatGeneric:
 		// Extract zip directly. If all jars are at root, extract into mods/.
@@ -1044,10 +1140,12 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 			}
 
 			if !strings.HasPrefix(targetPath, dataDir+string(os.PathSeparator)) {
-				continue
+				return nil, ErrInvalidPath
 			}
 
-			if err := extractZipFile(zf, targetPath); err == nil {
+			if err := extractZipFileBounded(ctx, zf, targetPath, budget); err != nil {
+				return nil, fmt.Errorf("extract %s: %w", zf.Name, err)
+			} else {
 				recordFile(relPath)
 				if strings.HasPrefix(filepath.ToSlash(relPath), "mods/") && strings.HasSuffix(strings.ToLower(relPath), ".jar") {
 					fname := filepath.Base(relPath)
@@ -1059,9 +1157,11 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 							recordFile(relPath + ".disabled")
 						}
 					}
-					writeModMeta(modsDir, fname, ModDownloadMeta{
+					if metaErr := writeModMeta(modsDir, fname, ModDownloadMeta{
 						InstalledVersion: manifest.Version,
-					}, manifest.ModID)
+					}, manifest.ModID); metaErr != nil {
+						return nil, metaErr
+					}
 				}
 			}
 			extractedFiles++
@@ -1126,13 +1226,90 @@ func (s *Store) InstallModpack(ctx context.Context, serverID string, archivePath
 		Message:    "Saving modpack metadata...",
 	})
 
-	// Final safety sweep: ensure no client-only mods remain enabled in the mods directory
-	_, _ = s.SanitizeClientMods(ctx, serverID)
-
-	// Persist installed modpack record
-	if data, err := json.MarshalIndent(installed, "", "  "); err == nil {
-		_ = os.WriteFile(modpackMetaFile(dataDir), data, 0o644)
+	// Verify every staged jar before any live file or runtime configuration changes.
+	stageRoot, err := os.OpenRoot(dataDir)
+	if err != nil {
+		return nil, err
 	}
+	defer stageRoot.Close()
+	entries, err := os.ReadDir(modsDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".jar") || strings.HasSuffix(entry.Name(), ".jar.disabled") {
+			file := filepath.Join(modsDir, entry.Name())
+			if err = validateArtifact(ctx, file, nil); err != nil {
+				return nil, err
+			}
+			info, inspectErr := inspectModJar(file)
+			if inspectErr != nil {
+				return nil, inspectErr
+			}
+			if info.IsClientOnly && !strings.HasSuffix(entry.Name(), ".disabled") {
+				if err = os.Rename(file, file+".disabled"); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	// Derive the manifest from files that actually exist after client-only renames.
+	installed.InstalledFiles = nil
+	for _, rel := range installedFiles {
+		if _, statErr := stageRoot.Stat(rel); statErr == nil {
+			installed.InstalledFiles = append(installed.InstalledFiles, rel)
+		} else if _, statErr = stageRoot.Stat(rel + ".disabled"); statErr == nil {
+			installed.InstalledFiles = append(installed.InstalledFiles, rel+".disabled")
+		}
+	}
+	if existing != nil {
+		current := map[string]bool{}
+		for _, rel := range installed.InstalledFiles {
+			current[rel] = true
+		}
+		for _, rel := range existing.InstalledFiles {
+			if !current[rel] {
+				obsolete = append(obsolete, rel)
+			}
+		}
+	}
+	data, err := json.MarshalIndent(installed, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if _, err = storage.Write(ctx, stageRoot, ".mcm_modpack.json", strings.NewReader(string(data)), 8<<20, 0644); err != nil {
+		return nil, err
+	}
+	undo, finish, err := storage.PublishTree(liveRoot, stageName, obsolete)
+	if err != nil {
+		return nil, err
+	}
+	published := false
+	defer func() {
+		if !published {
+			if rollbackErr := undo(); rollbackErr != nil {
+				err = errors.Join(err, rollbackErr)
+			}
+		} else {
+			if cleanupErr := finish(); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+		}
+	}()
+	if proposed.ServerType != srv.ServerType || proposed.Version != srv.Version || proposed.Build != srv.Build {
+		if srv.ContainerID != "" {
+			if err = s.removeContainer(ctx, srv.ContainerID); err != nil {
+				return nil, err
+			}
+			if err = s.clearContainerID(ctx, serverID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE servers SET server_type=?,version=?,build=?,java_version=?,updated_at=? WHERE id=?`, proposed.ServerType, proposed.Version, proposed.Build, proposed.JavaVersion, time.Now().UTC().Format(time.RFC3339), serverID); err != nil {
+		return nil, err
+	}
+	published = true
 
 	s.InvalidateModUpdatesCache(serverID)
 
@@ -1176,8 +1353,11 @@ func stripCommonModpackPrefix(path string) string {
 	return path
 }
 
-func extractZipFile(zf *zip.File, destPath string) error {
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+func extractZipFileBounded(ctx context.Context, zf *zip.File, destPath string, budget *storage.Budget) error {
+	if !zf.Mode().IsRegular() {
+		return ErrInvalidArchive
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return err
 	}
 	rc, err := zf.Open()
@@ -1185,18 +1365,18 @@ func extractZipFile(zf *zip.File, destPath string) error {
 		return err
 	}
 	defer rc.Close()
-
-	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, zf.Mode())
+	out, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
-	_, err = io.Copy(out, rc)
+	_, err = storage.Copy(ctx, budget.Writer(out), rc, storage.MaxArchiveBytes)
+	if closeErr := out.Close(); err == nil {
+		err = closeErr
+	}
 	return err
 }
 
-func downloadToFile(ctx context.Context, client *http.Client, rawURL, destPath string) error {
+func downloadToFile(ctx context.Context, client *http.Client, rawURL, destPath string, budgets ...*storage.Budget) error {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return ErrInvalidPath
@@ -1223,7 +1403,11 @@ func downloadToFile(ctx context.Context, client *http.Client, rawURL, destPath s
 	if err != nil {
 		return err
 	}
-	_, werr := io.Copy(out, resp.Body)
+	var writer io.Writer = out
+	if len(budgets) > 0 {
+		writer = budgets[0].Writer(out)
+	}
+	_, werr := storage.Copy(ctx, writer, resp.Body, maxDownloadBytes)
 	cerr := out.Close()
 	if werr != nil {
 		_ = os.Remove(tmpFile)
@@ -1238,54 +1422,50 @@ func downloadToFile(ctx context.Context, client *http.Client, rawURL, destPath s
 }
 
 // resolveCurseForgeDownload resolves download URL and filename for a CurseForge file.
-func resolveCurseForgeDownload(ctx context.Context, client *http.Client, projectID, fileID int, apiKey string) (string, string, error) {
+func resolveCurseForgeDownload(ctx context.Context, client *http.Client, projectID, fileID int, apiKey string) (string, string, map[string]string, error) {
 	if apiKey == "" {
 		apiKey = os.Getenv("CURSEFORGE_API_KEY")
 	}
-
-	// 1. Query /v1/mods/{projectID}/files/{fileID}
-	url := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files/%d", projectID, fileID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	target := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files/%d", projectID, fileID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	if apiKey != "" {
 		req.Header.Set("x-api-key", apiKey)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "mcm-panel/1.0 (https://github.com/mcm-panel/mcm)")
-
 	resp, err := client.Do(req)
-	if err == nil && resp.StatusCode == http.StatusOK {
-		defer resp.Body.Close()
-		var res struct {
-			Data struct {
-				FileName    string `json:"fileName"`
-				DownloadURL string `json:"downloadUrl"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&res); err == nil {
-			if res.Data.DownloadURL != "" {
-				return res.Data.DownloadURL, res.Data.FileName, nil
-			}
-			// If downloadUrl is empty in payload, query download-url endpoint
-			dlURL, err := resolveCurseForgeDownloadURLEndpoint(ctx, client, projectID, fileID, apiKey)
-			if err == nil && dlURL != "" {
-				return dlURL, res.Data.FileName, nil
-			}
-			// Fallback: construct edge URL if fileId > 0
-			if res.Data.FileName != "" {
-				edgeURL := fmt.Sprintf("https://edge.forgecdn.net/files/%d/%d/%s", fileID/1000, fileID%1000, res.Data.FileName)
-				return edgeURL, res.Data.FileName, nil
-			}
-		}
-	} else if resp != nil {
-		resp.Body.Close()
+	if err != nil {
+		return "", "", nil, err
 	}
-
-	// Direct edge fallback
-	edgeURL := fmt.Sprintf("https://edge.forgecdn.net/files/%d/%d/mod_%d_%d.jar", fileID/1000, fileID%1000, projectID, fileID)
-	return edgeURL, fmt.Sprintf("mod_%d_%d.jar", projectID, fileID), nil
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", nil, fmt.Errorf("CurseForge file metadata returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Data struct {
+			FileName    string           `json:"fileName"`
+			DownloadURL string           `json:"downloadUrl"`
+			Hashes      []curseForgeHash `json:"hashes"`
+		} `json:"data"`
+	}
+	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return "", "", nil, err
+	}
+	file := result.Data
+	if !validModFileName(file.FileName) {
+		return "", "", nil, ErrInvalidModName
+	}
+	hashes := curseForgeHashes(file.Hashes)
+	if file.DownloadURL != "" {
+		return file.DownloadURL, file.FileName, hashes, nil
+	}
+	download, err := resolveCurseForgeDownloadURLEndpoint(ctx, client, projectID, fileID, apiKey)
+	if err != nil || download == "" {
+		return "", "", nil, fmt.Errorf("CurseForge file %d requires manual download: %v", fileID, err)
+	}
+	return download, file.FileName, hashes, nil
 }
 
 func resolveCurseForgeDownloadURLEndpoint(ctx context.Context, client *http.Client, projectID, fileID int, apiKey string) (string, error) {
@@ -1322,4 +1502,28 @@ func CalculateSHA1(r io.Reader) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func validatePackZIP(zr *zip.Reader) error {
+	if len(zr.File) > storage.MaxArchiveEntries {
+		return ErrInvalidArchive
+	}
+	var total uint64
+	for _, entry := range zr.File {
+		name, err := storage.Clean(entry.Name)
+		if err != nil || name == "." {
+			return ErrInvalidArchive
+		}
+		if !entry.Mode().IsRegular() && !entry.FileInfo().IsDir() {
+			return ErrInvalidArchive
+		}
+		if entry.UncompressedSize64 > uint64(storage.MaxArchiveBytes)-total {
+			return ErrInvalidArchive
+		}
+		total += entry.UncompressedSize64
+	}
+	return nil
+}
+func verifyPackHashes(ctx context.Context, file string, hashes map[string]string) error {
+	return verifyArtifactHashes(ctx, file, hashes)
 }

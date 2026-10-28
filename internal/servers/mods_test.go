@@ -1,9 +1,9 @@
 package servers
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -66,63 +66,37 @@ func TestModDisplayBase(t *testing.T) {
 }
 
 func TestEnableDisableRename(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "foo.jar"), []byte("jar"), 0o644); err != nil {
+	s, id := newModTestStore(t, "fabric")
+	dir := filepath.Join(s.dataPath(id), "mods")
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	// Disable: foo.jar -> foo.jar.disabled
-	target := disable(t, dir, "foo")
-	if target != "foo.jar.disabled" {
-		t.Fatalf("disable returned %q", target)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "foo.jar.disabled")); err != nil {
-		t.Fatalf("disabled file missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "foo.jar")); !os.IsNotExist(err) {
-		t.Fatalf("enabled file should be gone")
-	}
-
-	// Enable: foo.jar.disabled -> foo.jar
-	target = enable(t, dir, "foo")
-	if target != "foo.jar" {
-		t.Fatalf("enable returned %q", target)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "foo.jar")); err != nil {
-		t.Fatalf("enabled file missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "foo.jar.disabled")); !os.IsNotExist(err) {
-		t.Fatalf("disabled file should be gone")
-	}
-}
-
-func disable(t *testing.T, dir, name string) string {
-	t.Helper()
-	base, ok := resolveModDirEntry(dir, name)
-	if !ok {
-		t.Fatalf("resolve %q failed", name)
-	}
-	target := base
-	if !strings.HasSuffix(target, ".disabled") {
-		target = base + ".disabled"
-	}
-	if err := os.Rename(filepath.Join(dir, base), filepath.Join(dir, target)); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "foo.jar"), []byte("jar"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	return target
-}
-
-func enable(t *testing.T, dir, name string) string {
-	t.Helper()
-	base, ok := resolveModDirEntry(dir, name)
-	if !ok {
-		t.Fatalf("resolve %q failed", name)
+	for _, enabled := range []bool{false, false, true, true} {
+		mod, err := s.SetModEnabled(context.Background(), id, "foo", enabled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "foo.jar"
+		if !enabled {
+			want += ".disabled"
+		}
+		if mod.Enabled != enabled || mod.File != want {
+			t.Fatalf("incorrect toggle: %+v", mod)
+		}
+		if _, err = os.Stat(filepath.Join(dir, want)); err != nil {
+			t.Fatal(err)
+		}
+		other := "foo.jar"
+		if enabled {
+			other += ".disabled"
+		}
+		if _, err = os.Stat(filepath.Join(dir, other)); !os.IsNotExist(err) {
+			t.Fatal("duplicate toggle artifact")
+		}
 	}
-	target := strings.TrimSuffix(base, ".disabled")
-	if err := os.Rename(filepath.Join(dir, base), filepath.Join(dir, target)); err != nil {
-		t.Fatal(err)
-	}
-	return target
 }
 
 func TestResolveModDirEntry(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ type manifestCacheEntry struct {
 	modTime  time.Time
 	size     int64
 	manifest ModManifest
+	cachedAt time.Time
 }
 
 var (
@@ -46,7 +48,7 @@ func inspectModJar(filePath string) (ModManifest, error) {
 
 	manifestCacheMu.RLock()
 	if cached, ok := manifestCache[filePath]; ok {
-		if cached.modTime.Equal(fi.ModTime()) && cached.size == fi.Size() {
+		if cached.modTime.Equal(fi.ModTime()) && cached.size == fi.Size() && time.Since(cached.cachedAt) < 5*time.Minute {
 			manifestCacheMu.RUnlock()
 			return cached.manifest, nil
 		}
@@ -59,7 +61,19 @@ func inspectModJar(filePath string) (ModManifest, error) {
 	}
 
 	manifestCacheMu.Lock()
+	for key, entry := range manifestCache {
+		if time.Since(entry.cachedAt) > 5*time.Minute {
+			delete(manifestCache, key)
+		}
+	}
+	if len(manifestCache) >= 1024 {
+		for key := range manifestCache {
+			delete(manifestCache, key)
+			break
+		}
+	}
 	manifestCache[filePath] = manifestCacheEntry{
+		cachedAt: time.Now(),
 		modTime:  fi.ModTime(),
 		size:     fi.Size(),
 		manifest: manifest,
@@ -86,12 +100,7 @@ func readModJarManifest(filePath string) (ModManifest, error) {
 	// Open as zip archive
 	zr, err := zip.OpenReader(filePath)
 	if err != nil {
-		// Not a valid zip or corrupted; return whatever SHA1 we computed
-		if client, reason := IsClientOnlyFilename(filePath); client {
-			manifest.IsClientOnly = true
-			manifest.ClientOnlyReason = reason
-		}
-		return manifest, nil
+		return manifest, err
 	}
 	defer zr.Close()
 
@@ -318,4 +327,14 @@ func parseModsTOML(r io.Reader) (id, title, ver, desc string, isClientOnly bool,
 		title = id
 	}
 	return
+}
+
+func invalidateManifestPrefix(dir string) {
+	manifestCacheMu.Lock()
+	defer manifestCacheMu.Unlock()
+	for key := range manifestCache {
+		if key == dir || strings.HasPrefix(key, dir+string(filepath.Separator)) {
+			delete(manifestCache, key)
+		}
+	}
 }

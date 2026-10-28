@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mcm-panel/mcm/internal/servers"
+	"github.com/mcm-panel/mcm/internal/storage"
 )
 
 // handleGetInstalledModpack returns the currently installed modpack on the server.
@@ -44,7 +45,8 @@ func (s *Server) handleInspectModpack(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Multipart form file upload
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(512 << 20); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, storage.MaxUploadBytes+(1<<20))
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse upload")
 			return
 		}
@@ -65,7 +67,7 @@ func (s *Server) handleInspectModpack(w http.ResponseWriter, r *http.Request) {
 			_ = os.Remove(tmpFile.Name())
 		}()
 
-		if _, err := io.Copy(tmpFile, file); err != nil {
+		if _, err := storage.Copy(r.Context(), tmpFile, file, storage.MaxUploadBytes); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "failed to save temp file")
 			return
 		}
@@ -131,9 +133,13 @@ func (s *Server) handleInstallModpack(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Multipart Form Upload
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(512 << 20); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, storage.MaxUploadBytes+(1<<20))
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", "could not parse modpack upload")
 			return
+		}
+		if cfKey == "" {
+			cfKey = r.FormValue("curseforge_api_key")
 		}
 		file, _, err := r.FormFile("file")
 		if err != nil {
@@ -153,7 +159,7 @@ func (s *Server) handleInstallModpack(w http.ResponseWriter, r *http.Request) {
 			_ = os.Remove(tmpPath)
 		}()
 
-		if _, err := io.Copy(tmpFile, file); err != nil {
+		if _, err := storage.Copy(r.Context(), tmpFile, file, storage.MaxUploadBytes); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error", "failed to write modpack archive")
 			return
 		}
@@ -371,7 +377,7 @@ func downloadURLToTempWithProgress(ctx context.Context, rawURL string, onProgres
 		writer = io.MultiWriter(tmpFile, pw)
 	}
 
-	if _, err := io.Copy(writer, resp.Body); err != nil {
+	if _, err := storage.Copy(ctx, writer, resp.Body, storage.MaxUploadBytes); err != nil {
 		_ = os.Remove(tmpFile.Name())
 		return "", err
 	}

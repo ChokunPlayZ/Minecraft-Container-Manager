@@ -20,7 +20,8 @@ func (s *Server) handleListMods(w http.ResponseWriter, r *http.Request) {
 
 // handleUploadMod accepts a multipart upload of a mod/plugin jar.
 func (s *Server) handleUploadMod(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, (512<<20)+(1<<20))
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "could not parse upload")
 		return
 	}
@@ -45,7 +46,6 @@ func (s *Server) handleUploadMod(w http.ResponseWriter, r *http.Request) {
 				meta.ProjectSlug = oldMod.ProjectSlug
 			}
 		}
-		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), oldName)
 	}
 
 	mod, err := s.servers.UploadMod(r.Context(), r.PathValue("id"), header.Filename, file, meta)
@@ -53,18 +53,25 @@ func (s *Server) handleUploadMod(w http.ResponseWriter, r *http.Request) {
 		s.writeModErr(w, err)
 		return
 	}
+	if oldName := r.FormValue("delete_old_name"); oldName != "" && oldName != mod.File && oldName != mod.Name {
+		if err := s.servers.DeleteMod(r.Context(), r.PathValue("id"), oldName); err != nil {
+			s.writeModErr(w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, mod)
 }
 
 // handleDownloadMod downloads a mod/plugin artifact from a remote URL.
 func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		URL           string `json:"url"`
-		Filename      string `json:"filename"`
-		DeleteOldName string `json:"delete_old_name"`
-		ProjectID     string `json:"project_id"`
-		ProjectSlug   string `json:"project_slug"`
-		Provider      string `json:"provider"`
+		URL           string            `json:"url"`
+		Filename      string            `json:"filename"`
+		DeleteOldName string            `json:"delete_old_name"`
+		ProjectID     string            `json:"project_id"`
+		ProjectSlug   string            `json:"project_slug"`
+		Provider      string            `json:"provider"`
+		Hashes        map[string]string `json:"hashes"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -79,6 +86,7 @@ func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   in.ProjectID,
 		ProjectSlug: in.ProjectSlug,
 		Provider:    in.Provider,
+		Hashes:      in.Hashes,
 	}
 
 	if in.DeleteOldName != "" {
@@ -89,7 +97,6 @@ func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 				meta.ProjectSlug = oldMod.ProjectSlug
 			}
 		}
-		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), in.DeleteOldName)
 	}
 
 	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL, meta)
@@ -100,6 +107,12 @@ func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeModErr(w, err)
 		return
+	}
+	if in.DeleteOldName != "" && in.DeleteOldName != mod.File && in.DeleteOldName != mod.Name {
+		if err := s.servers.DeleteMod(r.Context(), r.PathValue("id"), in.DeleteOldName); err != nil {
+			s.writeModErr(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, mod)
 }
@@ -240,12 +253,13 @@ func (s *Server) handleGetModVersions(w http.ResponseWriter, r *http.Request) {
 // handleUpdateMod downloads and applies a new jar version, removing the old jar.
 func (s *Server) handleUpdateMod(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		URL         string `json:"url"`
-		Filename    string `json:"filename"`
-		DeleteOld   bool   `json:"delete_old"`
-		ProjectID   string `json:"project_id"`
-		ProjectSlug string `json:"project_slug"`
-		Provider    string `json:"provider"`
+		URL         string            `json:"url"`
+		Filename    string            `json:"filename"`
+		DeleteOld   bool              `json:"delete_old"`
+		ProjectID   string            `json:"project_id"`
+		ProjectSlug string            `json:"project_slug"`
+		Provider    string            `json:"provider"`
+		Hashes      map[string]string `json:"hashes"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
@@ -260,6 +274,7 @@ func (s *Server) handleUpdateMod(w http.ResponseWriter, r *http.Request) {
 		ProjectID:   in.ProjectID,
 		ProjectSlug: in.ProjectSlug,
 		Provider:    in.Provider,
+		Hashes:      in.Hashes,
 	}
 
 	var oldName string
@@ -286,7 +301,6 @@ func (s *Server) handleUpdateMod(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if in.DeleteOld && oldName != "" && !strings.EqualFold(oldName, in.Filename) {
-		_ = s.servers.DeleteMod(r.Context(), r.PathValue("id"), oldName)
 	}
 
 	writeJSON(w, http.StatusOK, mod)

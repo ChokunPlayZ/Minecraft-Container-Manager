@@ -894,6 +894,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("delete server: %w", err)
 	}
 	s.InvalidateModUpdatesCache(id)
+	invalidateManifestPrefix(s.dataPath(id))
 	s.diskMu.Lock()
 	delete(s.diskCache, id)
 	s.diskMu.Unlock()
