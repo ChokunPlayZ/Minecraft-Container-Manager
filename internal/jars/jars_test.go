@@ -3,6 +3,7 @@ package jars
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -187,7 +188,6 @@ func TestAvailableJavaVersions(t *testing.T) {
 		t.Errorf("expected Java 21 in releases list: %+v", releases)
 	}
 }
-
 
 func TestForgeResolve(t *testing.T) {
 	r, paper, fabric, mojang := newTestResolver(t)
@@ -510,7 +510,6 @@ func TestYouerDownloadContextCanceled(t *testing.T) {
 	}
 }
 
-
 func TestRecommendJavaVersion(t *testing.T) {
 	tests := []struct {
 		mcVersion string
@@ -533,8 +532,8 @@ func TestRecommendJavaVersion(t *testing.T) {
 		{"v1.20.1", 17},
 		{"1.21.1-fabric", 21},
 		{" 1.16.5 ", 8},
-		{"2.11.3", 21}, // Geyser standalone
-		{"2.4.2", 21},  // Geyser older
+		{"2.11.3", 21},         // Geyser standalone
+		{"2.4.2", 21},          // Geyser older
 		{"3.4.0-SNAPSHOT", 21}, // Velocity
 	}
 
@@ -599,35 +598,34 @@ func TestPaperDownloadURL(t *testing.T) {
 	}
 }
 
-func TestLiveLimbo(t *testing.T) {
-	r := NewResolver()
-	urlLatest, err := r.resolveLimboJar(context.Background(), "latest")
-	if err != nil {
-		t.Fatalf("resolveLimboJar(latest) failed: %v", err)
+func TestResolveLimboJar(t *testing.T) {
+	client := &http.Client{Transport: jarTestTransport(func(req *http.Request) (*http.Response, error) {
+		version := req.URL.Query().Get("game_versions")
+		body := `[{"files":[{"url":"https://cdn.example.test/latest.jar","primary":true}]}]`
+		if version != "" {
+			if version != `["1.21"]` {
+				body = `[]`
+			} else {
+				body = `[{"files":[{"url":"https://cdn.example.test/1.21.jar","primary":true}]}]`
+			}
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	r := NewResolverWithBases(client, "", "", "")
+	if url, err := r.resolveLimboJar(context.Background(), "1.21"); err != nil || !strings.HasSuffix(url, "/1.21.jar") {
+		t.Fatalf("exact artifact: %s %v", url, err)
 	}
-	t.Logf("resolveLimboJar(latest) returned: %s", urlLatest)
-
-	url121, err := r.resolveLimboJar(context.Background(), "1.21")
-	if err != nil {
-		t.Fatalf("resolveLimboJar(1.21) failed: %v", err)
+	if _, err := r.resolveLimboJar(context.Background(), "unavailable"); err == nil {
+		t.Fatal("substituted latest for missing requested version")
 	}
-	t.Logf("resolveLimboJar(1.21) returned: %s", url121)
-
-	dir := t.TempDir()
-	err = r.DownloadServerJar(context.Background(), TypeLimbo, "latest", "latest", dir)
-	if err != nil {
-		t.Fatalf("DownloadServerJar failed: %v", err)
+	if _, err := r.resolveLimboJar(context.Background(), "latest"); err != nil {
+		t.Fatal(err)
 	}
-
-	info, err := os.Stat(filepath.Join(dir, "server.jar"))
-	if err != nil {
-		t.Fatalf("server.jar not found: %v", err)
-	}
-	if info.Size() == 0 {
-		t.Fatalf("downloaded server.jar is empty")
-	}
-	t.Logf("downloaded Limbo server.jar size: %d bytes", info.Size())
 }
+
+type jarTestTransport func(*http.Request) (*http.Response, error)
+
+func (f jarTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestLivePurpur(t *testing.T) {
 	r := NewResolver()
@@ -675,6 +673,3 @@ func TestDownloadFileWithProgress(t *testing.T) {
 		t.Errorf("expected final progress to be 10, got updates: %v", updates)
 	}
 }
-
-
-

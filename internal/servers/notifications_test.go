@@ -33,6 +33,7 @@ func notificationStore(t *testing.T, state string) (*Store, string, *eventRecord
 	}
 	t.Cleanup(func() { h.Close() })
 	s := NewStore(h, nil, nil, 25565, 25575, dir, "")
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 	id := "notification-server"
 	_, err = h.DB.Exec(`INSERT INTO servers(id,name,server_type,version,ram_mb,host_port,container_id,state,created_at,updated_at) VALUES(?, 'Survival', 'custom', 'custom', 1024, 25565, 'container', ?, '', '')`, id, state)
 	if err != nil {

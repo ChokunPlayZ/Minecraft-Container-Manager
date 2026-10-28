@@ -35,8 +35,9 @@ func TestStoreStats(t *testing.T) {
 		},
 	}
 
-	jr := jars.NewResolver()
+	jr := fixtureJarResolver(t, jars.NewResolver())
 	s := NewStore(dbHandle, nil, jr, 25565, 25570, dir, "")
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 	s.docker = fake
 
 	// 1. Not found server

@@ -48,6 +48,7 @@ func newHostUsageStore(t *testing.T) (*Store, *hostUsageRuntime) {
 	}
 	t.Cleanup(func() { _ = handle.Close() })
 	store := NewStore(handle, nil, nil, 25565, 25665, dir, "/a/host/path/not/visible/in/the/panel")
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 	runtime := &hostUsageRuntime{capacity: docker.HostCapacity{Runtime: "docker", CPUCores: 4, MemoryTotalBytes: 8 << 30}, samples: map[string]docker.ContainerStats{}}
 	store.docker = runtime
 	return store, runtime

@@ -867,10 +867,7 @@ func (r *Resolver) resolveGitHubReleaseAsset(ctx context.Context, repo, tag, pre
 			}
 		}
 	}
-	// Fallback to latest release if specific tag was not found
-	if tag != "" && tag != "latest" {
-		return r.resolveGitHubReleaseAsset(ctx, repo, "latest", prefix)
-	}
+	// A requested release must never be substituted with the latest release.
 	return "", fmt.Errorf("no jar asset found for %s", repo)
 }
 
@@ -899,32 +896,7 @@ func (r *Resolver) resolveLimboJar(ctx context.Context, version string) (string,
 		}
 	}
 
-	// 2. If filtered version query on Modrinth yielded no results, try Modrinth latest
-	if version != "" && version != "latest" {
-		if err := r.getJSON(ctx, "https://api.modrinth.com/v2/project/limbo-server/version", &mrData); err == nil && len(mrData) > 0 {
-			if len(mrData[0].Files) > 0 && mrData[0].Files[0].URL != "" {
-				return mrData[0].Files[0].URL, nil
-			}
-		}
-	}
-
-	// 3. Try Jenkins build artifacts
-	jenkinsURL := "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/api/json"
-	var jkData struct {
-		Artifacts []struct {
-			RelativePath string `json:"relativePath"`
-		} `json:"artifacts"`
-	}
-	if err := r.getJSON(ctx, jenkinsURL, &jkData); err == nil && len(jkData.Artifacts) > 0 {
-		for _, a := range jkData.Artifacts {
-			if strings.HasSuffix(a.RelativePath, ".jar") {
-				return "https://ci.loohpjames.com/job/Limbo/lastSuccessfulBuild/artifact/" + a.RelativePath, nil
-			}
-		}
-	}
-
-	// 4. Reliable pinned CDN fallback (LOOHP Limbo on Modrinth CDN)
-	return "https://cdn.modrinth.com/data/gIDqs3gn/versions/t4FmKS67/Limbo-2026.0.3-ALPHA-26.3.jar", nil
+	return "", fmt.Errorf("no verified Limbo artifact available for requested version %q", version)
 }
 
 func (r *Resolver) resolveSpongeTag(ctx context.Context, version string) string {
@@ -1093,9 +1065,6 @@ func (r *Resolver) DownloadServerJarWithProgress(ctx context.Context, jt JarType
 		}
 
 	case TypeSpigot:
-		if _, err := os.Stat(targetJar); err == nil {
-			return nil
-		}
 		installerPath := filepath.Join(destDir, "installer.jar")
 		if err := r.DownloadFileWithProgress(ctx, r.buildToolsURL(), installerPath, onProgress); err != nil {
 			return fmt.Errorf("download spigot buildtools: %w", err)
@@ -1169,7 +1138,7 @@ func (r *Resolver) DownloadServerJarWithProgress(ctx context.Context, jt JarType
 		var err error
 		dlURL, err = r.resolveLimboJar(ctx, version)
 		if err != nil {
-			dlURL = "https://cdn.modrinth.com/data/gIDqs3gn/versions/t4FmKS67/Limbo-2026.0.3-ALPHA-26.3.jar"
+			return fmt.Errorf("resolve exact Limbo version %q: %w", version, err)
 		}
 
 	case TypeNanoLimbo:
@@ -1190,6 +1159,12 @@ func (r *Resolver) DownloadServerJarWithProgress(ctx context.Context, jt JarType
 		}
 
 	case TypePufferfish:
+		if build != "" && build != "latest" {
+			return fmt.Errorf("Pufferfish build %q cannot be resolved exactly", build)
+		}
+		if version != "1.20.4" {
+			return fmt.Errorf("Pufferfish download unavailable for version %q", version)
+		}
 		dlURL = "https://ci.pufferfish.host/job/Pufferfish-1.20/lastSuccessfulBuild/artifact/build/libs/pufferfish-paperclip-1.20.4-R0.1-SNAPSHOT-reobf.jar"
 
 	case TypeLeaf:

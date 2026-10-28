@@ -23,8 +23,8 @@ type fakeRuntime struct {
 	createID string
 	lastOpts docker.CreateOpts
 	// existing container ids reported present by Exists.
-	existing     map[string]bool
-	inspectState *docker.ContainerState
+	existing        map[string]bool
+	inspectState    *docker.ContainerState
 	consoleCommands []string
 	stopCalled      bool
 	lastStopTimeout time.Duration

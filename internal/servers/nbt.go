@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/errdefs"
 	"github.com/google/uuid"
 	"github.com/mcm-panel/mcm/internal/nbt"
 )
@@ -48,7 +49,7 @@ func (s *Store) nbtStopped(ctx context.Context, srv Server) bool {
 			return false
 		}
 		inspect, err := s.docker.Inspect(ctx, srv.ContainerID)
-		if err != nil || (inspect.Status != "exited" && inspect.Status != "dead" && inspect.Status != "created") {
+		if !errdefs.IsNotFound(err) && (err != nil || (inspect.Status != "exited" && inspect.Status != "dead" && inspect.Status != "created" && inspect.Status != "stopped")) {
 			return false
 		}
 	}

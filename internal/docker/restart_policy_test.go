@@ -147,6 +147,3 @@ func TestRuntimeImageSelection(t *testing.T) {
 		t.Errorf("expected default javaVersion 0 for spigot to resolve to 21-jdk-alpine, got %s", img)
 	}
 }
-
-
-

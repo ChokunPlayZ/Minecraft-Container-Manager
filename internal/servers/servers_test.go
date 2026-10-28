@@ -31,8 +31,9 @@ func TestCreateWithHostPortAndConflict(t *testing.T) {
 	t.Cleanup(func() { dbHandle.Close() })
 
 	pool := ports.NewPool(dbHandle.DB, 25565, 25570)
-	jr := jars.NewResolver()
+	jr := fixtureJarResolver(t, jars.NewResolver())
 	s := NewStore(dbHandle, nil, jr, 25565, 25570, dir, "")
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 	s.ports = pool
 
 	// Create with specific port 25580.
@@ -137,6 +138,7 @@ func TestServerExport(t *testing.T) {
 	t.Cleanup(func() { dbHandle.Close() })
 
 	s := &Store{db: dbHandle.DB, dataDir: dir}
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
 
@@ -200,6 +202,7 @@ func TestServerUptimeTracking(t *testing.T) {
 
 	fake := &fakeRuntime{}
 	s := &Store{db: dbHandle.DB, docker: fake, dataDir: dir}
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "container-uptime-1", StateStopped)
@@ -280,8 +283,9 @@ func TestCopyServer(t *testing.T) {
 	t.Cleanup(func() { dbHandle.Close() })
 
 	pool := ports.NewPool(dbHandle.DB, 25565, 25575)
-	jr := jars.NewResolver()
+	jr := fixtureJarResolver(t, jars.NewResolver())
 	s := NewStore(dbHandle, nil, jr, 25565, 25575, dir, "")
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 	s.ports = pool
 
 	srcID := uuid.NewString()
@@ -298,20 +302,20 @@ func TestCopyServer(t *testing.T) {
 	// - Custom: backups/backup1.zip
 	srcDir := s.dataPath(srcID)
 	filesToCreate := map[string]string{
-		"world/level.dat":                  "leveldata",
-		"world/region/r.0.0.mca":           "chunkdata",
-		"world/playerdata/player1.dat":     "inventorydata",
-		"world/session.lock":               "lockfile",
-		"ops.json":                         `[{"uuid":"123","name":"Steve"}]`,
-		"whitelist.json":                   `[]`,
-		"server.properties":                "motd=SourceServer\nlevel-name=world\n",
-		"config/paper-global.yml":          "settings: true",
-		"plugins/MyPlugin.jar":             "jarbytes",
-		"plugins/MyPlugin/config.yml":      "pluginconfig",
-		"mods/MyMod.jar":                   "modbytes",
-		"logs/latest.log":                  "logcontent",
-		"crash-reports/crash.txt":          "crashcontent",
-		"backups/backup1.zip":              "backupbytes",
+		"world/level.dat":              "leveldata",
+		"world/region/r.0.0.mca":       "chunkdata",
+		"world/playerdata/player1.dat": "inventorydata",
+		"world/session.lock":           "lockfile",
+		"ops.json":                     `[{"uuid":"123","name":"Steve"}]`,
+		"whitelist.json":               `[]`,
+		"server.properties":            "motd=SourceServer\nlevel-name=world\n",
+		"config/paper-global.yml":      "settings: true",
+		"plugins/MyPlugin.jar":         "jarbytes",
+		"plugins/MyPlugin/config.yml":  "pluginconfig",
+		"mods/MyMod.jar":               "modbytes",
+		"logs/latest.log":              "logcontent",
+		"crash-reports/crash.txt":      "crashcontent",
+		"backups/backup1.zip":          "backupbytes",
 	}
 
 	for p, content := range filesToCreate {
@@ -525,7 +529,8 @@ func TestStatusReconcilesCrashToError(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
@@ -599,7 +604,8 @@ func TestStopSendsGracefulConsoleCommand(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
@@ -657,7 +663,8 @@ func TestSendConsoleCommandStopSetsStoppingState(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
@@ -703,7 +710,8 @@ func TestStopFallbackWhenConsoleTimesOut(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
@@ -752,7 +760,8 @@ func TestCreateServerBehindProxyNoHostPort(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := NewStore(dbHandle, nil, jars.NewResolver(), 25565, 25570, dir, dir)
+	store := NewStore(dbHandle, nil, fixtureJarResolver(t, jars.NewResolver()), 25565, 25570, dir, dir)
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 	store.docker = fake
 
 	ctx := context.Background()
@@ -854,6 +863,7 @@ func TestHasForgeJar(t *testing.T) {
 func TestPendingInitialState(t *testing.T) {
 	dir := t.TempDir()
 	store := &Store{dataDir: dir}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	// 1. Forge with installer.jar and no server.jar
 	forgeID := "srv-forge"
@@ -906,7 +916,8 @@ func TestStatusReconcilesInstallingAndBuilding(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
@@ -964,7 +975,8 @@ func TestStartDetectsInstallerAndSetsState(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	// Forge server
 	forgeID := uuid.NewString()
@@ -1035,11 +1047,12 @@ func TestStartJarDownloadStateAndContextResilience(t *testing.T) {
 	}))
 	defer srvMock.Close()
 
-	resolver := jars.NewResolver()
+	resolver := fixtureJarResolver(t, jars.NewResolver())
 	resolver.BuildToolsURL = srvMock.URL
 
 	fake := &fakeRuntime{}
 	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: resolver}
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 
 	sid := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1114,7 +1127,8 @@ func TestCreateInitialStateInstalling(t *testing.T) {
 	t.Cleanup(func() { dbHandle.Close() })
 
 	fake := &fakeRuntime{}
-	store := NewStore(dbHandle, nil, jars.NewResolver(), 25565, 25575, dir, dir)
+	store := NewStore(dbHandle, nil, fixtureJarResolver(t, jars.NewResolver()), 25565, 25575, dir, dir)
+	t.Cleanup(func() { store.WaitProvisioning(context.Background()) })
 	store.docker = fake
 
 	// Creating a standard server with docker runtime should set initial state to StateInstalling
@@ -1145,6 +1159,3 @@ func TestCreateInitialStateInstalling(t *testing.T) {
 		t.Errorf("expected custom server initial state %q, got %q", StateStopped, srvCustom.State)
 	}
 }
-
-
-

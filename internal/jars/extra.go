@@ -810,5 +810,3 @@ func (r *Resolver) DownloadFileWithProgress(ctx context.Context, url, targetPath
 
 	return os.Rename(tmpFile, targetPath)
 }
-
-

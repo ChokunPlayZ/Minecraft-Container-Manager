@@ -11,20 +11,15 @@ import (
 	"github.com/mcm-panel/mcm/internal/docker"
 )
 
-// TestRecreateClearsContainer verifies that Recreate detaches an existing
-// container id and resets the server state so the next Start rebuilds the
-// container (e.g. onto a new runtime image). Removal is best-effort: the fake
-// container id will not exist on any daemon, and any error is tolerated.
+// Recreate clears tracking only after successful runtime removal.
 func TestRecreateClearsContainer(t *testing.T) {
 	dir := t.TempDir()
 	dbHandle, err := db.Open(filepath.Join(dir, "mcm.db"))
 	if err != nil {
-		t.Fatalf("open db: %v", err)
+		t.Fatal(err)
 	}
-	mgr, err := docker.New("unix:///var/run/docker.sock", "itzg/minecraft-server")
-	if err != nil {
-		t.Fatalf("docker manager: %v", err)
-	}
+	defer dbHandle.Close()
+	mgr := &fakeRuntime{}
 	s := &Store{db: dbHandle.DB, docker: mgr, dataDir: dir}
 
 	id := uuid.NewString()

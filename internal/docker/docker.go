@@ -206,9 +206,10 @@ fi
 
 if [ -f "/data/run.sh" ]; then
   if [ -f "/data/user_jvm_args.txt" ]; then
-    if ! grep -q "^-Xmx" /data/user_jvm_args.txt 2>/dev/null; then
-      printf '\n-Xms512M\n-Xmx%sM\n' "${RAM_MB:-2048}" >> /data/user_jvm_args.txt
-    fi
+    # Heap size is owned by the panel; refresh it on every launch.
+    sed '/^-Xm[sx]/d' /data/user_jvm_args.txt > /data/user_jvm_args.txt.mcm
+    printf '\n-Xms512M\n-Xmx%sM\n' "${RAM_MB:-2048}" >> /data/user_jvm_args.txt.mcm
+    mv /data/user_jvm_args.txt.mcm /data/user_jvm_args.txt
     if ! grep -q "java.awt.headless" /data/user_jvm_args.txt 2>/dev/null; then
       printf '\n-Djava.awt.headless=true\n' >> /data/user_jvm_args.txt
     fi
@@ -459,9 +460,11 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	}
 
 	name := Name(opts.ID)
-	// If a container with this name already exists, reuse it instead of conflicting.
-	if insp, err := m.client.ContainerInspect(ctx, name); err == nil {
-		return insp.ID, nil
+	// Never adopt an untracked same-name container as a successful rebuild.
+	if _, err := m.client.ContainerInspect(ctx, name); err == nil {
+		return "", fmt.Errorf("container %s already exists; reconcile or remove it before provisioning", name)
+	} else if !errdefs.IsNotFound(err) {
+		return "", fmt.Errorf("inspect container name: %w", err)
 	}
 
 	cPort, _ := primaryContainerPort(opts.ServerType)

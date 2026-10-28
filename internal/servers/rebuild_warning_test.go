@@ -177,7 +177,7 @@ func TestRebuildWarningExtraPortsUnchanged(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
@@ -206,7 +206,7 @@ func TestRebuildWarningJavaVersion(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
 
 	id := uuid.NewString()
 	insertServer(t, dbHandle, id, 25565, "", StateStopped)
@@ -248,7 +248,7 @@ func TestRebuildWarningEntrypointVersion(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	fake := &fakeRuntime{}
-	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: jars.NewResolver()}
+	store := &Store{db: dbHandle.DB, docker: fake, dataDir: dir, jars: fixtureJarResolver(t, jars.NewResolver())}
 
 	id := uuid.NewString()
 	// Insert server with an older container_config that has EntrypointVersion 0 / missing
@@ -309,4 +309,3 @@ func TestRebuildWarningEntrypointVersion(t *testing.T) {
 		t.Errorf("expected NeedsRebuild == false for container with entrypoint version 2, got reasons: %v", srv3.RebuildReasons)
 	}
 }
-

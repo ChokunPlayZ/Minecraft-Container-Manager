@@ -34,6 +34,7 @@ func newPerformanceStore(t *testing.T, kind, version, state string) (*Store, Ser
 		t.Fatal(err)
 	}
 	s := NewStore(handle, nil, nil, 25565, 25575, dir, "")
+	t.Cleanup(func() { s.WaitProvisioning(context.Background()) })
 	srv, err := s.Get(context.Background(), "one")
 	if err != nil {
 		t.Fatal(err)

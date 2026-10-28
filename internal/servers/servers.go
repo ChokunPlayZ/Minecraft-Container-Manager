@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/errdefs"
 	"github.com/google/uuid"
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/dns"
@@ -26,6 +27,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/notifications"
 	"github.com/mcm-panel/mcm/internal/ports"
 	"github.com/mcm-panel/mcm/internal/proxy"
+	"github.com/mcm-panel/mcm/internal/storage"
 )
 
 // dockerRuntime is the subset of the Docker manager used by the server store.
@@ -338,11 +340,13 @@ type Store struct {
 	dns      dns.Publisher
 	notifier notifications.Notifier
 
-	serverLocksMu  sync.Mutex
-	lifecycleLocks sync.Map
-	serverLocks    map[string]*sync.Mutex
-	fileEditMu     sync.Mutex
-	worldLocks     sync.Map
+	serverLocksMu    sync.Mutex
+	lifecycleLocks   sync.Map
+	serverLocks      map[string]*sync.Mutex
+	fileEditMu       sync.Mutex
+	portConfigMu     sync.Mutex
+	provisioningJobs sync.WaitGroup
+	worldLocks       sync.Map
 
 	proxyMu            sync.Mutex
 	proxy              *proxy.Service
@@ -511,6 +515,9 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 
 // Get returns a single server by id.
 func (s *Store) Get(ctx context.Context, id string) (Server, error) {
+	if !storage.ValidID(id) || s.db == nil {
+		return Server{}, ErrNotFound
+	}
 	var srv Server
 	var extra string
 	var rawConfig string
@@ -532,6 +539,8 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 // Create validates the requested jar, allocates a host port, and persists a new
 // stopped server. The container itself is created lazily on install/start.
 func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
+	s.portConfigMu.Lock()
+	defer s.portConfigMu.Unlock()
 	if err := validateLimits(in.CPULimit, in.MemoryLimitMB); err != nil {
 		return Server{}, err
 	}
@@ -580,6 +589,9 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 		}
 	}
 
+	if err := s.validateProposedPorts(ctx, "", port, in.ExtraPorts); err != nil {
+		return Server{}, err
+	}
 	javaVer := in.JavaVersion
 	if javaVer <= 0 {
 		javaVer = jars.RecommendJavaVersionForType(string(in.ServerType), resolved.Version)
@@ -595,11 +607,29 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, java_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`,
-		id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, encodeExtraPorts(in.ExtraPorts), initialState, now, now, javaVer)
+	for attempt := 0; attempt < 20; attempt++ {
+		_, err = s.db.ExecContext(ctx,
+			`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, java_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`,
+			id, in.Name, string(in.ServerType), resolved.Version, resolved.Build, in.RAMMB, in.CPULimit, in.MemoryLimitMB, port, encodeExtraPorts(in.ExtraPorts), initialState, now, now, javaVer)
+		if err == nil {
+			break
+		}
+		if !isPortReservationError(err) {
+			return Server{}, fmt.Errorf("insert server: %w", err)
+		}
+		if in.HostPort > 0 || in.NoHostPort || in.HostPort == -1 {
+			return Server{}, fmt.Errorf("%w: host port was reserved concurrently", ErrPortInUse)
+		}
+		if attempt == 19 {
+			return Server{}, fmt.Errorf("%w: repeated reservation conflicts", ErrPortInUse)
+		}
+		port, err = s.ports.Allocate(ctx)
+		if err != nil {
+			return Server{}, err
+		}
+	}
 	if err != nil {
-		return Server{}, fmt.Errorf("insert server: %w", err)
+		return Server{}, fmt.Errorf("%w: port reservation conflicts", ErrPortInUse)
 	}
 	created, err := s.Get(ctx, id)
 	if err != nil {
@@ -612,9 +642,14 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 	// For standard server types, eagerly provision container and download jar in background
 	// so the server enters "installing" state immediately and the creation API returns without blocking.
 	if in.ServerType != jars.TypeCustom && !isDockerNil(s.docker) {
+		s.provisioningJobs.Add(1)
 		go func() {
+			defer s.provisioningJobs.Done()
 			bgCtx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
+			mu := s.lifecycleLock(id)
+			mu.Lock()
+			defer mu.Unlock()
 			if _, provErr := s.ensureContainer(bgCtx, created); provErr != nil {
 				log.Printf("[servers] error: eager provisioning for server %s failed: %v", id, provErr)
 			}
@@ -626,10 +661,19 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 
 // Update applies non-nil fields from the input to a server record.
 func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, error) {
+	mu := s.lifecycleLock(id)
+	mu.Lock()
+	defer mu.Unlock()
+	return s.updateLocked(ctx, id, in)
+}
+func (s *Store) updateLocked(ctx context.Context, id string, in UpdateInput) (Server, error) {
+	s.portConfigMu.Lock()
+	defer s.portConfigMu.Unlock()
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Server{}, err
 	}
+	original := srv
 	if in.Name != nil {
 		srv.Name = *in.Name
 	}
@@ -669,15 +713,7 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 			}
 		}
 		srv.HostPort = port
-		// Docker binds host ports at container creation, so a changed primary
-		// game port requires a fresh container. Detach the existing one so the
-		// next Start provisions a new container bound to the new port.
-		if srv.ContainerID != "" {
-			_ = s.docker.Remove(ctx, srv.ContainerID)
-			srv.ContainerID = ""
-			srv.State = StateStopped
-			_, _ = s.db.ExecContext(ctx, `UPDATE servers SET container_config=NULL WHERE id=?`, id)
-		}
+
 	}
 	if in.CPULimit != nil {
 		if *in.CPULimit < 0 {
@@ -722,11 +758,39 @@ func (s *Store) Update(ctx context.Context, id string, in UpdateInput) (Server, 
 		srv.JavaVersion = *in.JavaVersion
 	}
 
+	if err := s.validateProposedPorts(ctx, id, srv.HostPort, srv.ExtraPorts); err != nil {
+		return Server{}, err
+	}
+	// All proposed fields and port assignments have now been validated.
+	if err := validateLimits(srv.CPULimit, srv.MemoryLimitMB); err != nil {
+		return Server{}, err
+	}
+	if srv.RAMMB <= 0 {
+		return Server{}, fmt.Errorf("ram_mb must be positive")
+	}
+	if srv.HostPort != original.HostPort && original.ContainerID != "" {
+		if _, err := s.stopLocked(ctx, id); err != nil {
+			return Server{}, fmt.Errorf("stop before port change: %w", err)
+		}
+		if err := s.removeContainer(ctx, original.ContainerID); err != nil {
+			return Server{}, err
+		}
+		// Persist detachment before any subsequent write, so failures remain recoverable.
+		if err := s.clearContainerID(ctx, id); err != nil {
+			return Server{}, err
+		}
+		srv.ContainerID = ""
+		srv.State = StateStopped
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, container_id=?, state=?, updated_at=?, java_version=? WHERE id=?`,
 		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, srv.JavaVersion, id)
 	if err != nil {
+		if isPortReservationError(err) {
+			return Server{}, fmt.Errorf("%w: port reserved concurrently", ErrPortInUse)
+		}
 		return Server{}, fmt.Errorf("update server: %w", err)
 	}
 	if in.ServerType != nil || in.Version != nil || in.Build != nil {
@@ -808,17 +872,31 @@ func (s *Store) CheckPortFree(ctx context.Context, id string, port int) error {
 
 // Delete removes a server record and its container if one exists.
 func (s *Store) Delete(ctx context.Context, id string) error {
+	mu := s.lifecycleLock(id)
+	mu.Lock()
+	defer mu.Unlock()
+	unlockWorld := s.lockWorld(id, true)
+	defer unlockWorld()
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return err
 	}
 	if srv.ContainerID != "" {
-		_ = s.docker.Remove(ctx, srv.ContainerID)
+		if _, err := s.stopLocked(ctx, id); err != nil {
+			return err
+		}
+		if err := s.removeContainer(ctx, srv.ContainerID); err != nil {
+			return err
+		}
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM servers WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete server: %w", err)
 	}
+	s.InvalidateModUpdatesCache(id)
+	s.diskMu.Lock()
+	delete(s.diskCache, id)
+	s.diskMu.Unlock()
 	if s.dns != nil {
 		_ = s.dns.Remove(ctx, id)
 	}
@@ -883,6 +961,9 @@ func (s *Store) Start(ctx context.Context, id string) (Server, error) {
 	mu := s.lifecycleLock(id)
 	mu.Lock()
 	defer mu.Unlock()
+	return s.startLocked(ctx, id)
+}
+func (s *Store) startLocked(ctx context.Context, id string) (Server, error) {
 	unlockWorld := s.lockWorld(id, false)
 	defer unlockWorld()
 	// Use an operation context that survives client disconnection so that in-flight
@@ -975,6 +1056,9 @@ func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 	mu := s.lifecycleLock(id)
 	mu.Lock()
 	defer mu.Unlock()
+	return s.stopLocked(ctx, id)
+}
+func (s *Store) stopLocked(ctx context.Context, id string) (Server, error) {
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return Server{}, err
@@ -991,7 +1075,13 @@ func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 		return Server{}, err
 	}
 	if srv.ContainerID != "" {
+		if isDockerNil(s.docker) {
+			return Server{}, fmt.Errorf("container runtime unavailable")
+		}
 		insp, err := s.docker.Inspect(ctx, srv.ContainerID)
+		if err != nil && !errdefs.IsNotFound(err) {
+			return Server{}, fmt.Errorf("inspect before stop: %w", err)
+		}
 		if err == nil && insp.Status == StateRunning {
 			stopCmd := stopCommandFor(srv.ServerType)
 			sendErr := s.docker.SendConsole(ctx, srv.ContainerID, stopCmd)
@@ -1016,7 +1106,7 @@ func (s *Store) Stop(ctx context.Context, id string) (Server, error) {
 						goto doneWaiting
 					case <-ticker.C:
 						insp, err := s.docker.Inspect(ctx, srv.ContainerID)
-						if err != nil || insp.Status != StateRunning {
+						if err == nil && insp.Status != StateRunning {
 							stopped = true
 							goto doneWaiting
 						}
@@ -1088,10 +1178,13 @@ func (s *Store) Kill(ctx context.Context, id string) (Server, error) {
 
 // Restart restarts a running container, starting it if it is stopped.
 func (s *Store) Restart(ctx context.Context, id string) (Server, error) {
-	if _, err := s.Stop(ctx, id); err != nil {
+	mu := s.lifecycleLock(id)
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := s.stopLocked(ctx, id); err != nil {
 		return Server{}, err
 	}
-	return s.Start(ctx, id)
+	return s.startLocked(ctx, id)
 }
 
 // Recreate rebuilds an existing server container. If the server is currently
@@ -1101,6 +1194,9 @@ func (s *Store) Restart(ctx context.Context, id string) (Server, error) {
 // If the server is stopped, the existing container is torn down and its container_id
 // is cleared so the next Start provisions a fresh container.
 func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
+	mu := s.lifecycleLock(id)
+	mu.Lock()
+	defer mu.Unlock()
 	opCtx, opCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
 	defer opCancel()
 
@@ -1119,7 +1215,7 @@ func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
 	}
 
 	if wasOnline && !isDockerNil(s.docker) {
-		if _, err := s.Stop(opCtx, id); err != nil {
+		if _, err := s.stopLocked(opCtx, id); err != nil {
 			return Server{}, fmt.Errorf("graceful stop before rebuild: %w", err)
 		}
 		// Refresh server state after graceful shutdown
@@ -1132,7 +1228,9 @@ func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
 	if srv.ContainerID != "" && !isDockerNil(s.docker) {
 		// Best-effort: the container may already be gone; we still clear the
 		// recorded id so ensureContainer rebuilds it on next start.
-		_ = s.docker.Remove(opCtx, srv.ContainerID)
+		if err := s.removeContainer(opCtx, srv.ContainerID); err != nil {
+			return Server{}, err
+		}
 	}
 	_, err = s.db.ExecContext(opCtx, `UPDATE servers SET container_id='', container_config=NULL, state=?, started_at=NULL, updated_at=? WHERE id=?`,
 		StateStopped, time.Now().UTC().Format(time.RFC3339), id)
@@ -1144,7 +1242,7 @@ func (s *Store) Recreate(ctx context.Context, id string) (Server, error) {
 	}
 
 	if wasOnline && !isDockerNil(s.docker) {
-		return s.Start(opCtx, id)
+		return s.startLocked(opCtx, id)
 	}
 
 	return s.Get(opCtx, id)
@@ -1323,6 +1421,9 @@ func calculateDirSize(path string) uint64 {
 
 // Console streams container logs for a server.
 func (s *Store) Console(ctx context.Context, id string, follow bool) (io.ReadCloser, error) {
+	mu := s.lifecycleLock(id)
+	mu.Lock()
+	defer mu.Unlock()
 	srv, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -1344,8 +1445,13 @@ type InstallInput struct {
 
 // Install resolves and (for POST) provisions the server's container. GET returns
 // the resolution without creating anything.
-func (s *Store) Install(ctx context.Context, id string, provision bool, inputs ...InstallInput) (InstallResult, error) {
+func (s *Store) Install(ctx context.Context, id string, provision bool, inputs ...InstallInput) (result InstallResult, err error) {
 	if provision {
+		mu := s.lifecycleLock(id)
+		mu.Lock()
+		defer mu.Unlock()
+		unlockWorld := s.lockWorld(id, true)
+		defer unlockWorld()
 		unlock := s.lockServer(id)
 		defer unlock()
 	}
@@ -1368,36 +1474,52 @@ func (s *Store) Install(ctx context.Context, id string, provision bool, inputs .
 		return InstallResult{}, fmt.Errorf("%w: validate jar: %v", ErrInvalidJar, err)
 	}
 	dataDir := s.dataPath(srv.ID)
-	if provision {
-		_ = os.MkdirAll(dataDir, 0755)
-		// When provisioning/installing, download the server jar
-		if s.jars != nil && srv.ServerType != "custom" {
-			jt, parseErr := jars.ParseJarType(srv.ServerType)
-			if parseErr == nil {
-				_ = s.setState(ctx, srv.ID, StateInstalling)
-				log.Printf("[servers] downloading jar for server %s (%s %s %s)...", srv.ID, srv.ServerType, srv.Version, srv.Build)
-				dlCtx, dlCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
-				defer dlCancel()
-				if dlErr := s.jars.DownloadServerJar(dlCtx, jt, srv.Version, srv.Build, dataDir); dlErr != nil {
-					_ = s.setState(context.Background(), srv.ID, StateError)
-					log.Printf("[servers] failed to download jar for server %s (%s %s %s): %v", srv.ID, srv.ServerType, srv.Version, srv.Build, dlErr)
-					return InstallResult{}, fmt.Errorf("download server jar: %w", dlErr)
-				}
-				log.Printf("[servers] successfully downloaded jar for server %s (%s %s %s)", srv.ID, srv.ServerType, srv.Version, srv.Build)
-			}
-		}
-		// Update DB with updated version and build if changed
-		now := time.Now().UTC().Format(time.RFC3339)
-		_, _ = s.db.ExecContext(ctx, `UPDATE servers SET version=?, build=?, updated_at=? WHERE id=?`, srv.Version, srv.Build, now, srv.ID)
 
-		srv, err = s.ensureContainer(ctx, srv)
+	if provision {
+		if _, err = s.stopLocked(ctx, id); err != nil {
+			return InstallResult{}, err
+		}
+		var rollback, cleanup func() error
+		committed := false
+		if srv.ServerType != "custom" {
+			rollback, cleanup, err = s.stageRuntime(ctx, srv)
+			if err != nil {
+				return InstallResult{}, err
+			}
+			defer func() {
+				if !committed {
+					if rollbackErr := rollback(); rollbackErr != nil {
+						err = errors.Join(err, fmt.Errorf("restore previous runtime: %w", rollbackErr))
+					}
+				} else {
+					if cleanupErr := cleanup(); cleanupErr != nil {
+						err = errors.Join(err, fmt.Errorf("runtime installed; clean up recovery files: %w", cleanupErr))
+					}
+				}
+			}()
+		}
+		if srv.ContainerID != "" {
+			if err = s.removeContainer(ctx, srv.ContainerID); err != nil {
+				return InstallResult{}, err
+			}
+			if err = s.clearContainerID(ctx, id); err != nil {
+				return InstallResult{}, err
+			}
+			srv.ContainerID = ""
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		if _, err = s.db.ExecContext(ctx, `UPDATE servers SET version=?,build=?,state=?,updated_at=? WHERE id=?`, resolved.Version, resolved.Build, StateStopped, now, id); err != nil {
+			return InstallResult{}, err
+		}
+		committed = true
+		srv.Version = resolved.Version
+		srv.Build = resolved.Build
+		srv.State = StateStopped
+		srv, err = s.ensureContainerLocked(ctx, srv)
 		if err != nil {
 			return InstallResult{}, err
 		}
-		if srv.State == StateInstalling {
-			_ = s.setState(context.Background(), srv.ID, StateStopped)
-			srv.State = StateStopped
-		}
+		s.InvalidateModUpdatesCache(id)
 	}
 
 	installed := srv.ContainerID != ""
@@ -1428,6 +1550,9 @@ func (s *Store) ensureContainer(ctx context.Context, srv Server) (Server, error)
 	unlock := s.lockServer(srv.ID)
 	defer unlock()
 
+	return s.ensureContainerLocked(ctx, srv)
+}
+func (s *Store) ensureContainerLocked(ctx context.Context, srv Server) (Server, error) {
 	// Re-fetch current server record from DB to verify if another goroutine has already
 	// provisioned the container while we were waiting for the lock.
 	if current, err := s.Get(ctx, srv.ID); err == nil {
@@ -2070,4 +2195,48 @@ func matchesCustomExclude(rel, name string, customExcludes []string) bool {
 		}
 	}
 	return false
+}
+
+func isPortReservationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "server_port_reservations.host_port") || strings.Contains(message, "servers.host_port")
+}
+
+func (s *Store) WaitProvisioning(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() { s.provisioningJobs.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Store) validateProposedPorts(ctx context.Context, id string, primary int, extra []ExtraPort) error {
+	seen := map[int]bool{}
+	if primary > 0 {
+		seen[primary] = true
+	}
+	for _, port := range extra {
+		if port.HostPort < 0 || port.HostPort > 65535 || port.ContainerPort < 1 || port.ContainerPort > 65535 {
+			return fmt.Errorf("additional ports must be within 1–65535 (host 0 disables publishing)")
+		}
+		if port.Protocol != "" && port.Protocol != "tcp" && port.Protocol != "udp" {
+			return fmt.Errorf("additional port protocol must be tcp or udp")
+		}
+		if port.HostPort > 0 {
+			if seen[port.HostPort] {
+				return fmt.Errorf("%w: duplicate host port %d", ErrPortInUse, port.HostPort)
+			}
+			seen[port.HostPort] = true
+			if err := s.ensurePortFree(ctx, id, port.HostPort); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
