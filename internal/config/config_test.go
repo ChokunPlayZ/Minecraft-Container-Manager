@@ -87,8 +87,11 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.SessionSecret) == 0 {
 		t.Error("expected a non-empty ephemeral session secret")
 	}
-	if len(cfg.WebAuthn.RPOrigins) != 1 || cfg.WebAuthn.RPOrigins[0] != "http://localhost:8080" {
-		t.Errorf("WebAuthn RPOrigins = %v, want [http://localhost:8080]", cfg.WebAuthn.RPOrigins)
+	if cfg.HTTPOnly || !cfg.SecureCookies {
+		t.Error("native HTTPS and secure cookies should be enabled by default")
+	}
+	if len(cfg.WebAuthn.RPOrigins) != 1 || cfg.WebAuthn.RPOrigins[0] != "https://localhost:8080" {
+		t.Errorf("WebAuthn RPOrigins = %v, want [https://localhost:8080]", cfg.WebAuthn.RPOrigins)
 	}
 	if cfg.WebAuthn.RPID != "localhost" {
 		t.Errorf("WebAuthn RPID = %q, want localhost", cfg.WebAuthn.RPID)
@@ -248,8 +251,8 @@ func TestLoadHardeningDefaults(t *testing.T) {
 	if cfg.TLSCert != "" || cfg.TLSKey != "" {
 		t.Errorf("TLS cert/key should default to empty, got %q / %q", cfg.TLSCert, cfg.TLSKey)
 	}
-	if !cfg.TLSRedirect {
-		t.Error("TLSRedirect should default to true")
+	if cfg.TLSRedirect {
+		t.Error("TLSRedirect should default to false for unprivileged installations")
 	}
 	if cfg.TLSRedirectAddr != ":80" {
 		t.Errorf("TLSRedirectAddr = %q, want :80", cfg.TLSRedirectAddr)
@@ -336,5 +339,50 @@ func TestRedirectAddrFor(t *testing.T) {
 		if got := redirectAddrFor(tc.in); got != tc.want {
 			t.Errorf("redirectAddrFor(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestLoadTLSModes(t *testing.T) {
+	for _, tc := range []struct {
+		name, httpOnly, forceSecure, cert, key string
+		wantHTTP, wantSecure, wantError        bool
+	}{
+		{name: "self-signed default", wantSecure: true},
+		{name: "supplied certificates", cert: "/cert.pem", key: "/key.pem", wantSecure: true},
+		{name: "HTTP opt-out", httpOnly: "true", wantHTTP: true},
+		{name: "HTTPS reverse proxy", httpOnly: "true", forceSecure: "true", wantHTTP: true, wantSecure: true},
+		{name: "native HTTPS always secures cookies", forceSecure: "false", wantSecure: true},
+		{name: "missing key", cert: "/cert.pem", wantError: true},
+		{name: "missing certificate", key: "/key.pem", wantError: true},
+		{name: "conflicting HTTP and certificates", httpOnly: "true", cert: "/cert.pem", key: "/key.pem", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(EnvHTTPOnly, tc.httpOnly)
+			t.Setenv(EnvTLS, tc.forceSecure)
+			t.Setenv(EnvTLSCert, tc.cert)
+			t.Setenv(EnvTLSKey, tc.key)
+			t.Setenv(EnvAddr, ":8080")
+			t.Setenv(EnvWebAuthnOrigin, "")
+			cfg, err := Load()
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("expected invalid TLS configuration to fail")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.HTTPOnly != tc.wantHTTP || cfg.SecureCookies != tc.wantSecure {
+				t.Errorf("HTTPOnly/SecureCookies = %v/%v, want %v/%v", cfg.HTTPOnly, cfg.SecureCookies, tc.wantHTTP, tc.wantSecure)
+			}
+			wantOrigin := "https://localhost:8080"
+			if tc.wantHTTP {
+				wantOrigin = "http://localhost:8080"
+			}
+			if cfg.WebAuthn.RPOrigins[0] != wantOrigin {
+				t.Errorf("origin = %q, want %q", cfg.WebAuthn.RPOrigins[0], wantOrigin)
+			}
+		})
 	}
 }

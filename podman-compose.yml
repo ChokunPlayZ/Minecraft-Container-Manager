@@ -18,6 +18,14 @@ services:
       MCM_CONTAINER_HOST: unix:///run/podman/podman.sock
       MCM_SERVER_IMAGE: ${MCM_SERVER_IMAGE:-eclipse-temurin:21-jre-alpine}
       MCM_SESSION_SECRET: ${MCM_SESSION_SECRET:-}
+      MCM_HTTP_ONLY: ${MCM_HTTP_ONLY:-false}
+      MCM_TLS: ${MCM_TLS:-false}
+      MCM_TLS_CERT: ${MCM_TLS_CERT:-}
+      MCM_TLS_KEY: ${MCM_TLS_KEY:-}
+      MCM_TLS_REDIRECT: ${MCM_TLS_REDIRECT:-false}
+      MCM_TLS_REDIRECT_ADDR: ${MCM_TLS_REDIRECT_ADDR:-:80}
+      MCM_WEB_AUTHN_RPID: ${MCM_WEB_AUTHN_RPID:-localhost}
+      MCM_WEB_AUTHN_RP_ORIGIN: ${MCM_WEB_AUTHN_RP_ORIGIN:-}
       # Root inside rootless containers maps to the host user. Keep both the
       # panel and its sibling servers in that mapping, including socket access.
       PUID: 0

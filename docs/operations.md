@@ -26,7 +26,13 @@ Podman's user socket when selected, creates a persistent random session secret,
 downloads the initial Minecraft runtime image if missing, and starts the user
 service. It waits for the database, runtime API, and runtime image to be ready.
 
-Open `http://YOUR_SERVER_IP:8080`. Onboarding creates the first administrator.
+Open `https://YOUR_SERVER_IP:8080`. Onboarding creates the first administrator.
+Without supplied certificates, MCM saves a self-signed certificate under
+`MCM_DATA_DIR/tls`. Trust `cert.pem` on your client or accept the browser warning;
+keep `key.pem` private. The installer verifies HTTPS readiness using that public
+certificate. Existing installs also switch to HTTPS after updating. For a
+TLS-terminating reverse proxy, set `MCM_HTTP_ONLY=true` and `MCM_TLS=true` in the
+managed configuration. The optional port-80 redirect is disabled by default.
 The host firewall must permit the panel port and any published Minecraft
 ports. Change the panel port during installation if necessary:
 
@@ -35,6 +41,18 @@ ports. Change the panel port during installation if necessary:
 ```
 
 ### Existing installations
+
+For the first upgrade from a version that defaults to HTTP, run the updated
+management script from the source checkout. The previously installed script
+only probes HTTP and would reject the new HTTPS listener:
+
+```sh
+git pull --ff-only
+./mcmctl update --local
+```
+
+Later updates can use the installed `mcmctl update` command as usual. Rollback
+readiness checks support older HTTP binaries.
 
 Re-running `install` preserves existing settings and session secrets. It also
 repairs the earlier user-service setup that failed with
@@ -289,7 +307,7 @@ journalctl --user -u mcm.service -n 50 --no-pager
 | Update prints an unexpected nested source path or says `origin` is not a repository while a manual pull works | Run `./mcmctl update` using the script in the checkout you successfully pulled; current versions use and remember that checkout. For older versions, correct `SOURCE_DIR` in `~/.config/mcm/install.conf` to that checkout's absolute path before updating. |
 | Build failed | Resolve the reported image-download or build error and retry; an update has not stopped the installed version yet. |
 | Update refused because of local changes | Commit/stash them, or intentionally use `update --local`. |
-| Panel cannot become ready | Check the printed journal, configured port, data permissions, container API, and runtime image. HTTPS installations need a certificate trusted by the host and valid for the configured listen host. |
+| Panel cannot become ready | Check the printed journal, configured port, data permissions, container API, and runtime image. Default HTTPS probes trust `MCM_DATA_DIR/tls/cert.pem`. Supplied certificates must be trusted by the host and valid for the configured listen host. |
 | Service stops after logout | Enable lingering with `sudo loginctl enable-linger "$USER"`. |
 | `unknown mount option` or a socket path ending in `}` | That comes from the earlier Compose setup. The managed installer does not require Compose. If retaining Compose, use the updated `podman-compose.yml` with flat defaults and plain socket paths. |
 

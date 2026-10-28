@@ -226,15 +226,33 @@ write_unit() {
 }
 
 wait_ready() {
-    local address port host scheme=http attempt ready_count=0
+    local address port host scheme=https attempt ready_count=0 ready
+    local allow_legacy_http="${1:-false}"
+    local -a tls_args=()
     address=$(setting MCM_ADDR)
     port="${address##*:}"
     host="${address%:*}"
     [[ -n "$host" && "$host" != 0.0.0.0 && "$host" != '[::]' ]] || host=127.0.0.1
-    [[ -z "$(setting MCM_TLS_CERT)" ]] || scheme=https
+    case "$(setting MCM_HTTP_ONLY)" in
+        1|t|T|true|TRUE|True) scheme=http ;;
+    esac
+    if [[ "$scheme" == https && -z "$(setting MCM_TLS_CERT)" ]]; then
+        tls_args=(--cacert "$(setting MCM_DATA_DIR)/tls/cert.pem")
+    fi
     for ((attempt=0; attempt<30; attempt++)); do
-        if systemctl --user is-active --quiet mcm.service &&
-            curl --noproxy '*' --fail --silent --max-time 2 "$scheme://$host:$port/readyz" >/dev/null; then
+        ready=false
+        if systemctl --user is-active --quiet mcm.service; then
+            if curl --noproxy '*' --fail --silent --max-time 2 ${tls_args[@]+"${tls_args[@]}"} "$scheme://$host:$port/readyz" >/dev/null; then
+                ready=true
+            elif [[ "$allow_legacy_http" == true && "$scheme" == https && -z "$(setting MCM_TLS_CERT)" ]] &&
+                curl --noproxy '*' --fail --silent --max-time 2 "http://$host:$port/readyz" >/dev/null; then
+                # Only a restored pre-HTTPS binary may use the legacy probe.
+                scheme=http
+                tls_args=()
+                ready=true
+            fi
+        fi
+        if [[ "$ready" == true ]]; then
             ready_count=$((ready_count + 1))
             if ((ready_count >= 2)); then
                 say "MCM is ready at $scheme://$host:$port"
@@ -292,7 +310,7 @@ restore_snapshot() {
     systemctl --user daemon-reload || return 1
     systemctl --user reset-failed mcm.service || return 1
     systemctl --user start mcm.service || return 1
-    wait_ready
+    wait_ready true
 }
 
 enable_boot() {

@@ -60,6 +60,10 @@ elif name == 'systemctl':
             sys.exit(1)
         active.touch()
 elif name == 'curl':
+    if os.environ.get('MCM_TEST_HTTP_ONLY_VERSION'):
+        binary = pathlib.Path(os.environ['MCM_BIN_DIR']) / 'mcm'
+        if os.environ['MCM_TEST_HTTP_ONLY_VERSION'] in binary.read_text() and any(arg.startswith('https://') for arg in args):
+            sys.exit(35)
     if os.environ.get('MCM_TEST_UNREADY_VERSION'):
         binary = pathlib.Path(os.environ['MCM_BIN_DIR']) / 'mcm'
         if os.environ['MCM_TEST_UNREADY_VERSION'] in binary.read_text(): sys.exit(22)
@@ -276,7 +280,45 @@ class ManagerTests(unittest.TestCase):
         self.run_manager('install', '--data-dir', str(data), '--port', '9090')
         self.assertIn('MCM_DATA_DIR=' + str(data), self.config.read_text())
         self.assertIn('MCM_ADDR=:9090', self.config.read_text())
-        self.assertTrue(any('http://127.0.0.1:9090/readyz' in call for call in self.calls()))
+        probes = [call for call in self.calls() if call[0] == 'curl']
+        self.assertTrue(probes)
+        for call in probes:
+            self.assertIn('https://127.0.0.1:9090/readyz', call)
+            self.assertIn('--cacert', call)
+            self.assertIn(str(data / 'tls/cert.pem'), call)
+            self.assertNotIn('--insecure', call)
+
+    def test_http_only_readiness_probe(self):
+        self.config.parent.mkdir(parents=True)
+        self.config.write_text('MCM_HTTP_ONLY=true\n')
+        self.run_manager('install')
+        probes = [call for call in self.calls() if call[0] == 'curl']
+        self.assertTrue(probes)
+        for call in probes:
+            self.assertIn('http://127.0.0.1:8080/readyz', call)
+            self.assertNotIn('--cacert', call)
+
+    def test_supplied_certificate_readiness_uses_system_trust(self):
+        self.config.parent.mkdir(parents=True)
+        self.config.write_text('MCM_TLS_CERT=/certs/public.pem\nMCM_TLS_KEY=/certs/private.pem\n')
+        self.run_manager('install')
+        probes = [call for call in self.calls() if call[0] == 'curl']
+        self.assertTrue(probes)
+        for call in probes:
+            self.assertIn('https://127.0.0.1:8080/readyz', call)
+            self.assertNotIn('--cacert', call)
+            self.assertNotIn('--insecure', call)
+
+    def test_failed_upgrade_can_restore_legacy_http_binary(self):
+        self.run_manager('install')
+        result = self.run_manager(
+            'update', '--local', ok=False, MCM_TEST_VERSION='two',
+            MCM_TEST_FAIL_VERSION='version: two', MCM_TEST_HTTP_ONLY_VERSION='version: one',
+        )
+        self.assertIn('previous version is running', result.stderr)
+        self.assertNotIn('Rollback needs attention', result.stderr)
+        self.assertIn('version: one', self.binary.read_text())
+        self.assertTrue(any('http://127.0.0.1:8080/readyz' in call for call in self.calls()))
 
     def test_example_database_setting_uses_native_data_directory(self):
         db_setting = next(line for line in (ROOT / '.env.example').read_text().splitlines()

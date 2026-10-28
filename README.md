@@ -32,7 +32,9 @@ cd Minecraft-Container-Manager
 ./mcmctl install --runtime podman
 ```
 
-Open `http://YOUR_SERVER_IP:8080` and complete onboarding. Open port 8080 and
+Open `https://YOUR_SERVER_IP:8080` and complete onboarding. MCM generates a
+self-signed certificate by default; trust its public certificate or accept the
+browser warning on first use. Open port 8080 and
 any published Minecraft ports in the host firewall if you connect remotely.
 For a host already running Docker, use `./mcmctl install --runtime docker` with
 an account that can access its Docker daemon.
@@ -245,7 +247,7 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
   - **WebAuthn / Passkeys**: Hardware security keys (YubiKey), Apple Touch ID / Face ID, and Windows Hello.
 - **Multi-User Administration**: Manage panel user accounts, user creation, password updates, and user deletion.
 - **Hardening**: Built-in double-submit CSRF cookie protection, brute-force login lockout (5 failed attempts / 15 min), and sliding-window rate limiting.
-- **Native TLS Support**: Automatic HTTPS termination with configurable HTTP-to-HTTPS redirect.
+- **Native TLS Support**: HTTPS by default with a persistent, automatically renewed self-signed certificate when no certificate is supplied, plus an optional HTTP-to-HTTPS redirect.
 
 ---
 
@@ -273,7 +275,7 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
    ```
 
 4. **Access the panel**:
-   Open `http://localhost:8080` in your browser and complete the initial onboarding setup.
+   Open `https://localhost:8080` in your browser and complete the initial onboarding setup. Trust the generated public certificate or accept the self-signed certificate warning on first use.
 
 ### Data Persistence & Host Permissions
 
@@ -467,10 +469,11 @@ service lifecycle and recovery commands.
 | `MCM_PODMAN_SOCKET` | `/run/podman/podman.sock` | Absolute host socket path mounted by `podman-compose.yml`, without `unix://`; set explicitly for rootless or VM deployments. |
 | `PUID` / `PGID` | `1000` / `1000` | UID/GID the panel runs as and applies to the data directory. |
 | `MCM_SESSION_SECRET` | *(required)* | Secret key used to sign session cookies. |
-| `MCM_TLS` | `false` | Force secure cookies flag. Set to true when running under HTTPS. |
-| `MCM_TLS_CERT` | *(empty)* | Path to TLS certificate (PEM). Setting this with `MCM_TLS_KEY` enables native HTTPS. |
+| `MCM_HTTP_ONLY` | `false` | Serve plain HTTP instead of native HTTPS, for local development or a TLS-terminating reverse proxy. Cannot be combined with supplied certificate paths. |
+| `MCM_TLS` | `false` | Force Secure cookies when using HTTP behind an HTTPS reverse proxy. Native HTTPS always enables Secure cookies. |
+| `MCM_TLS_CERT` | *(empty)* | Path to TLS certificate (PEM). Without a supplied pair, MCM generates and reuses `$MCM_DATA_DIR/tls/cert.pem` and `key.pem`. |
 | `MCM_TLS_KEY` | *(empty)* | Path to TLS private key (PEM). |
-| `MCM_TLS_REDIRECT` | `true` | When TLS is enabled, redirects plain HTTP traffic to HTTPS (301). |
+| `MCM_TLS_REDIRECT` | `false` | Opt in to a separate HTTP listener that redirects to the configured HTTPS port (301). Port 80 requires bind permission and, in containers, a published port. |
 | `MCM_TLS_REDIRECT_ADDR` | Derived (`:80`) | Listen address for HTTP-to-HTTPS redirection. |
 | `MCM_LOGIN_MAX_ATTEMPTS` | `5` | Maximum failed login attempts allowed before lockout. |
 | `MCM_LOGIN_LOCKOUT` | `15m` | Lockout duration after exceeding failed login attempts. |
@@ -488,6 +491,29 @@ service lifecycle and recovery commands.
 | `MCM_S3_BUCKET` | *(empty)* | S3 bucket used for server backup archives. |
 | `MCM_S3_REGION` | `us-east-1` | S3 region for signing requests. |
 | `TZ` | `UTC` | Container and server timezone. |
+
+### HTTPS certificates
+
+MCM serves HTTPS on `MCM_ADDR` by default, including existing installations after
+an upgrade. For the first upgrade from an HTTP-default version, pull this checkout
+and run `./mcmctl update --local` using the updated script; the old installed
+script only checks HTTP readiness. When `MCM_TLS_CERT` and `MCM_TLS_KEY` are empty, it stores a self-signed
+ECDSA certificate and private key under `$MCM_DATA_DIR/tls`. The private key is
+readable only by the panel's user. The certificate covers localhost, the host's
+name and LAN addresses, the configured listen host, and the configured WebAuthn
+RP ID/origin hosts. It is reused across restarts and renewed at startup when fewer
+than 30 days remain or required hostnames change. Certificates last one year.
+
+Trust `tls/cert.pem` on your client devices to remove the browser warning; keep
+`tls/key.pem` private. For a public certificate, set both PEM paths. In Compose,
+mount those files into the panel and use their container-side paths. Invalid or
+incomplete supplied certificates cause startup to fail.
+
+The optional redirect listener is disabled by default so native rootless installs
+can start without permission to bind port 80. Enable it with `MCM_TLS_REDIRECT=true`
+and choose an accessible `MCM_TLS_REDIRECT_ADDR`. For plain HTTP, explicitly set
+`MCM_HTTP_ONLY=true`; behind an HTTPS reverse proxy, also set `MCM_TLS=true` and
+configure `MCM_WEB_AUTHN_RPID` and `MCM_WEB_AUTHN_RP_ORIGIN` for the public URL.
 
 ### Dynamic Panel Settings
 

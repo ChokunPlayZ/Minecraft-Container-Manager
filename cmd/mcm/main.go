@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/notifications"
 	"github.com/mcm-panel/mcm/internal/schedules"
 	"github.com/mcm-panel/mcm/internal/servers"
+	"github.com/mcm-panel/mcm/internal/tlsconfig"
 )
 
 func main() {
@@ -104,29 +107,45 @@ func main() {
 		Notifications: notificationService,
 	})
 
-	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+	if !cfg.HTTPOnly {
+		tlsConfig, err := tlsconfig.Load(cfg)
+		if err != nil {
+			logger.Fatalf("configure HTTPS: %v", err)
+		}
+		if cfg.TLSCert == "" {
+			logger.Printf("using self-signed TLS certificate in %s/tls; trust cert.pem in your browser or provide MCM_TLS_CERT and MCM_TLS_KEY", cfg.DataDir)
+		}
 		if cfg.TLSRedirect {
-			redirect := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				u := *r.URL
-				u.Scheme = "https"
-				u.Host = r.Host
-				http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
-			})
 			go func() {
 				logger.Printf("redirecting HTTP %s to HTTPS %s", cfg.TLSRedirectAddr, cfg.Addr)
-				if err := http.ListenAndServe(cfg.TLSRedirectAddr, redirect); err != nil && err != http.ErrServerClosed {
+				if err := http.ListenAndServe(cfg.TLSRedirectAddr, httpsRedirect(cfg.Addr)); err != nil && err != http.ErrServerClosed {
 					logger.Fatalf("http redirect server exited: %v", err)
 				}
 			}()
 		}
 		logger.Printf("listening on https://%s (data dir %s)", cfg.Addr, cfg.DataDir)
-		if err := http.ListenAndServeTLS(cfg.Addr, cfg.TLSCert, cfg.TLSKey, handler); err != nil && err != http.ErrServerClosed {
+		server := &http.Server{Addr: cfg.Addr, Handler: handler, TLSConfig: tlsConfig}
+		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("server exited: %v", err)
 		}
 		return
 	}
-	logger.Printf("listening on %s (data dir %s)", cfg.Addr, cfg.DataDir)
+	logger.Printf("listening on http://%s (data dir %s)", cfg.Addr, cfg.DataDir)
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server exited: %v", err)
 	}
+}
+
+func httpsRedirect(addr string) http.Handler {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		port = "443"
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u := *r.URL
+		u.Scheme = "https"
+		host := (&url.URL{Host: r.Host}).Hostname()
+		u.Host = net.JoinHostPort(host, port)
+		http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+	})
 }

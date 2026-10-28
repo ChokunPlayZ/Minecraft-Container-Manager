@@ -23,6 +23,14 @@ services:
       MCM_CONTAINER_HOST: ${MCM_CONTAINER_HOST:-}
       MCM_SERVER_IMAGE: ${MCM_SERVER_IMAGE:-eclipse-temurin:21-jre-alpine}
       MCM_SESSION_SECRET: ${MCM_SESSION_SECRET:-}
+      MCM_HTTP_ONLY: ${MCM_HTTP_ONLY:-false}
+      MCM_TLS: ${MCM_TLS:-false}
+      MCM_TLS_CERT: ${MCM_TLS_CERT:-}
+      MCM_TLS_KEY: ${MCM_TLS_KEY:-}
+      MCM_TLS_REDIRECT: ${MCM_TLS_REDIRECT:-false}
+      MCM_TLS_REDIRECT_ADDR: ${MCM_TLS_REDIRECT_ADDR:-:80}
+      MCM_WEB_AUTHN_RPID: ${MCM_WEB_AUTHN_RPID:-localhost}
+      MCM_WEB_AUTHN_RP_ORIGIN: ${MCM_WEB_AUTHN_RP_ORIGIN:-}
       # UID/GID the MCM process drops to (and that own the data dir). Override
       # to match your host user, e.g. PUID=$(id -u) PGID=$(id -g).
       PUID: ${PUID:-1000}

@@ -25,6 +25,7 @@ type Config struct {
 	ContainerRuntime string
 	SessionSecret    []byte
 	WebAuthn         WebAuthnConfig
+	HTTPOnly         bool
 	TLSCert          string
 	TLSKey           string
 	TLSRedirect      bool
@@ -46,8 +47,8 @@ type Config struct {
 	// S3 holds the object-storage configuration used for world backups. An
 	// empty Endpoint disables S3 storage; local backups remain available.
 	S3 S3Config
-	// SecureCookies forces Secure on session cookies. It is controlled by
-	// MCM_TLS and defaults to false.
+	// SecureCookies is enabled for native HTTPS. MCM_TLS can also force it
+	// when HTTPOnly is used behind an HTTPS reverse proxy.
 	SecureCookies bool
 }
 
@@ -90,6 +91,7 @@ const (
 	EnvPodmanHost       = "CONTAINER_HOST"
 	EnvSessionSecret    = "MCM_SESSION_SECRET"
 	EnvTLS              = "MCM_TLS"
+	EnvHTTPOnly         = "MCM_HTTP_ONLY"
 	EnvTLSCert          = "MCM_TLS_CERT"
 	EnvTLSKey           = "MCM_TLS_KEY"
 	EnvTLSRedirect      = "MCM_TLS_REDIRECT"
@@ -138,9 +140,10 @@ func Load() (*Config, error) {
 		DataDirHost:      getenv(EnvDataDirHost, ""),
 		BackupDir:        getenv(EnvBackupDir, filepath.Join(getenv(EnvDataDir, defaultDataDir), "backups")),
 		ContainerRuntime: strings.ToLower(strings.TrimSpace(getenv(EnvContainerRuntime, "docker"))),
+		HTTPOnly:         parseBoolEnv(EnvHTTPOnly, false),
 		TLSCert:          getenv(EnvTLSCert, ""),
 		TLSKey:           getenv(EnvTLSKey, ""),
-		TLSRedirect:      parseBoolEnv(EnvTLSRedirect, true),
+		TLSRedirect:      parseBoolEnv(EnvTLSRedirect, false),
 		TLSRedirectAddr:  getenv(EnvTLSRedirectAddr, redirectAddrFor(getenv(EnvAddr, defaultAddr))),
 		WebAuthn: WebAuthnConfig{
 			RPID:          getenv(EnvWebAuthnRPID, defaultRPID),
@@ -154,6 +157,12 @@ func Load() (*Config, error) {
 			Bucket:    getenv(EnvS3Bucket, ""),
 			Region:    getenv(EnvS3Region, "us-east-1"),
 		},
+	}
+	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
+		return nil, fmt.Errorf("%s and %s must both be provided", EnvTLSCert, EnvTLSKey)
+	}
+	if cfg.HTTPOnly && cfg.TLSCert != "" {
+		return nil, fmt.Errorf("%s cannot be used with %s and %s", EnvHTTPOnly, EnvTLSCert, EnvTLSKey)
 	}
 	if cfg.ContainerRuntime != "docker" && cfg.ContainerRuntime != "podman" {
 		return nil, fmt.Errorf("invalid %s %q: expected docker or podman", EnvContainerRuntime, cfg.ContainerRuntime)
@@ -208,13 +217,9 @@ func Load() (*Config, error) {
 	}
 	cfg.SessionSecret = []byte(secret)
 
-	if tls := getenv(EnvTLS, ""); tls != "" {
-		if b, err := strconv.ParseBool(tls); err == nil {
-			cfg.SecureCookies = b
-		}
-	}
+	cfg.SecureCookies = !cfg.HTTPOnly || parseBoolEnv(EnvTLS, false)
 	if len(cfg.WebAuthn.RPOrigins) == 0 {
-		cfg.WebAuthn.RPOrigins = []string{defaultOrigin(cfg.Addr)}
+		cfg.WebAuthn.RPOrigins = []string{defaultOrigin(cfg.Addr, !cfg.HTTPOnly)}
 	}
 
 	return cfg, nil
@@ -321,14 +326,18 @@ func redirectAddrFor(addr string) string {
 	return net.JoinHostPort(host, "80")
 }
 
-func defaultOrigin(addr string) string {
+func defaultOrigin(addr string, https bool) string {
 	host := "localhost"
 	if i := strings.LastIndex(addr, ":"); i >= 0 {
 		if p := addr[i+1:]; p != "" {
 			host += ":" + p
 		}
 	}
-	return "http://" + host
+	scheme := "http://"
+	if https {
+		scheme = "https://"
+	}
+	return scheme + host
 }
 
 // ParsePortRange parses "start-end". Both ends are inclusive. It rejects
