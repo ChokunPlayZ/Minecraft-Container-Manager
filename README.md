@@ -232,6 +232,7 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
 
 ### 📦 S3-Compatible Backups & Scheduling
 - **Dedicated Backup Manager**: Open Backups to select a server, manage archives, search by name, filter by local or S3 storage, and save its automatic backup interval. The server's Backups tab remains available.
+- **Separate Backup Media**: Store local archives and temporary backup files on another disk or mounted share with `MCM_BACKUP_DIR`. Existing local archives remain accessible.
 - **Object Store Integration**: Archive server data directories to compressed `.tar.gz` archives stored in any S3-compatible object store (AWS S3, MinIO, Cloudflare R2, DigitalOcean Spaces).
 - **Automated Scheduling & Retention**: Configure automated backup intervals per server with automatic pruning of older snapshots.
 - **Instant Restore**: One-click in-place snapshot restoration.
@@ -284,6 +285,42 @@ The panel container mounts `/var/run/docker.sock` so it can manage Minecraft ser
 New Minecraft containers inherit the panel process's UID/GID. Their startup step prepares required tools and repairs ownership of `/data` as root, then drops privileges before running server installers or Java. This keeps automatically generated mod configs editable in the panel. Set `PUID` to a nonzero UID to use this behavior. Custom server images must provide `su-exec` or `gosu`, or an Alpine/Debian package manager to install one.
 
 After upgrading from a version that ran Minecraft as root, use **Rebuild container** for each existing server. Rebuilding preserves its data, replaces the old container, and applies the ownership repair at its next start. Restarting the old container alone does not update its startup settings. This runs Minecraft as a non-root user; running the Docker daemon itself in rootless mode is a separate host configuration.
+
+### Separate backup media
+
+For a native Linux installation, use
+`./mcmctl install --backup-dir /mnt/backup-drive/mcm`, or set
+`MCM_BACKUP_DIR` in the managed configuration and restart. See
+[separate backup media](docs/operations.md#separate-backup-media) for migration
+and mount setup. The **Local disk** backup target uses the selected directory.
+
+For Docker or Podman Compose, create a dedicated directory on the mounted
+media, set its absolute host path in `.env`, and add the backup override:
+
+```ini
+MCM_BACKUP_DIR_HOST=/mnt/backup-drive/mcm
+```
+
+```sh
+docker compose -f docker-compose.yml -f compose.backups.yml up -d --build
+# Or, with Podman:
+podman compose -f podman-compose.yml -f compose.backups.yml up -d --build
+```
+
+The override mounts that directory at `/backups` and sets `MCM_BACKUP_DIR`
+for the panel. Keep using both Compose files for subsequent deployments.
+The host directory must already exist and the media must be mounted before
+starting the panel. Container startup applies `PUID`/`PGID` ownership to the
+backup directory as well as the data directory. Server containers only need
+the server data mount.
+
+Local backups, uploads, restores, and retention use the configured backup
+directory. Temporary archives for local and S3 operations stay in its `.tmp`
+subdirectory, keeping large staging files off the system temporary disk.
+Existing backups under `MCM_DATA_DIR/backups` can still be downloaded,
+restored, or pruned. To relocate them, stop the panel and copy their server-ID
+directories to the new backup root without changing filenames. The panel
+database remains in its original location.
 
 ### Port Exposure & Multi-Server Networking
 
@@ -420,6 +457,8 @@ service lifecycle and recovery commands.
 | `MCM_PORT_RANGE` | `25565-25665` | Host port pool allocated to Minecraft servers. |
 | `MCM_DATA_DIR_HOST` | `${PWD}/data` | Docker: host directory bind-mounted into the panel at `/data` and into each server container. |
 | `MCM_DATA_DIR` | `/data` (Docker) / `./data` (bare metal) | Process-side data directory used for SQLite database and server data. |
+| `MCM_BACKUP_DIR` | `$MCM_DATA_DIR/backups` | Process-side directory for local backup archives and temporary backup/restore files. May be on separate media; `compose.backups.yml` sets `/backups`. |
+| `MCM_BACKUP_DIR_HOST` | *(empty)* | Existing absolute host backup directory mounted at `/backups` when using `compose.backups.yml`. |
 | `MCM_DB_PATH` | `$MCM_DATA_DIR/mcm.db` | SQLite database file location. |
 | `DOCKER_HOST` | Runtime-specific socket | API endpoint for Docker or Podman. Docker defaults to `unix:///var/run/docker.sock`; Podman defaults are described above. |
 | `MCM_CONTAINER_RUNTIME` | `docker` | Container engine: `docker` or `podman`. |
@@ -443,7 +482,7 @@ service lifecycle and recovery commands.
 | `MCM_WEB_AUTHN_RPID` | `localhost` | WebAuthn Relying Party ID (effective domain). |
 | `MCM_WEB_AUTHN_RP_ORIGIN` | Derived | Allowed WebAuthn origins (comma-separated, e.g. `https://mc.example.com`). |
 | `MCM_WEB_AUTHN_RP_NAME` | `Minecraft Container Manager` | Display name presented during Passkey registration. |
-| `MCM_S3_ENDPOINT` | *(empty)* | S3-compatible object store endpoint (e.g. `http://minio:9000`). Empty disables backups. |
+| `MCM_S3_ENDPOINT` | *(empty)* | S3-compatible object store endpoint (e.g. `http://minio:9000`). Empty disables S3 storage; local backups remain available. |
 | `MCM_S3_ACCESS_KEY` | *(empty)* | Access key for S3 backup storage. |
 | `MCM_S3_SECRET_KEY` | *(empty)* | Secret key for S3 backup storage. |
 | `MCM_S3_BUCKET` | *(empty)* | S3 bucket used for server backup archives. |

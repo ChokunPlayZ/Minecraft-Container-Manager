@@ -26,7 +26,7 @@ trap cleanup EXIT
 
 usage() {
     cat <<'USAGE'
-Usage: ./mcmctl install [--runtime podman|docker] [--data-dir /absolute/path] [--port 8080]
+Usage: ./mcmctl install [--runtime podman|docker] [--data-dir /absolute/path] [--backup-dir /absolute/path] [--port 8080]
        mcmctl start|stop|restart|status|logs|enable|disable
        mcmctl update [--local]
        mcmctl config|backup|rollback|uninstall
@@ -98,7 +98,7 @@ save_state() {
 }
 
 check_config_paths() {
-    local data_dir db_path db_dir
+    local data_dir db_path db_dir backup_dir
     data_dir=$(setting MCM_DATA_DIR)
     absolute_path "$data_dir"
     db_path=$(setting MCM_DB_PATH)
@@ -112,6 +112,13 @@ check_config_paths() {
     if ! mkdir -p -- "$db_dir" || [[ ! -w "$db_dir" || ! -x "$db_dir" ]] ||
         [[ -e "$db_path" && ( ! -f "$db_path" || ! -r "$db_path" || ! -w "$db_path" ) ]]; then
         die "Cannot write the SQLite database at $db_path. Edit $CONFIG: leave MCM_DB_PATH empty to use MCM_DATA_DIR/mcm.db, or set a writable absolute database path."
+    fi
+    backup_dir=$(setting MCM_BACKUP_DIR)
+    if [[ -n "$backup_dir" ]]; then
+        absolute_path "$backup_dir"
+        if ! mkdir -p -- "$backup_dir" || [[ ! -w "$backup_dir" || ! -x "$backup_dir" ]]; then
+            die "MCM_BACKUP_DIR is not writable: $backup_dir. Mount the backup media and choose a writable absolute directory in $CONFIG."
+        fi
     fi
 }
 
@@ -144,13 +151,14 @@ ensure_runtime_image() {
 }
 
 prepare_config() {
-    local data_dir="$1" port="$2" secret
+    local data_dir="$1" port="$2" backup_dir="$3" secret
     mkdir -p "$CONFIG_DIR" "$BIN_DIR" "$UNIT_DIR"
     touch "$CONFIG"
     chmod 600 "$CONFIG"
     [[ -n "$(setting MCM_CONTAINER_RUNTIME)" ]] || set_setting MCM_CONTAINER_RUNTIME "$ENGINE"
     [[ -z "$data_dir" ]] || set_setting MCM_DATA_DIR "$data_dir"
     [[ -n "$(setting MCM_DATA_DIR)" ]] || set_setting MCM_DATA_DIR "${XDG_DATA_HOME:-$HOME/.local/share}/mcm"
+    [[ -z "$backup_dir" ]] || set_setting MCM_BACKUP_DIR "$backup_dir"
     [[ -z "$port" ]] || set_setting MCM_ADDR ":$port"
     [[ -n "$(setting MCM_ADDR)" ]] || set_setting MCM_ADDR :8080
     if [[ -z "$(setting MCM_CONTAINER_HOST)" ]]; then
@@ -297,13 +305,14 @@ enable_boot() {
 }
 
 install_app() {
-    local requested_engine="" data_dir="" port="" flag
+    local requested_engine="" data_dir="" backup_dir="" port="" flag
     while (($#)); do
         flag="$1"; shift
         (($#)) || die "Missing value for $flag"
         case "$flag" in
             --runtime) requested_engine="$1" ;;
             --data-dir) data_dir="$1"; absolute_path "$data_dir" ;;
+            --backup-dir) backup_dir="$1"; absolute_path "$backup_dir" ;;
             --port)
                 port="$1"
                 [[ "$port" =~ ^[0-9]{1,5}$ ]] || die "Port must be between 1024 and 65535."
@@ -327,7 +336,7 @@ install_app() {
     if [[ $("$ENGINE" inspect --format '{{.State.Running}}' mcm 2>/dev/null || true) == true ]]; then
         die "A panel container named mcm is running. Stop it with '$ENGINE stop mcm', then retry with --data-dir pointing to its existing host data directory."
     fi
-    prepare_config "$data_dir" "$port"
+    prepare_config "$data_dir" "$port" "$backup_dir"
     ensure_runtime_image
     build_app
     mkdir -p "$CONFIG_DIR/backups"
@@ -355,6 +364,8 @@ install_app() {
     say "Installed. Manage MCM with: $BIN_DIR/mcmctl status"
     say "Settings: $CONFIG"
     say "Server data: $(setting MCM_DATA_DIR)"
+    backup_dir=$(setting MCM_BACKUP_DIR)
+    say "Server backups: ${backup_dir:-$(setting MCM_DATA_DIR)/backups}"
 }
 
 update_source() {

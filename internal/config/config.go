@@ -16,6 +16,9 @@ type Config struct {
 	Addr      string
 	PortRange PortRange
 	DataDir   string
+	// BackupDir holds local archives and temporary backup/restore files. It may
+	// point to a different filesystem from the database and server data.
+	BackupDir string
 	DBPath    string
 	// DockerHost is the resolved API endpoint for either Docker or Podman.
 	DockerHost       string
@@ -41,7 +44,7 @@ type Config struct {
 	// ServerImage is the OCI image used to run Minecraft server containers.
 	ServerImage string
 	// S3 holds the object-storage configuration used for world backups. An
-	// empty Endpoint disables backups.
+	// empty Endpoint disables S3 storage; local backups remain available.
 	S3 S3Config
 	// SecureCookies forces Secure on session cookies. It is controlled by
 	// MCM_TLS and defaults to false.
@@ -79,6 +82,7 @@ const (
 	EnvPortRange        = "MCM_PORT_RANGE"
 	EnvDataDir          = "MCM_DATA_DIR"
 	EnvDataDirHost      = "MCM_DATA_DIR_HOST"
+	EnvBackupDir        = "MCM_BACKUP_DIR"
 	EnvDBPath           = "MCM_DB_PATH"
 	EnvDockerHost       = "DOCKER_HOST"
 	EnvContainerRuntime = "MCM_CONTAINER_RUNTIME"
@@ -132,6 +136,7 @@ func Load() (*Config, error) {
 		Addr:             getenv(EnvAddr, defaultAddr),
 		DataDir:          getenv(EnvDataDir, defaultDataDir),
 		DataDirHost:      getenv(EnvDataDirHost, ""),
+		BackupDir:        getenv(EnvBackupDir, filepath.Join(getenv(EnvDataDir, defaultDataDir), "backups")),
 		ContainerRuntime: strings.ToLower(strings.TrimSpace(getenv(EnvContainerRuntime, "docker"))),
 		TLSCert:          getenv(EnvTLSCert, ""),
 		TLSKey:           getenv(EnvTLSKey, ""),

@@ -1,0 +1,12 @@
+# Add to either base Compose file to store backups on separate host media.
+# Set MCM_BACKUP_DIR_HOST to an existing, mounted, writable host directory.
+services:
+  mcm:
+    environment:
+      MCM_BACKUP_DIR: /backups
+    volumes:
+      - type: bind
+        source: ${MCM_BACKUP_DIR_HOST:?Set MCM_BACKUP_DIR_HOST to an absolute host backup directory}
+        target: /backups
+        bind:
+          create_host_path: false

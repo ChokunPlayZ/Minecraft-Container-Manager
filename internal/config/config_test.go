@@ -46,6 +46,7 @@ func TestParsePortRange(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv(EnvPortRange, "")
 	t.Setenv(EnvDataDir, "")
+	t.Setenv(EnvBackupDir, "")
 	t.Setenv(EnvDBPath, "")
 	t.Setenv(EnvDockerHost, "")
 	t.Setenv(EnvContainerRuntime, "")
@@ -67,6 +68,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.DataDir != "./data" {
 		t.Errorf("DataDir = %q, want ./data", cfg.DataDir)
+	}
+	if cfg.BackupDir != filepath.Join(cfg.DataDir, "backups") {
+		t.Errorf("BackupDir = %q, want data directory's backups folder", cfg.BackupDir)
 	}
 	if cfg.DataDirHost != "" {
 		t.Errorf("DataDirHost = %q, want empty by default", cfg.DataDirHost)
@@ -158,6 +162,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(EnvAddr, ":9090")
 	t.Setenv(EnvPortRange, "31000-31100")
 	t.Setenv(EnvDataDir, "/tmp/mcm")
+	t.Setenv(EnvBackupDir, "/mnt/backup-media/mcm")
 	t.Setenv(EnvDataDirHost, "/host/mcm")
 	t.Setenv(EnvDBPath, "/tmp/custom.db")
 	t.Setenv(EnvDockerHost, "tcp://127.0.0.1:2375")
@@ -173,6 +178,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.DataDirHost != "/host/mcm" {
 		t.Errorf("DataDirHost = %q, want /host/mcm", cfg.DataDirHost)
+	}
+	if cfg.BackupDir != "/mnt/backup-media/mcm" {
+		t.Errorf("BackupDir = %q, want separate backup media", cfg.BackupDir)
 	}
 	if cfg.PortRange.Start != 31000 || cfg.PortRange.End != 31100 {
 		t.Errorf("PortRange = %d-%d", cfg.PortRange.Start, cfg.PortRange.End)
@@ -206,6 +214,7 @@ func TestLoadRejectsBadPortRange(t *testing.T) {
 
 func TestDefaultDBPathUsesDataDir(t *testing.T) {
 	t.Setenv(EnvDataDir, "/srv/mcm")
+	t.Setenv(EnvBackupDir, "")
 	t.Setenv(EnvDBPath, "")
 	cfg, err := Load()
 	if err != nil {
@@ -213,6 +222,9 @@ func TestDefaultDBPathUsesDataDir(t *testing.T) {
 	}
 	if !strings.HasPrefix(cfg.DBPath, "/srv/mcm") {
 		t.Errorf("DBPath = %q, expected under /srv/mcm", cfg.DBPath)
+	}
+	if cfg.BackupDir != "/srv/mcm/backups" {
+		t.Errorf("BackupDir = %q, want /srv/mcm/backups", cfg.BackupDir)
 	}
 }
 

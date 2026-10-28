@@ -5,6 +5,7 @@ set -eu
 # volume mount target; PUID/PGID control the ownership so the app can write on
 # fresh named volumes and host bind mounts.
 MCM_DATA_DIR="${MCM_DATA_DIR:-/data}"
+MCM_BACKUP_DIR="${MCM_BACKUP_DIR:-$MCM_DATA_DIR/backups}"
 
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
@@ -16,6 +17,10 @@ PGID="${PGID:-1000}"
 if [ "$(id -u)" = "0" ]; then
     mkdir -p "$MCM_DATA_DIR"
     chown -R "${PUID}:${PGID}" "$MCM_DATA_DIR"
+    if [ "$MCM_BACKUP_DIR" != "$MCM_DATA_DIR/backups" ]; then
+        mkdir -p "$MCM_BACKUP_DIR"
+        chown -R "${PUID}:${PGID}" "$MCM_BACKUP_DIR"
+    fi
     exec su-exec "${PUID}:${PGID}" /usr/local/bin/mcm "$@"
 fi
 

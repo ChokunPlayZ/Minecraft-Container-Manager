@@ -78,7 +78,7 @@ func main() {
 		SecretKey: cfg.S3.SecretKey,
 		Bucket:    cfg.S3.Bucket,
 		Region:    cfg.S3.Region,
-	}, cfg.DataDir)
+	}, cfg.DataDir, cfg.BackupDir)
 	backupStore.SetNotifier(notificationService)
 	backupScheduler := backups.NewScheduler(backupStore, handle.DB, logger, 1*time.Minute)
 	backupScheduler.Start()

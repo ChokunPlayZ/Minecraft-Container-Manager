@@ -103,6 +103,7 @@ servers through the panel before host maintenance that requires them offline.
 | Persistent settings and session secret | `~/.config/mcm/mcm.env` |
 | Source-checkout location for updates | `~/.config/mcm/install.conf` |
 | Panel database and server files | `~/.local/share/mcm` |
+| Server backup archives and staging files | `MCM_BACKUP_DIR`, default `~/.local/share/mcm/backups` |
 | Installed binary and management command | `~/.local/bin/mcm`, `~/.local/bin/mcmctl` |
 | User service | `~/.config/systemd/user/mcm.service` |
 | Panel update backups | `~/.config/mcm/backups` |
@@ -147,6 +148,48 @@ Changing engines is a migration: stop servers first, change both
 `MCM_CONTAINER_RUNTIME` and `MCM_CONTAINER_HOST`, then re-run `install` with
 the selected runtime. Existing containers do not move between engines; keep
 the data path and let MCM recreate them in the new engine.
+
+### Separate backup media
+
+Local server backups can use a different disk or a mounted network share.
+Mount it on the host and give the service user write access to a dedicated
+directory, then install with:
+
+```sh
+./mcmctl install --runtime podman --backup-dir /mnt/backup-drive/mcm
+```
+
+For an existing installation, set `MCM_BACKUP_DIR=/mnt/backup-drive/mcm` with
+`./mcmctl config` and restart. Use a literal absolute path. Leaving it empty
+keeps the default `MCM_DATA_DIR/backups`. Reinstalling or updating preserves
+the configured path; install and update check its write permissions before
+building or stopping the panel.
+
+The Backups page's **Local disk** target uses this directory for manual and
+automatic backups and uploaded archives. Archives are stored as
+`<backup-dir>/<server-id>/<backup-id>.tar.gz`. Temporary archives, including
+S3 upload and restore staging, use `<backup-dir>/.tmp`; completed local
+archives are moved into place without a second full copy. Database and
+server files stay in `MCM_DATA_DIR`.
+Choose a backup directory outside server data directories; paths inside the
+server being archived are rejected, including paths through symlinks.
+
+Existing archives in `MCM_DATA_DIR/backups` remain available for downloads,
+restores, and retention cleanup. To move them, stop the panel and copy the
+server-ID directories into the new backup directory, preserving filenames;
+the database records need no changes. Keep the database backed up too: the
+archive list and server associations are stored there. When changing from
+one custom backup path to another, copy those archives to the new path as
+well; automatic lookup only checks the current path and the original
+`MCM_DATA_DIR/backups` location.
+
+Ensure the media is mounted before starting the panel. For systemd services,
+add host mount dependencies as appropriate so a missing mount does not send
+backups to the filesystem underneath the mount point. A storage error fails
+the backup; writes never retry in the original backup directory.
+
+For a containerized panel, use the
+[Compose backup-media override](../README.md#separate-backup-media).
 
 ## Update
 
@@ -205,7 +248,7 @@ Do not use rollback after intentionally changing databases or moving data
 without first checking the saved paths.
 
 These panel snapshots **do not include worlds, mods, or server files**. Use
-MCM's Backups tab and S3-compatible storage for those. Database rollback also
+MCM's Backups tab with local backup media or S3-compatible storage for those. Database rollback also
 undoes panel changes made after that snapshot, such as users or server records.
 Keep copies of important backups on another machine.
 

@@ -1,6 +1,5 @@
-// Package backups implements S3-compatible world backup and restore for MCM.
-// Each server's world data is archived to a tar.gz and stored in a
-// path-style S3-compatible object store (MinIO, AWS S3, etc).
+// Package backups implements local and S3-compatible world backup and restore
+// for MCM. Local archives can live on separate media from server data.
 package backups
 
 import (
@@ -100,11 +99,12 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %s", val, units[i])
 }
 
-// Store coordinates backup records in SQLite and object movement to S3.
+// Store coordinates backup records in SQLite and local or S3 archive storage.
 type Store struct {
 	db          *sql.DB
 	client      *s3Client
 	dataDir     string
+	backupDir   string
 	mu          sync.RWMutex
 	progress    map[string]*BackupProgress
 	subscribers map[string][]chan BackupProgress
@@ -123,14 +123,18 @@ type S3Config struct {
 	Region    string
 }
 
-// New constructs a backup Store. When endpoint is empty the returned store
-// records metadata but returns ErrNotConfigured on actual upload/download.
-func New(handle *sql.DB, cfg S3Config, dataDir string) *Store {
+// New constructs a backup Store. The optional backup directory defaults to
+// dataDir/backups. S3 operations require an endpoint and bucket.
+func New(handle *sql.DB, cfg S3Config, dataDir string, backupDir ...string) *Store {
 	s := &Store{
 		db:          handle,
 		dataDir:     dataDir,
+		backupDir:   filepath.Join(dataDir, "backups"),
 		progress:    make(map[string]*BackupProgress),
 		subscribers: make(map[string][]chan BackupProgress),
+	}
+	if len(backupDir) > 0 && backupDir[0] != "" {
+		s.backupDir = filepath.Clean(backupDir[0])
 	}
 	if cfg.Endpoint != "" && cfg.Bucket != "" {
 		s.client = newS3Client(cfg)
@@ -145,7 +149,73 @@ func (s *Store) serverDataDir(serverID string) string {
 
 // localBackupPath returns the on-disk file path for a local backup.
 func (s *Store) localBackupPath(serverID, backupID string) string {
-	return filepath.Join(s.dataDir, "backups", serverID, backupID+".tar.gz")
+	return filepath.Join(s.backupDir, serverID, backupID+".tar.gz")
+}
+
+// existingLocalBackupPath also finds archives created before separate backup
+// media was configured. New writes always use backupDir.
+func (s *Store) existingLocalBackupPath(serverID, backupID string) (string, error) {
+	path := s.localBackupPath(serverID, backupID)
+	_, err := os.Stat(path)
+	legacy := filepath.Join(s.dataDir, "backups", serverID, backupID+".tar.gz")
+	if errors.Is(err, os.ErrNotExist) && path != legacy {
+		if _, legacyErr := os.Stat(legacy); legacyErr == nil || !errors.Is(legacyErr, os.ErrNotExist) {
+			return legacy, legacyErr
+		}
+	}
+	return path, err
+}
+
+// createTempArchive keeps staging on backup media, avoiding large archives on
+// the system's temporary filesystem and allowing atomic local publication.
+func (s *Store) createTempArchive() (*os.File, error) {
+	dir := filepath.Join(s.backupDir, ".tmp")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("create backup staging directory: %w", err)
+	}
+	return os.CreateTemp(dir, "mcm-*.tar.gz")
+}
+
+func (s *Store) saveLocalArchive(serverID, backupID, archivePath string) error {
+	path := s.localBackupPath(serverID, backupID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create local backup directory: %w", err)
+	}
+	if err := os.Rename(archivePath, path); err != nil {
+		return fmt.Errorf("save local backup: %w", err)
+	}
+	return nil
+}
+
+// validateArchiveDestination prevents an archive from including itself, even
+// when the configured backup directory reaches server data through a symlink.
+func validateArchiveDestination(serverDir, archiveDir string) error {
+	source, err := os.Stat(serverDir)
+	if err != nil {
+		return err
+	}
+	dir, err := filepath.EvalSymlinks(archiveDir)
+	if err != nil {
+		return err
+	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	for {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return err
+		}
+		if os.SameFile(source, info) {
+			return errors.New("backup directory must be outside the server data directory")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return nil
+		}
+		dir = parent
+	}
 }
 
 func (s *Store) objectKey(backupID, serverID string) string {
@@ -363,99 +433,13 @@ func (s *Store) Backup(ctx context.Context, serverID, name string, storage ...st
 	})
 
 	if target == "local" {
-		localPath := s.localBackupPath(serverID, id)
-		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		if err := s.saveLocalArchive(serverID, id, archivePath); err != nil {
 			s.SetStatus(ctx, id, StatusFailed)
 			s.SetProgress(serverID, BackupProgress{
-				ID:        id,
-				Operation: "backup",
-				Stage:     "failed",
-				Percent:   100,
-				Message:   "Failed to create backup dir: " + err.Error(),
-				Error:     err.Error(),
-			})
-			return backup, fmt.Errorf("create local backup dir: %w", err)
-		}
-		in, err := os.Open(archivePath)
-		if err != nil {
-			s.SetStatus(ctx, id, StatusFailed)
-			s.SetProgress(serverID, BackupProgress{
-				ID:        id,
-				Operation: "backup",
-				Stage:     "failed",
-				Percent:   100,
-				Message:   "Failed to open archive: " + err.Error(),
-				Error:     err.Error(),
+				ID: id, Operation: "backup", Stage: "failed", Percent: 100,
+				Message: "Failed saving local backup: " + err.Error(), Error: err.Error(),
 			})
 			return backup, err
-		}
-		out, err := os.Create(localPath)
-		if err != nil {
-			in.Close()
-			s.SetStatus(ctx, id, StatusFailed)
-			s.SetProgress(serverID, BackupProgress{
-				ID:        id,
-				Operation: "backup",
-				Stage:     "failed",
-				Percent:   100,
-				Message:   "Failed to write local backup: " + err.Error(),
-				Error:     err.Error(),
-			})
-			return backup, err
-		}
-		var copied int64
-		lastUpdate := time.Now()
-		cw := &countingWriter{
-			w: out,
-			onWrite: func(n int) {
-				copied += int64(n)
-				if time.Since(lastUpdate) > 100*time.Millisecond {
-					lastUpdate = time.Now()
-					pct := 75
-					if archiveSize > 0 {
-						pct = 75 + int((float64(copied)/float64(archiveSize))*23.0)
-						if pct > 98 {
-							pct = 98
-						}
-					}
-					s.SetProgress(serverID, BackupProgress{
-						ID:         id,
-						Operation:  "backup",
-						Stage:      "saving",
-						Percent:    pct,
-						Message:    fmt.Sprintf("Saving backup to disk (%s / %s)...", formatBytes(copied), formatBytes(archiveSize)),
-						BytesDone:  copied,
-						BytesTotal: archiveSize,
-					})
-				}
-			},
-		}
-		_, err = io.Copy(cw, in)
-		in.Close()
-		cerr := out.Close()
-		if err != nil {
-			s.SetStatus(ctx, id, StatusFailed)
-			s.SetProgress(serverID, BackupProgress{
-				ID:        id,
-				Operation: "backup",
-				Stage:     "failed",
-				Percent:   100,
-				Message:   "Failed copying backup: " + err.Error(),
-				Error:     err.Error(),
-			})
-			return backup, err
-		}
-		if cerr != nil {
-			s.SetStatus(ctx, id, StatusFailed)
-			s.SetProgress(serverID, BackupProgress{
-				ID:        id,
-				Operation: "backup",
-				Stage:     "failed",
-				Percent:   100,
-				Message:   "Failed saving backup: " + cerr.Error(),
-				Error:     cerr.Error(),
-			})
-			return backup, cerr
 		}
 	} else {
 		f, err := os.Open(archivePath)
@@ -589,50 +573,30 @@ func (s *Store) UploadBackup(ctx context.Context, serverID, name string, r io.Re
 		BytesTotal: size,
 	})
 
-	var writtenSize int64
-	if target == "local" {
-		localPath := s.localBackupPath(serverID, id)
-		if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
-			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
-			return nil, fmt.Errorf("create local backup dir: %w", err)
+	tmpFile, err := s.createTempArchive()
+	if err != nil {
+		s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+		return nil, err
+	}
+	defer func() {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+	}()
+	writtenSize, err := io.Copy(tmpFile, r)
+	if err == nil {
+		if target == "local" {
+			if err = tmpFile.Close(); err == nil {
+				err = s.saveLocalArchive(serverID, id, tmpFile.Name())
+			}
+		} else {
+			if _, err = tmpFile.Seek(0, io.SeekStart); err == nil {
+				err = s.client.putObject(ctx, location, tmpFile)
+			}
 		}
-		out, err := os.Create(localPath)
-		if err != nil {
-			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
-			return nil, err
-		}
-		defer out.Close()
-
-		n, err := io.Copy(out, r)
-		if err != nil {
-			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
-			return nil, err
-		}
-		writtenSize = n
-	} else {
-		tmpFile, err := os.CreateTemp("", "mcm_backup_upload_*.tar.gz")
-		if err != nil {
-			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
-			return nil, err
-		}
-		defer func() {
-			tmpFile.Close()
-			os.Remove(tmpFile.Name())
-		}()
-		n, err := io.Copy(tmpFile, r)
-		if err != nil {
-			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
-			return nil, err
-		}
-		writtenSize = n
-		if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
-			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
-			return nil, err
-		}
-		if err := s.client.putObject(ctx, location, tmpFile); err != nil {
-			s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
-			return nil, err
-		}
+	}
+	if err != nil {
+		s.SetProgress(serverID, BackupProgress{ID: id, Operation: "upload", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+		return nil, err
 	}
 
 	if size > 0 && writtenSize == 0 {
@@ -687,8 +651,8 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 	})
 
 	if strings.HasPrefix(b.Location, "local:") {
-		archivePath := s.localBackupPath(b.ServerID, b.ID)
-		if _, err := os.Stat(archivePath); err != nil {
+		archivePath, err := s.existingLocalBackupPath(b.ServerID, b.ID)
+		if err != nil {
 			s.SetProgress(b.ServerID, BackupProgress{
 				ID:        b.ID,
 				Operation: "restore",
@@ -738,8 +702,7 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 	}
 	defer rc.Close()
 
-	archivePath := filepath.Join(os.TempDir(), "mcm-restore-"+backupID+".tar.gz")
-	out, err := os.Create(archivePath)
+	out, err := s.createTempArchive()
 	if err != nil {
 		s.SetProgress(b.ServerID, BackupProgress{
 			ID:        b.ID,
@@ -751,6 +714,7 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 		})
 		return err
 	}
+	archivePath := out.Name()
 
 	var copied int64
 	lastUpdate := time.Now()
@@ -793,8 +757,11 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 		})
 		return err
 	}
-	out.Close()
 	defer os.Remove(archivePath)
+	if err := out.Close(); err != nil {
+		s.SetProgress(b.ServerID, BackupProgress{ID: b.ID, Operation: "restore", Stage: "failed", Percent: 100, Message: err.Error(), Error: err.Error()})
+		return err
+	}
 
 	return s.extractWorld(ctx, b.ServerID, archivePath, b.ID)
 }
@@ -806,7 +773,13 @@ func (s *Store) Delete(ctx context.Context, backupID string) error {
 		return err
 	}
 	if strings.HasPrefix(b.Location, "local:") {
-		_ = os.Remove(s.localBackupPath(b.ServerID, b.ID))
+		path, err := s.existingLocalBackupPath(b.ServerID, b.ID)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	} else if s.client != nil {
 		if err := s.client.deleteObject(ctx, b.Location); err != nil {
 			return err
@@ -829,7 +802,10 @@ func (s *Store) OpenBackup(ctx context.Context, backupID string) (io.ReadCloser,
 	}
 
 	if strings.HasPrefix(b.Location, "local:") {
-		path := s.localBackupPath(b.ServerID, b.ID)
+		path, err := s.existingLocalBackupPath(b.ServerID, b.ID)
+		if err != nil {
+			return nil, 0, "", err
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			return nil, 0, "", err
@@ -924,9 +900,14 @@ func (s *Store) archiveWorld(ctx context.Context, serverID string, backupIDOpt .
 		return nil
 	})
 
-	archivePath := filepath.Join(os.TempDir(), "mcm-backup-"+uuid.NewString()+".tar.gz")
-	f, err := os.Create(archivePath)
+	f, err := s.createTempArchive()
 	if err != nil {
+		return "", err
+	}
+	archivePath := f.Name()
+	if err := validateArchiveDestination(srcDir, filepath.Dir(archivePath)); err != nil {
+		f.Close()
+		os.Remove(archivePath)
 		return "", err
 	}
 	gz := gzip.NewWriter(f)

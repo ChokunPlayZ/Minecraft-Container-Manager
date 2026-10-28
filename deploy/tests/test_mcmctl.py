@@ -293,6 +293,39 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual((backup / 'database-path').read_text().strip(), str(database))
         self.assertEqual((backup / 'database').read_text(), 'existing users and servers')
 
+    def test_separate_backup_media_is_created_and_preserved_on_reinstall(self):
+        backups = self.root / 'backup drive/server archives'
+        result = self.run_manager('install', '--backup-dir', str(backups))
+        self.assertTrue(backups.is_dir())
+        self.assertIn('MCM_BACKUP_DIR=' + str(backups) + '\n', self.config.read_text())
+        self.assertIn('Server backups: ' + str(backups), result.stdout)
+        (backups / 'archive.tar.gz').write_text('existing backup')
+        config = self.config.read_text()
+        self.run_manager('install')
+        self.assertEqual(self.config.read_text(), config)
+        self.assertEqual((backups / 'archive.tar.gz').read_text(), 'existing backup')
+
+    def test_separate_backup_media_requires_absolute_path(self):
+        result = self.run_manager('install', '--backup-dir', 'relative/backups', ok=False)
+        self.assertIn('Use an absolute path', result.stderr)
+        self.assertFalse(any(call[:2] == ['podman', 'build'] for call in self.calls()))
+
+    def test_unwritable_backup_media_does_not_stop_running_panel(self):
+        self.run_manager('install')
+        backups = self.root / 'read only backup drive'
+        backups.mkdir()
+        self.config.write_text(self.config.read_text() + 'MCM_BACKUP_DIR=' + str(backups) + '\n')
+        backups.chmod(0o555)
+        self.clear_calls()
+        try:
+            result = self.run_manager('update', '--local', ok=False)
+        finally:
+            backups.chmod(0o755)
+        self.assertIn('MCM_BACKUP_DIR is not writable', result.stderr)
+        self.assertFalse(any(call[:2] == ['podman', 'build'] for call in self.calls()))
+        self.assertNotIn(['systemctl', '--user', 'stop', 'mcm.service'], self.calls())
+        self.assertTrue((self.root / 'active').exists())
+
     def test_custom_database_path_is_preserved(self):
         self.config.parent.mkdir(parents=True)
         database = self.root / 'separate database/panel.db'
