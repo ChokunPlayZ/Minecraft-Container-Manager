@@ -255,7 +255,7 @@ For a containerized panel, use the
 
 ## Update
 
-Open **Settings → Updates → Panel software** to see the full commit used to
+Open **App Settings → Updates → Panel software** to see the full commit used to
 build the running binary, the build time, and whether the build included local
 changes. On a managed Linux installation, **Check for panel updates** reads the
 checkout's tracked branch. **Install panel update** confirms the target commit

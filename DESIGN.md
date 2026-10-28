@@ -453,9 +453,9 @@ Cards use a one-pixel border, card fill, card foreground, large corners, and no 
 
 ### Navigation
 
-Rail and mobile navigation links combine an icon and a (14px) label for Servers, Backups, Settings, and Users, without supporting descriptions. The active item uses a card surface, foreground text, a one-pixel border ring, a primary icon, and a trailing chevron. Inactive links use muted text and an accent hover surface. The current page is exposed to assistive technology. A skip link becomes visible on focus.
+Rail and mobile navigation links combine an icon and a (14px) label for Servers, Backups, App Settings, and Users, without supporting descriptions. The active item uses a card surface, foreground text, a one-pixel border ring, a primary icon, and a trailing chevron. Inactive links use muted text and an accent hover surface. The current page is exposed to assistive technology. A skip link becomes visible on focus.
 
-The desktop profile identity and mobile header avatar link directly to Account Security at `/settings?tab=account`. The expanded mobile navigation also contains Account settings and Log out.
+The desktop profile identity, mobile header avatar, and expanded mobile User Settings link open Account Security at `/user-settings?tab=account`. The profile entry shows the selected state on personal settings, and the breadcrumb identifies User Settings. The expanded mobile navigation also contains Log out. Legacy `/settings?tab=account` links redirect to the personal route.
 
 Workspace tabs use a transparent surface and a two-pixel bottom rule for selection. They are separated by (6px), have (13px by 15px) padding on wide screens, and use (12px) padding on narrow screens. They retain horizontal scrolling instead of compressing labels.
 

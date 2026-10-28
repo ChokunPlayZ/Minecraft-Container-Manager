@@ -400,6 +400,9 @@ function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
     } as T;
   }
 
+  if (path === '/api/auth/totp' && (!init.method || init.method === 'GET')) return { totp_enabled: false } as T;
+  if (path === '/api/passkey' && (!init.method || init.method === 'GET')) return [] as T;
+
   if (path === '/api/auth/me') {
     return { id: 'admin-1', email: 'admin@mcm.panel' } as T;
   }

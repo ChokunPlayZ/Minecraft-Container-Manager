@@ -191,9 +191,17 @@ a container.
 - Edit, pause/resume, and delete tasks; inspect the next run, last result, and error details. Console commands require a running server. Restart follows the manual restart behavior and also starts a stopped server.
 - Schedules persist in SQLite and run while the panel is online, within the five-second polling cadence. Missed runs are skipped after panel downtime. A task cannot overlap its own previous execution within the panel process, and pausing or deleting a task leaves an already running execution to finish. Failed runs are recorded and wait for the next scheduled occurrence.
 
+### App and user settings
+
+**App Settings** in the main navigation contains shared installation controls: updates, DNS providers, port allocation, and Discord notifications. Changes apply to all panel users.
+
+Open **User Settings** from your profile in the sidebar or the avatar on mobile to manage your email, password, two-factor authentication, and passkeys. **Appearance** contains the theme preference, which is saved in the current browser and also available from the header theme menu.
+
+App settings remain at `/settings`; personal settings are at `/user-settings`. Existing `/settings?tab=account` links redirect to User Settings.
+
 ### Automatic update checks
 
-Enable **Settings → Updates → Enable nightly update checks** to check server software, plugins, and mods at **00:00 in the panel timezone** (`TZ`, UTC by default). This is off by default. **Check now** starts an immediate fleet scan after opting in; scans never install updates or restart servers.
+Enable **App Settings → Updates → Enable nightly update checks** to check server software, plugins, and mods at **00:00 in the panel timezone** (`TZ`, UTC by default). This is off by default. **Check now** starts an immediate fleet scan after opting in; scans never install updates or restart servers.
 
 Saved results survive panel restarts. Servers with available updates display an **Update Available** badge on the dashboard and server page. The server page shows the software version/build and plugin/mod update count, with actions to review them. Opening the installed plugins/mods list reads saved results; use its re-check action for an explicit refresh. Changing software settings or installed artifacts invalidates corresponding results.
 
@@ -205,7 +213,7 @@ Authenticated endpoints: `GET /api/updates` reads saved status and results, `PUT
 
 ### Discord notifications
 
-Open **Settings → Notifications** to connect a Discord channel:
+Open **App Settings → Notifications** to connect a Discord channel:
 
 1. In Discord, open the channel's **Settings → Integrations → Webhooks**, create a webhook, and copy its URL.
 2. Paste the URL into MCM and use **Send test message** to check delivery. You can test before saving or enabling notifications.
@@ -533,7 +541,7 @@ configure `MCM_WEB_AUTHN_RPID` and `MCM_WEB_AUTHN_RP_ORIGIN` for the public URL.
 
 ### Dynamic Panel Settings
 
-Configurable via the panel Settings UI or `PUT /api/settings`:
+Configurable via the App Settings UI or `PUT /api/settings`:
 
 | Setting Key | Default | Description |
 | --- | --- | --- |
@@ -713,7 +721,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 
 ### SRV DNS
 
-Choose the provider under **Settings → DNS Providers** and use **Test Connection** before enabling publishing. Provider API references: [Cloudflare](https://developers.cloudflare.com/api/resources/dns/subresources/records/), [Porkbun](https://porkbun.com/api/json/v3/documentation), [DigitalOcean](https://docs.digitalocean.com/reference/api/reference/domain-records/), [Route 53](https://docs.aws.amazon.com/Route53/latest/APIReference/API_ChangeResourceRecordSets.html). Route 53 supports simple SRV records in public hosted zones on the global AWS endpoint.
+Choose the provider under **App Settings → DNS Providers** and use **Test Connection** before enabling publishing. Provider API references: [Cloudflare](https://developers.cloudflare.com/api/resources/dns/subresources/records/), [Porkbun](https://porkbun.com/api/json/v3/documentation), [DigitalOcean](https://docs.digitalocean.com/reference/api/reference/domain-records/), [Route 53](https://docs.aws.amazon.com/Route53/latest/APIReference/API_ChangeResourceRecordSets.html). Route 53 supports simple SRV records in public hosted zones on the global AWS endpoint.
 
 `POST /api/dns/test` accepts optional `provider`, `api_token`, `api_secret`, `session_token`, `zone`, and `domain` fields. Missing credentials use that provider's saved values. `GET /api/servers/{id}/dns` includes the saved `subdomain` even when no record is published. Use `@` for the apex domain. Removing the published record preserves this address preference; deleting the server removes it.
 
@@ -768,7 +776,7 @@ Choose the provider under **Settings → DNS Providers** and use **Test Connecti
 │   ├── src/
 │   │   ├── api/            # Typed API client, rate-limited fetchers, and upstream catalog adapters
 │   │   ├── components/     # UI components (Console, Modpacks, Mod Updates, Stats Grid, Proxy Editor, etc.)
-│   │   ├── routes/         # TanStack Router page routes (Dashboard, Server Detail, Settings, Users)
+│   │   ├── routes/         # TanStack Router page routes (Dashboard, Server Detail, App Settings, User Settings, Users)
 │   │   └── styles/         # CSS design system and theme tokens
 │   └── tests/              # Vitest test suite for web components and utilities
 ├── deploy/                 # Service examples and installer regression tests
@@ -781,7 +789,7 @@ Choose the provider under **Settings → DNS Providers** and use **Test Connecti
 
 ## Development
 
-The running binary's commit and build time appear under **Settings → Updates →
+The running binary's commit and build time appear under **App Settings → Updates →
 Panel software** and in `mcm --version`. Managed Linux installations can check
 and install panel updates from that page, with a persistent log and automatic
 reconnection during restart. See [panel updates](docs/operations.md#update) for

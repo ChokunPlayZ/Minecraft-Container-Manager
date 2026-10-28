@@ -8,16 +8,18 @@ import { Button } from './ui/button';
 const destinations = [
   { to: '/dashboard', label: 'Servers', icon: Server },
   { to: '/backups', label: 'Backups', icon: Archive },
-  { to: '/settings', label: 'Settings', icon: Settings2 },
+  { to: '/settings', label: 'App Settings', icon: Settings2 },
   { to: '/users', label: 'Users', icon: Users },
 ] as const;
+
+const userSettings = { to: '/user-settings', label: 'User Settings' } as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
   const isServer = pathname.startsWith('/servers/');
-  const current = destinations.find((item) => item.to === pathname) ?? destinations[0];
+  const current = [...destinations, userSettings].find((item) => item.to === pathname) ?? destinations[0];
   const isPreview = typeof window !== 'undefined' &&
     (window.location.search.includes('mock=true') || window.localStorage?.getItem('mcm-mock') === 'true');
 
@@ -50,9 +52,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Link>
         <div className="px-4 pt-4">{navigation()}</div>
         <div className="mt-auto border-t p-4">
-          <Link to="/settings" search={{ tab: 'account' }} aria-label="Account settings" className="mb-3 flex min-w-0 items-center gap-2.5 rounded-md px-1 py-2 transition-colors hover:bg-accent">
+          <Link to="/user-settings" search={{ tab: 'account' }} aria-label="User settings" aria-current={current.to === userSettings.to ? 'page' : undefined} className={`mb-3 flex min-w-0 items-center gap-2.5 rounded-md px-1 py-2 transition-colors ${current.to === userSettings.to ? 'bg-card ring-1 ring-border' : 'hover:bg-accent'}`}>
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-card text-xs font-semibold text-primary" aria-hidden="true">{user?.email?.[0]?.toUpperCase() ?? 'A'}</span>
-            <div className="min-w-0"><p className="text-xs font-medium">Administrator</p><p className="truncate text-xs text-muted-foreground" title={user?.email}>{user?.email}</p></div>
+            <div className="min-w-0"><p className="text-xs font-medium">User Settings</p><p className="truncate text-xs text-muted-foreground" title={user?.email}>{user?.email}</p></div>
             <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           </Link>
           <Button variant="ghost" size="sm" onClick={() => void logout()} className="w-full justify-start"><LogOut />Log out</Button>
@@ -67,10 +69,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="ml-auto flex items-center gap-3">
               {isPreview && <span className="rounded-md border px-2 py-1 text-[11px] text-muted-foreground">Demo data</span>}
               <ThemeToggle />
-              <Button variant="ghost" size="icon" className="lg:hidden" asChild><Link to="/settings" search={{ tab: 'account' }} aria-label="Account settings" onClick={() => setMenuOpen(false)}><span className="flex h-8 w-8 items-center justify-center rounded-full border bg-secondary text-xs font-semibold text-primary">{user?.email?.[0]?.toUpperCase() ?? 'A'}</span></Link></Button>
+              <Button variant="ghost" size="icon" className="lg:hidden" asChild><Link to="/user-settings" search={{ tab: 'account' }} aria-label="User settings" aria-current={current.to === userSettings.to ? 'page' : undefined} onClick={() => setMenuOpen(false)}><span className="flex h-8 w-8 items-center justify-center rounded-full border bg-secondary text-xs font-semibold text-primary">{user?.email?.[0]?.toUpperCase() ?? 'A'}</span></Link></Button>
             </div>
           </div>
-          {menuOpen && <div id="mobile-navigation" className="border-t p-4 lg:hidden">{navigation(true)}<div className="mt-4 flex min-w-0 items-center justify-between gap-3 border-t pt-3"><Link to="/settings" search={{ tab: 'account' }} onClick={() => setMenuOpen(false)} className="min-w-0 rounded-md px-3 py-2 text-sm hover:bg-accent"><span className="block font-medium">Account settings</span><span className="block truncate text-xs text-muted-foreground">{user?.email}</span></Link><Button variant="ghost" size="sm" onClick={() => void logout()}><LogOut />Log out</Button></div></div>}
+          {menuOpen && <div id="mobile-navigation" className="border-t p-4 lg:hidden">{navigation(true)}<div className="mt-4 flex min-w-0 items-center justify-between gap-3 border-t pt-3"><Link to="/user-settings" search={{ tab: 'account' }} aria-current={current.to === userSettings.to ? 'page' : undefined} onClick={() => setMenuOpen(false)} className="min-w-0 rounded-md px-3 py-2 text-sm hover:bg-accent"><span className="block font-medium">User Settings</span><span className="block truncate text-xs text-muted-foreground">{user?.email}</span></Link><Button variant="ghost" size="sm" onClick={() => void logout()}><LogOut />Log out</Button></div></div>}
         </header>
         <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1480px] px-5 py-8 outline-none sm:px-8 lg:px-10 lg:py-10">{children}</main>
         <footer className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-2 px-5 py-6 text-xs text-muted-foreground sm:px-8 lg:px-10"><span>Minecraft Container Manager</span></footer>
