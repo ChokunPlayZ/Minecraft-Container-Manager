@@ -12,6 +12,11 @@ STAGING=""
 BUILD_CONTAINER=""
 ENGINE=""
 SOURCE_DIR=""
+CONFIG_WORK_DIR=""
+ORIGINAL_CONFIG=""
+ANSWER=""
+EXISTING_ENGINE=""
+SETTINGS_SAVED=false
 
 say() { printf '%s\n' "$*"; }
 die() { say "Error: $*" >&2; exit 1; }
@@ -21,20 +26,29 @@ cleanup() {
         "$ENGINE" rm -f "$BUILD_CONTAINER" >/dev/null 2>&1 || true
     fi
     [[ -z "$STAGING" ]] || rm -rf -- "$STAGING"
+    [[ -z "$CONFIG_WORK_DIR" ]] || rm -rf -- "$CONFIG_WORK_DIR"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 usage() {
     cat <<'USAGE'
-Usage: ./mcmctl install [--runtime podman|docker] [--data-dir /absolute/path] [--backup-dir /absolute/path] [--port 8080]
+Usage: ./mcmctl install [--interactive|--non-interactive] [--runtime podman|docker]
+                       [--data-dir /absolute/path] [--backup-dir /absolute/path] [--port 8080]
        mcmctl start|stop|restart|status|logs|enable|disable
        mcmctl update [--local]
-       mcmctl config|backup|rollback|uninstall
+       mcmctl config [--interactive|--editor]
+       mcmctl backup|rollback|uninstall
 
 install    Build the complete app, create config, and start a user service.
+           A terminal opens guided setup; flags become prompt defaults.
+  --interactive      Always show the step-by-step setup (also with piped input).
+  --non-interactive  Use existing settings, flags, and defaults without prompts.
 update     Fast-forward the source checkout, build, back up, and restart.
   --local  Build the current checkout without fetching or changing Git files.
-config     Open persistent settings in $EDITOR (default: vi).
+config     Edit settings step by step, review, save, and optionally restart.
+  --editor Open persistent settings in $EDITOR (default: vi) instead.
 backup     Save the panel database, settings, and installed version.
 rollback   Restore the last backup and restart the panel.
 uninstall  Remove the service and installed commands; retain config and data.
@@ -72,6 +86,363 @@ absolute_path() {
     [[ "$1" == /* ]] || die "Use an absolute path: $1"
     # Literal environment-file paths; avoid unsupported escaping/expansion.
     [[ "$1" != *[$'\n\r\\\"\047\$']* ]] || die "Path contains unsupported quotes, escapes, or shell variables: $1"
+}
+
+# Work on a private copy until the user has reviewed and accepted the settings.
+begin_config_edit() {
+    ORIGINAL_CONFIG="$CONFIG"
+    CONFIG_WORK_DIR=$(mktemp -d "$CONFIG_DIR/.setup.XXXXXX")
+    CONFIG="$CONFIG_WORK_DIR/mcm.env"
+    if [[ -f "$ORIGINAL_CONFIG" ]]; then cp -p -- "$ORIGINAL_CONFIG" "$CONFIG"; else touch "$CONFIG"; fi
+    chmod 600 "$CONFIG"
+}
+
+commit_config_edit() {
+    local backup
+    if [[ -f "$ORIGINAL_CONFIG" ]]; then
+        mkdir -p "$CONFIG_DIR/backups"
+        backup=$(mktemp -d "$CONFIG_DIR/backups/config-$(date +%Y%m%d-%H%M%S)-XXXXXX")
+        cp -p -- "$ORIGINAL_CONFIG" "$backup/mcm.env"
+        say "Previous settings saved: $backup/mcm.env"
+    fi
+    mv -f -- "$CONFIG" "$ORIGINAL_CONFIG"
+    CONFIG="$ORIGINAL_CONFIG"
+    SETTINGS_SAVED=true
+}
+
+cancel_setup() {
+    if [[ "$SETTINGS_SAVED" == true ]]; then
+        say 'Settings are saved. Apply when ready with: mcmctl restart'
+    else
+        say 'Setup cancelled. No settings were saved.'
+    fi
+    exit 0
+}
+
+input_ended() {
+    if [[ "$SETTINGS_SAVED" == true ]]; then
+        say 'Settings are saved. Apply when ready with: mcmctl restart'
+        exit 0
+    fi
+    die 'Input ended. No settings were saved.'
+}
+
+read_answer() {
+    local prompt="$1" secret="${2:-false}"
+    printf '%s' "$prompt"
+    if [[ "$secret" == true && -t 0 ]]; then
+        if ! IFS= read -r -s ANSWER; then say ''; input_ended; fi
+        say ''
+    else
+        IFS= read -r ANSWER || input_ended
+    fi
+    [[ "$ANSWER" != :cancel ]] || cancel_setup
+}
+
+valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= ${2:-1} && 10#$1 <= 65535)); }
+
+valid_value() {
+    local kind="$1" value="$2" host port first last ancestor
+    case "$kind" in
+        runtime)
+            [[ "$value" == podman || "$value" == docker ]] || { say 'Choose podman or docker.'; return 1; }
+            if [[ -n "$EXISTING_ENGINE" && "$value" != "$EXISTING_ENGINE" ]]; then
+                say "Keep $EXISTING_ENGINE for existing containers. Engine migrations require updating the runtime and endpoint together manually."
+                return 1
+            fi
+            command -v "$value" >/dev/null 2>&1 || { say "Install $value first (see docs/operations.md), or choose the other engine."; return 1; }
+            ;;
+        directory|database|certificate)
+            if [[ "$value" != /* || "$value" == *[$'\n\r\\\"\047\$']* ]]; then
+                say 'Use a literal absolute path, without quotes, escapes, or shell variables.'; return 1
+            fi
+            if [[ "$kind" == certificate ]]; then
+                [[ -f "$value" && -r "$value" ]] || { say 'Choose an existing readable PEM file.'; return 1; }
+                return 0
+            fi
+            ancestor="$value"
+            if [[ "$kind" == database ]]; then
+                if [[ -e "$value" && ( ! -f "$value" || ! -r "$value" || ! -w "$value" ) ]]; then
+                    say 'Choose a readable, writable database file.'; return 1
+                fi
+                ancestor=$(dirname -- "$value")
+            fi
+            while [[ ! -e "$ancestor" ]]; do ancestor=$(dirname -- "$ancestor"); done
+            [[ -d "$ancestor" && -w "$ancestor" && -x "$ancestor" ]] || { say 'Choose a writable directory (or a path below one).'; return 1; }
+            ;;
+        endpoint)
+            case "$value" in
+                /*|unix:///*|tcp://?*:*) ;;
+                *) say 'Use unix:///absolute/socket/path, /absolute/socket/path, or tcp://host:port.'; return 1 ;;
+            esac
+            ;;
+        address)
+            host="${value%:*}"; port="${value##*:}"
+            if [[ "$value" != *:* ]] || ! valid_port "$port" 1024 ||
+                [[ "$host" == *[[:space:]/]* ]] ||
+                { [[ "$host" == *:* ]] && [[ ! "$host" =~ ^\[[0-9a-fA-F:%.]+\]$ ]]; }; then
+                say 'Use host:port, :port for all interfaces, or [IPv6]:port; ports must be 1024-65535.'; return 1
+            fi
+            ;;
+        range)
+            first="${value%-*}"; last="${value#*-}"
+            if [[ "$value" != *-* ]] || ! valid_port "$first" 1024 || ! valid_port "$last" 1024 || ((10#$first > 10#$last)); then
+                say 'Use start-end with ports 1024-65535, in ascending order.'; return 1
+            fi
+            ;;
+        timezone)
+            [[ "$value" != /* && "$value" != *..* && -f "/usr/share/zoneinfo/$value" ]] || { say 'Use an installed timezone such as UTC or Asia/Bangkok.'; return 1; }
+            ;;
+        number)
+            [[ "$value" =~ ^[0-9]{1,9}$ ]] || { say 'Enter a whole number, 0 or greater.'; return 1; }
+            ;;
+        cpu)
+            [[ "$value" =~ ^[0-9]{1,6}(\.[0-9]{1,6})?$ ]] || { say 'Enter a non-negative CPU count such as 0, 0.5, or 2.'; return 1; }
+            ;;
+        duration)
+            [[ "$value" =~ ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$ ]] || { say 'Use a duration such as 30s, 15m, or 1h30m.'; return 1; }
+            ;;
+        url)
+            [[ "$value" =~ ^https?://[^/[:space:]]+[^[:space:]]*$ ]] || { say 'Use a full http:// or https:// URL.'; return 1; }
+            ;;
+        origins)
+            local origin
+            local -a origins
+            IFS=',' read -r -a origins <<< "$value"
+            for origin in "${origins[@]}"; do
+                [[ "$origin" =~ ^https?://[^/[:space:]]+$ ]] || { say 'Use comma-separated http(s) origins with no path or spaces, for example https://panel.example.com:8080.'; return 1; }
+            done
+            ;;
+        rpid)
+            [[ "$value" =~ ^[a-zA-Z0-9.-]+$ ]] || { say 'Use the browser hostname, without a scheme, port, or path.'; return 1; }
+            ;;
+        image)
+            [[ "$value" != *[[:space:]]* ]] || { say 'Image names cannot contain spaces.'; return 1; }
+            ;;
+    esac
+}
+
+prompt_setting() {
+    local key="$1" label="$2" fallback="$3" kind="${4:-text}" optional="${5:-false}" secret="${6:-false}"
+    local current display value
+    current=$(setting "$key")
+    [[ -n "$current" ]] || current="$fallback"
+    while true; do
+        display="${current:-empty}"
+        if [[ "$secret" == true && -n "$current" ]]; then display='saved; hidden'; fi
+        read_answer "$label [$display]: " "$secret"
+        # Keep an existing credential byte-for-byte, including its file quoting.
+        if [[ "$secret" == true && -z "$ANSWER" && -n "$current" ]]; then return 0; fi
+        value="${ANSWER:-$current}"
+        [[ "$optional" != true || "$ANSWER" != - ]] || value=""
+        if [[ -z "$value" ]]; then
+            [[ "$optional" == true ]] || { say 'A value is required.'; continue; }
+        else
+            # Keep the literal format understood by setting() and systemd.
+            if [[ "$value" == *[$'\r\n\\\"\047']* || "$value" == [[:space:]]* || "$value" == *[[:space:]] ]]; then
+                say 'Use a single line without wrapping spaces, quotes, or backslashes.'; continue
+            fi
+            if ! valid_value "$kind" "$value"; then continue; fi
+        fi
+        set_setting "$key" "$value"
+        return 0
+    done
+}
+
+ask_yes_no() {
+    local label="$1" default="${2:-false}" hint='y/N'
+    [[ "$default" != true ]] || hint='Y/n'
+    while true; do
+        read_answer "$label [$hint]: "
+        case "${ANSWER:-$default}" in
+            y|Y|yes|YES|true) ANSWER=true; return 0 ;;
+            n|N|no|NO|false) ANSWER=false; return 0 ;;
+            *) say 'Enter yes or no.' ;;
+        esac
+    done
+}
+
+wizard_step() {
+    local step="$1" mode default previous_engine previous_endpoint
+    say ''
+    case "$step" in
+        1)
+            say 'Step 1/7 - Container engine'
+            say 'Podman is recommended for rootless installs. Keep the engine used by existing Minecraft containers.'
+            previous_engine=$(setting MCM_CONTAINER_RUNTIME)
+            previous_endpoint=$(setting MCM_CONTAINER_HOST)
+            prompt_setting MCM_CONTAINER_RUNTIME 'Container engine (podman/docker)' "$ENGINE" runtime
+            ENGINE=$(setting MCM_CONTAINER_RUNTIME)
+            if [[ "$ENGINE" == podman ]]; then
+                default="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+            else
+                default="${DOCKER_HOST:-unix:///var/run/docker.sock}"
+            fi
+            if [[ -n "$previous_engine" && "$previous_engine" != "$ENGINE" ]]; then
+                case "$previous_endpoint" in
+                    "unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"|"${DOCKER_HOST:-unix:///var/run/docker.sock}")
+                        set_setting MCM_CONTAINER_HOST "$default" ;;
+                esac
+            fi
+            prompt_setting MCM_CONTAINER_HOST 'Container API endpoint' "$default" endpoint
+            ;;
+        2)
+            say 'Step 2/7 - Storage'
+            say 'Choose the existing data directory when reinstalling. Changing a path does not move its files.'
+            prompt_setting MCM_DATA_DIR 'Server data directory' "${XDG_DATA_HOME:-$HOME/.local/share}/mcm" directory
+            say 'Leave the database path empty to use <data directory>/mcm.db.'
+            prompt_setting MCM_DB_PATH 'Separate database file (optional)' '' database true
+            say 'Leave the backup path empty to use <data directory>/backups, or choose mounted backup media.'
+            prompt_setting MCM_BACKUP_DIR 'Separate backup directory (optional)' '' directory true
+            ;;
+        3)
+            say 'Step 3/7 - Network and browser access'
+            say ':8080 listens on every interface; 127.0.0.1:8080 limits access to this host or a local proxy.'
+            prompt_setting MCM_ADDR 'Panel listen address' :8080 address
+            prompt_setting MCM_PORT_RANGE 'Minecraft host port range' 25565-25665 range
+            prompt_setting TZ 'Panel and schedule timezone' UTC timezone
+            say 'For passkeys, use the hostname and full origin(s) you will open in the browser. Empty origins are derived from the listen port at localhost.'
+            prompt_setting MCM_WEB_AUTHN_RPID 'Passkey hostname' localhost rpid
+            prompt_setting MCM_WEB_AUTHN_RP_ORIGIN 'Passkey browser origins (optional)' '' origins true
+            prompt_setting MCM_WEB_AUTHN_RP_NAME 'Passkey display name' 'Minecraft Container Manager'
+            ;;
+        4)
+            say 'Step 4/7 - HTTPS and sessions'
+            mode=self-signed
+            case "$(setting MCM_HTTP_ONLY)" in
+                1|t|T|true|TRUE|True)
+                    mode=http
+                    case "$(setting MCM_TLS)" in 1|t|T|true|TRUE|True) mode=proxy ;; esac
+                    ;;
+                *) [[ -z "$(setting MCM_TLS_CERT)" ]] || mode=custom ;;
+            esac
+            say 'self-signed: automatic HTTPS; custom: your PEM files; proxy: HTTPS at a reverse proxy; http: local development.'
+            while true; do
+                read_answer "HTTPS mode (self-signed/custom/proxy/http) [$mode]: "
+                mode="${ANSWER:-$mode}"
+                case "$mode" in self-signed|custom|proxy|http) break ;; *) say 'Choose self-signed, custom, proxy, or http.'; mode=self-signed ;; esac
+            done
+            if [[ "$mode" == custom ]]; then
+                prompt_setting MCM_TLS_CERT 'TLS certificate PEM file' '' certificate
+                prompt_setting MCM_TLS_KEY 'TLS private key PEM file' '' certificate
+            else
+                set_setting MCM_TLS_CERT ''
+                set_setting MCM_TLS_KEY ''
+            fi
+            if [[ "$mode" == self-signed || "$mode" == custom ]]; then
+                set_setting MCM_HTTP_ONLY false
+                set_setting MCM_TLS false
+                default=false
+                case "$(setting MCM_TLS_REDIRECT)" in 1|t|T|true|TRUE|True) default=true ;; esac
+                ask_yes_no 'Redirect plain HTTP to HTTPS on the panel port?' "$default"
+                set_setting MCM_TLS_REDIRECT "$ANSWER"
+            else
+                set_setting MCM_HTTP_ONLY true
+                set_setting MCM_TLS_REDIRECT false
+                [[ "$mode" != http ]] || say 'HTTP mode sends session traffic without encryption. Use it only on a trusted local connection.'
+                default=false; [[ "$mode" != proxy ]] || default=true
+                set_setting MCM_TLS "$default"
+            fi
+            say 'The session signing secret is kept automatically, or generated securely for a new install.'
+            ;;
+        5)
+            say 'Step 5/7 - Defaults for new Minecraft servers'
+            say '0 leaves a resource unlimited. Existing server limits are unchanged.'
+            prompt_setting MCM_DEFAULT_CPU_LIMIT 'Default CPU limit' 0 cpu
+            prompt_setting MCM_DEFAULT_MEMORY_MB 'Default memory limit (MiB)' 0 number
+            prompt_setting MCM_SERVER_IMAGE 'Minecraft runtime image' docker.io/library/eclipse-temurin:21-jre-alpine image
+            ;;
+        6)
+            say 'Step 6/7 - Optional services and login protection'
+            default=false; [[ -z "$(setting MCM_S3_ENDPOINT)" ]] || default=true
+            ask_yes_no 'Configure S3-compatible backup storage?' "$default"
+            if [[ "$ANSWER" == true ]]; then
+                prompt_setting MCM_S3_ENDPOINT 'S3 endpoint URL' '' url
+                prompt_setting MCM_S3_BUCKET 'S3 bucket' ''
+                prompt_setting MCM_S3_REGION 'S3 region' us-east-1
+                prompt_setting MCM_S3_ACCESS_KEY 'S3 access key' '' text false true
+                prompt_setting MCM_S3_SECRET_KEY 'S3 secret key' '' text false true
+            else
+                set_setting MCM_S3_ENDPOINT ''
+            fi
+            say 'A CurseForge API key enables checks performed by the panel.'
+            prompt_setting CURSEFORGE_API_KEY 'CurseForge API key (optional)' '' text true true
+            ask_yes_no 'Edit login and request rate limits?' false
+            if [[ "$ANSWER" == true ]]; then
+                prompt_setting MCM_LOGIN_MAX_ATTEMPTS 'Failed login attempts before lockout' 5 number
+                prompt_setting MCM_LOGIN_LOCKOUT 'Login lockout duration' 15m duration
+                prompt_setting MCM_RATE_LIMIT_MAX 'Requests per client per window' 100 number
+                prompt_setting MCM_RATE_LIMIT_WINDOW 'Request rate window' 1m duration
+            fi
+            ;;
+    esac
+}
+
+review_config() {
+    local key label fallback value
+    say ''
+    say 'Step 7/7 - Review settings'
+    while IFS='|' read -r key label fallback; do
+        value=$(setting "$key")
+        printf '  %s: %s\n' "$label" "${value:-$fallback}"
+    done <<'FIELDS'
+MCM_CONTAINER_RUNTIME|Container engine|
+MCM_CONTAINER_HOST|Container API|
+MCM_DATA_DIR|Server data|
+MCM_DB_PATH|Database|<data directory>/mcm.db
+MCM_BACKUP_DIR|Server backups|<data directory>/backups
+MCM_ADDR|Panel listen address|
+MCM_PORT_RANGE|Minecraft ports|
+TZ|Timezone|
+MCM_WEB_AUTHN_RPID|Passkey hostname|
+MCM_WEB_AUTHN_RP_ORIGIN|Passkey browser origins|Automatic (localhost)
+MCM_WEB_AUTHN_RP_NAME|Passkey display name|
+MCM_HTTP_ONLY|Serve plain HTTP|false
+MCM_TLS|Force secure cookies behind proxy|false
+MCM_TLS_CERT|TLS certificate|Automatic self-signed certificate when HTTPS is enabled
+MCM_TLS_KEY|TLS private key file|Automatic when HTTPS is enabled
+MCM_TLS_REDIRECT|Redirect HTTP to HTTPS|false
+MCM_DEFAULT_CPU_LIMIT|Default CPU limit|0 (unlimited)
+MCM_DEFAULT_MEMORY_MB|Default memory limit (MiB)|0 (unlimited)
+MCM_SERVER_IMAGE|Minecraft runtime image|
+MCM_S3_ENDPOINT|S3 endpoint|Disabled
+MCM_S3_BUCKET|S3 bucket|Unset
+MCM_S3_REGION|S3 region|us-east-1
+MCM_LOGIN_MAX_ATTEMPTS|Failed logins before lockout|5
+MCM_LOGIN_LOCKOUT|Login lockout|15m
+MCM_RATE_LIMIT_MAX|Requests per client per window|100
+MCM_RATE_LIMIT_WINDOW|Request rate window|1m
+FIELDS
+    while IFS='|' read -r key label; do
+        value=$(setting "$key")
+        if [[ -n "$value" ]]; then value='<saved; hidden>'; else value='<unset>'; fi
+        [[ "$key" != MCM_SESSION_SECRET || "$value" != '<unset>' ]] || value='<generated automatically>'
+        printf '  %s: %s\n' "$label" "$value"
+    done <<'SECRETS'
+MCM_SESSION_SECRET|Session signing secret
+MCM_S3_ACCESS_KEY|S3 access key
+MCM_S3_SECRET_KEY|S3 secret key
+CURSEFORGE_API_KEY|CurseForge API key
+SECRETS
+    say "Settings file: $ORIGINAL_CONFIG"
+}
+
+guided_config() {
+    local step
+    say 'MCM guided setup'
+    say "Enter keeps the shown value. Use '-' to clear an optional value, or ':cancel' to exit without saving."
+    say 'You can revisit any step before saving. Secret input is hidden in a terminal.'
+    for step in 1 2 3 4 5 6; do wizard_step "$step"; done
+    while true; do
+        review_config
+        read_answer 'Enter a step (1-6) to edit, save to continue, or cancel [save]: '
+        case "${ANSWER:-save}" in
+            [1-6]) wizard_step "$ANSWER" ;;
+            save) return 0 ;;
+            cancel) cancel_setup ;;
+            *) say 'Choose a step number, save, or cancel.' ;;
+        esac
+    done
 }
 
 load_state() {
@@ -323,10 +694,19 @@ enable_boot() {
 }
 
 install_app() {
-    local requested_engine="" data_dir="" backup_dir="" port="" flag
+    local requested_engine="" data_dir="" backup_dir="" port="" flag interactive=auto staged_config host scheme
     while (($#)); do
         flag="$1"; shift
-        (($#)) || die "Missing value for $flag"
+        case "$flag" in
+            --interactive|--non-interactive)
+                [[ "$interactive" == auto ]] || die 'Choose only one of --interactive and --non-interactive.'
+                interactive=false; [[ "$flag" != --interactive ]] || interactive=true
+                continue
+                ;;
+            --help|-h) usage; return 0 ;;
+            --runtime|--data-dir|--backup-dir|--port) (($#)) || die "Missing value for $flag" ;;
+            *) die "Unknown option: $flag" ;;
+        esac
         case "$flag" in
             --runtime) requested_engine="$1" ;;
             --data-dir) data_dir="$1"; absolute_path "$data_dir" ;;
@@ -337,24 +717,42 @@ install_app() {
                 port=$((10#$port))
                 [[ "$port" -gt 1023 && "$port" -le 65535 ]] || die "Port must be between 1024 and 65535."
                 ;;
-            *) die "Unknown option: $flag" ;;
         esac
         shift
     done
+    if [[ "$interactive" == auto ]]; then
+        interactive=false; [[ ! -t 0 ]] || interactive=true
+    fi
     SOURCE_DIR=$(command_source_dir) || load_state
-    ENGINE="${requested_engine:-$(setting MCM_CONTAINER_RUNTIME)}"
+    EXISTING_ENGINE=$(setting MCM_CONTAINER_RUNTIME)
+    ENGINE="${requested_engine:-$EXISTING_ENGINE}"
     if [[ -z "$ENGINE" ]]; then
         if command -v podman >/dev/null 2>&1; then ENGINE=podman; else ENGINE=docker; fi
     fi
     [[ "$ENGINE" == podman || "$ENGINE" == docker ]] || die "Runtime must be podman or docker."
-    if [[ -n "$requested_engine" && -n "$(setting MCM_CONTAINER_RUNTIME)" && "$requested_engine" != "$(setting MCM_CONTAINER_RUNTIME)" ]]; then
-        die "Config uses $(setting MCM_CONTAINER_RUNTIME). Change MCM_CONTAINER_RUNTIME and MCM_CONTAINER_HOST in $CONFIG before switching engines."
+    if [[ -n "$requested_engine" && -n "$EXISTING_ENGINE" && "$requested_engine" != "$EXISTING_ENGINE" ]]; then
+        die "Config uses $EXISTING_ENGINE. Change MCM_CONTAINER_RUNTIME and MCM_CONTAINER_HOST in $CONFIG before switching engines."
     fi
+    if [[ "$interactive" == true ]]; then
+        begin_config_edit
+        [[ -z "$data_dir" ]] || set_setting MCM_DATA_DIR "$data_dir"
+        [[ -z "$backup_dir" ]] || set_setting MCM_BACKUP_DIR "$backup_dir"
+        [[ -z "$port" ]] || set_setting MCM_ADDR ":$port"
+        # An explicit flag takes priority as the runtime prompt's default.
+        [[ -z "$requested_engine" ]] || set_setting MCM_CONTAINER_RUNTIME "$requested_engine"
+        guided_config
+        data_dir=""; backup_dir=""; port=""
+    else
+        say 'Using unattended setup. Run install --interactive for guided configuration.'
+    fi
+    say 'Installation 1/5 - Checking the container engine and API socket.'
     prepare_engine
     if [[ $("$ENGINE" inspect --format '{{.State.Running}}' mcm 2>/dev/null || true) == true ]]; then
         die "A panel container named mcm is running. Stop it with '$ENGINE stop mcm', then retry with --data-dir pointing to its existing host data directory."
     fi
+    say 'Installation 2/5 - Preparing settings and checking storage.'
     prepare_config "$data_dir" "$port" "$backup_dir"
+    say 'Installation 3/5 - Downloading images and building the panel.'
     ensure_runtime_image
     build_app
     mkdir -p "$CONFIG_DIR/backups"
@@ -362,10 +760,16 @@ install_app() {
     if [[ -f "$UNIT" ]] || systemctl --user is-active --quiet mcm.service; then
         systemctl --user stop mcm.service
     fi
+    # Back up the previous configuration and its database, not the wizard draft.
+    staged_config="$CONFIG"
+    [[ "$interactive" != true || ! -f "$ORIGINAL_CONFIG" ]] || CONFIG="$ORIGINAL_CONFIG"
     if [[ -f "$BIN_DIR/mcm" ]] && ! snapshot; then
         systemctl --user start mcm.service || true
         die 'Could not back up the installed version. Installation stopped.'
     fi
+    CONFIG="$staged_config"
+    [[ "$interactive" != true ]] || commit_config_edit
+    say 'Installation 4/5 - Installing and enabling the user service.'
     [[ ! -f "$UNIT" ]] || cp -p -- "$UNIT" "$CONFIG_DIR/previous.service"
     mv -f -- "$STAGING/mcm" "$BIN_DIR/mcm"
     cp -- "$SOURCE_DIR/mcmctl" "$STAGING/mcmctl"
@@ -376,6 +780,7 @@ install_app() {
     systemctl --user daemon-reload
     systemctl --user reset-failed mcm.service
     enable_boot
+    say 'Installation 5/5 - Starting MCM and waiting for it to become ready.'
     if ! systemctl --user start mcm.service || ! wait_ready; then
         die "MCM could not start. Inspect: $BIN_DIR/mcmctl logs. Your settings and server data are retained."
     fi
@@ -384,6 +789,41 @@ install_app() {
     say "Server data: $(setting MCM_DATA_DIR)"
     backup_dir=$(setting MCM_BACKUP_DIR)
     say "Server backups: ${backup_dir:-$(setting MCM_DATA_DIR)/backups}"
+    host=$(setting MCM_ADDR); port="${host##*:}"; host="${host%:*}"
+    case "$host" in ''|0.0.0.0|'[::]') host=YOUR_SERVER_IP ;; esac
+    scheme=https
+    case "$(setting MCM_HTTP_ONLY)" in 1|t|T|true|TRUE|True) scheme=http ;; esac
+    say "Open $scheme://$host:$port in your browser; onboarding creates the first administrator."
+    if [[ "$scheme" == https && -z "$(setting MCM_TLS_CERT)" ]]; then
+        say "Trust the public certificate at $(setting MCM_DATA_DIR)/tls/cert.pem to remove the browser warning. Keep key.pem private."
+    fi
+    say "Allow the panel port and published Minecraft ports through your host firewall. Edit settings later with: $BIN_DIR/mcmctl config"
+}
+
+configure_app() {
+    [[ -f "$CONFIG" ]] || die 'Run ./mcmctl install first.'
+    if [[ $# == 1 && "$1" == --editor ]]; then
+        exec "${EDITOR:-vi}" "$CONFIG"
+    fi
+    [[ $# == 0 || ( $# == 1 && "$1" == --interactive ) ]] || die 'Usage: mcmctl config [--interactive|--editor]'
+    [[ -t 0 || $# == 1 ]] || die 'Guided config needs a terminal. Use config --interactive for piped answers, or config --editor for a text editor.'
+    EXISTING_ENGINE=$(setting MCM_CONTAINER_RUNTIME)
+    ENGINE="${EXISTING_ENGINE:-podman}"
+    begin_config_edit
+    guided_config
+    prepare_config '' '' ''
+    commit_config_edit
+    say "Settings saved: $CONFIG"
+    say 'Changing storage paths does not move data. Restart the panel to apply saved settings.'
+    if [[ -f "$UNIT" ]]; then
+        ask_yes_no 'Restart MCM now to apply these settings?' false
+        if [[ "$ANSWER" == true ]]; then
+            systemctl --user restart mcm.service
+            wait_ready || die 'MCM did not become ready. Check mcmctl logs or restore the saved settings backup.'
+            return 0
+        fi
+    fi
+    say 'Apply when ready with: mcmctl restart'
 }
 
 update_source() {
@@ -454,7 +894,7 @@ need systemctl
 absolute_path "$CONFIG_DIR"
 absolute_path "$BIN_DIR"
 case "$command" in
-    install|update|rollback|backup|uninstall) lock_installation ;;
+    install|update|rollback|backup|uninstall|config) lock_installation ;;
 esac
 case "$command" in
     install|update|rollback) need curl ;;
@@ -464,7 +904,7 @@ case "$command" in
     update) update_app "$@" ;;
     start|stop|restart|status) systemctl --user "$command" mcm.service ;;
     logs) exec journalctl --user -u mcm.service -n 100 -f ;;
-    config) [[ -f "$CONFIG" ]] || die "Run ./mcmctl install first."; exec "${EDITOR:-vi}" "$CONFIG" ;;
+    config) configure_app "$@" ;;
     enable) enable_boot ;;
     disable) systemctl --user disable mcm.service ;;
     backup)

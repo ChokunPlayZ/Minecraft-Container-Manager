@@ -5,7 +5,10 @@ Run: python3 -m unittest discover -s deploy/tests -v
 import json
 import os
 from pathlib import Path
+import pty
+import select
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -126,10 +129,11 @@ class ManagerTests(unittest.TestCase):
         self.socket_dir.cleanup()
         self.temp.cleanup()
 
-    def run_manager(self, *args, ok=True, script=None, cwd=None, **extra_env):
+    def run_manager(self, *args, ok=True, script=None, cwd=None, input_text=None, **extra_env):
         result = subprocess.run(
             ['bash', str(script or self.source / 'mcmctl'), *args], cwd=cwd,
             env={**self.env, **extra_env}, text=True, capture_output=True,
+            input=input_text, timeout=60,
         )
         if ok:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -143,6 +147,274 @@ class ManagerTests(unittest.TestCase):
 
     def clear_calls(self):
         (self.root / 'calls').write_text('')
+
+    def wizard_answers(self, *, runtime='', endpoint='', data='', database='', backups='',
+                       address='', ports='', timezone='', rpid='', origins='', name='',
+                       tls_mode='', tls_files=(), redirect='', cpu='', memory='', image='',
+                       s3=False, s3_values=(), curseforge='', security=False, security_values=(),
+                       review='save', restart=None):
+        answers = [runtime, endpoint, data, database, backups, address, ports, timezone,
+                   rpid, origins, name, tls_mode, *tls_files]
+        if tls_mode not in ('proxy', 'http'):
+            answers.append(redirect)
+        answers += [cpu, memory, image, 'yes' if s3 else 'no', *s3_values,
+                    curseforge, 'yes' if security else 'no', *security_values, review]
+        if restart is not None:
+            answers.append(restart)
+        return '\n'.join(answers) + '\n'
+
+    def test_guided_install_edits_configuration_and_completes_all_steps(self):
+        data = self.root / 'guided data'
+        backups = self.root / 'backup disk/archives'
+        result = self.run_manager('install', '--interactive', input_text=self.wizard_answers(
+            runtime='docker', data=str(data), backups=str(backups), address='127.0.0.1:9443',
+            ports='30000-30100', timezone='Asia/Bangkok', rpid='panel.example.com',
+            origins='https://panel.example.com:9443', cpu='2.5', memory='4096',
+        ))
+        config = self.config.read_text()
+        for entry in ('MCM_CONTAINER_RUNTIME=docker', 'MCM_DATA_DIR=' + str(data),
+                      'MCM_BACKUP_DIR=' + str(backups), 'MCM_ADDR=127.0.0.1:9443',
+                      'MCM_PORT_RANGE=30000-30100', 'TZ=Asia/Bangkok',
+                      'MCM_WEB_AUTHN_RPID=panel.example.com',
+                      'MCM_WEB_AUTHN_RP_ORIGIN=https://panel.example.com:9443',
+                      'MCM_DEFAULT_CPU_LIMIT=2.5', 'MCM_DEFAULT_MEMORY_MB=4096'):
+            self.assertIn(entry + '\n', config)
+        for step in range(1, 8):
+            self.assertIn(f'Step {step}/7', result.stdout)
+        self.assertIn('Installation 5/5', result.stdout)
+        self.assertTrue((self.root / 'active').exists())
+        self.assertTrue(backups.is_dir())
+        self.assertFalse(list(self.config.parent.glob('.setup.*')))
+
+    def test_guided_install_flags_supply_defaults(self):
+        data = self.root / 'flag data'
+        backups = self.root / 'flag backups'
+        self.run_manager('install', '--interactive', '--runtime', 'docker', '--data-dir', str(data),
+                         '--backup-dir', str(backups), '--port', '9090', input_text=self.wizard_answers())
+        config = self.config.read_text()
+        self.assertIn('MCM_CONTAINER_RUNTIME=docker\n', config)
+        self.assertIn('MCM_DATA_DIR=' + str(data) + '\n', config)
+        self.assertIn('MCM_BACKUP_DIR=' + str(backups) + '\n', config)
+        self.assertIn('MCM_ADDR=:9090\n', config)
+
+    def test_guided_install_reprompts_invalid_values(self):
+        result = self.run_manager('install', '--interactive', input_text=self.wizard_answers(
+            runtime='invalid\npodman', endpoint='invalid\n',
+            data='relative/path\n', address=':80\n:65536\n:9090', ports='30000-25565\n30000-30100',
+            timezone='Mars/Olympus\nUTC', origins='https://example.com/path\nhttps://example.com',
+            cpu='-1\n1.5', memory='many\n2048',
+        ))
+        for message in ('Choose podman or docker.', 'Use a literal absolute path',
+                        'ports must be 1024-65535', 'in ascending order',
+                        'Use an installed timezone', 'no path or spaces',
+                        'non-negative CPU count', 'Enter a whole number'):
+            self.assertIn(message, result.stdout)
+        self.assertIn('MCM_ADDR=:9090\n', self.config.read_text())
+
+    def test_guided_install_cancel_or_eof_does_not_write_or_start_services(self):
+        for answer, ok in ((':cancel\n', True), ('', False),
+                           (self.wizard_answers(review='cancel'), True)):
+            with self.subTest(answer=answer):
+                self.run_manager('install', '--interactive', input_text=answer, ok=ok)
+                self.assertFalse(self.config.exists())
+                self.assertFalse(self.binary.exists())
+                self.assertFalse(any(call[0] == 'systemctl' for call in self.calls()))
+                self.assertFalse(list(self.config.parent.glob('.setup.*')))
+
+    def test_guided_install_can_revisit_a_step_before_saving(self):
+        answers = self.wizard_answers(review='5') + '3\n8192\n\nsave\n'
+        result = self.run_manager('install', '--interactive', input_text=answers)
+        self.assertEqual(result.stdout.count('Step 5/7'), 2)
+        self.assertIn('MCM_DEFAULT_CPU_LIMIT=3\n', self.config.read_text())
+        self.assertIn('MCM_DEFAULT_MEMORY_MB=8192\n', self.config.read_text())
+
+    def test_guided_new_install_can_revisit_and_change_engine_with_socket_default(self):
+        answers = self.wizard_answers(review='1') + 'docker\n\nsave\n'
+        self.run_manager('install', '--interactive', input_text=answers)
+        config = self.config.read_text()
+        self.assertIn('MCM_CONTAINER_RUNTIME=docker\n', config)
+        self.assertIn('MCM_CONTAINER_HOST=unix:///var/run/docker.sock\n', config)
+
+    def test_interrupting_guided_setup_removes_private_draft(self):
+        process = subprocess.Popen(
+            ['bash', str(self.source / 'mcmctl'), 'install', '--interactive'],
+            env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            output = b''
+            while b'Container engine (podman/docker)' not in output:
+                ready, _, _ = select.select([process.stdout], [], [], 10)
+                self.assertTrue(ready, 'Wizard did not prompt within 10 seconds')
+                chunk = os.read(process.stdout.fileno(), 4096)
+                self.assertTrue(chunk, output)
+                output += chunk
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 130)
+            self.assertFalse(self.config.exists())
+            self.assertFalse(list(self.config.parent.glob('.setup.*')))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
+    def test_guided_config_preserves_unknown_settings_secret_and_saves_backup(self):
+        self.run_manager('install')
+        original = self.config.read_text() + '# personal setting\nCUSTOM_SETTING=keep-me\n'
+        self.config.write_text(original)
+        secret = next(line.split('=', 1)[1] for line in original.splitlines()
+                      if line.startswith('MCM_SESSION_SECRET='))
+        self.clear_calls()
+        result = self.run_manager('config', '--interactive', input_text=self.wizard_answers(
+            address=':9090', curseforge='private-curseforge-key', restart='no'))
+        config = self.config.read_text()
+        self.assertIn('# personal setting\nCUSTOM_SETTING=keep-me\n', config)
+        self.assertIn('MCM_SESSION_SECRET=' + secret + '\n', config)
+        self.assertIn('CURSEFORGE_API_KEY=private-curseforge-key\n', config)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assertNotIn('private-curseforge-key', result.stdout + result.stderr)
+        backup = list((self.config.parent / 'backups').glob('config-*/mcm.env'))
+        self.assertEqual(len(backup), 1)
+        self.assertEqual(backup[0].read_text(), original)
+        self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(backup[0].stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(['systemctl', '--user', 'restart', 'mcm.service'], self.calls())
+        self.assertFalse(any(call[:2] == ['podman', 'build'] for call in self.calls()))
+
+    def test_guided_config_cancel_leaves_existing_config_and_panel_untouched(self):
+        self.run_manager('install')
+        original = self.config.read_bytes()
+        self.clear_calls()
+        self.run_manager('config', '--interactive', input_text=self.wizard_answers(review='cancel'))
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertFalse(any(call[0] == 'systemctl' for call in self.calls()))
+        self.assertTrue((self.root / 'active').exists())
+
+    def test_guided_config_can_clear_optional_values_and_restart(self):
+        self.run_manager('install')
+        self.config.write_text(self.config.read_text() + 'CURSEFORGE_API_KEY=old-key\n')
+        self.clear_calls()
+        result = self.run_manager('config', '--interactive', input_text=self.wizard_answers(
+            tls_mode='proxy', curseforge='-', restart='yes'))
+        config = self.config.read_text()
+        self.assertIn('MCM_HTTP_ONLY=true\n', config)
+        self.assertIn('MCM_TLS=true\n', config)
+        self.assertIn('CURSEFORGE_API_KEY=\n', config)
+        self.assertIn(['systemctl', '--user', 'restart', 'mcm.service'], self.calls())
+        self.assertIn('MCM is ready at http://127.0.0.1:8080', result.stdout)
+        self.assertTrue(any('http://127.0.0.1:8080/readyz' in call for call in self.calls()))
+
+    def test_guided_install_optional_services_and_security_hide_credentials(self):
+        result = self.run_manager('install', '--interactive', input_text=self.wizard_answers(
+            s3=True, s3_values=('https://s3.example.com', 'backups', 'us-east-1', 'private-access', 'private-secret'),
+            security=True, security_values=('8', '30m', '200', '2m'), curseforge='private-api-key',
+        ))
+        config = self.config.read_text()
+        for entry in ('MCM_S3_ENDPOINT=https://s3.example.com', 'MCM_S3_SECRET_KEY=private-secret',
+                      'MCM_LOGIN_MAX_ATTEMPTS=8', 'MCM_LOGIN_LOCKOUT=30m',
+                      'MCM_RATE_LIMIT_MAX=200', 'MCM_RATE_LIMIT_WINDOW=2m'):
+            self.assertIn(entry + '\n', config)
+        for secret in ('private-access', 'private-secret', 'private-api-key'):
+            self.assertNotIn(secret, result.stdout + result.stderr)
+
+    def test_guided_custom_tls_validates_paths_and_clears_conflicting_settings(self):
+        cert = self.root / 'public.pem'
+        key = self.root / 'private.pem'
+        cert.touch()
+        key.touch()
+        result = self.run_manager('install', '--interactive', input_text=self.wizard_answers(
+            tls_mode='custom', tls_files=('/does-not-exist\n' + str(cert), str(key)), redirect='yes'))
+        config = self.config.read_text()
+        self.assertIn('Choose an existing readable PEM file.', result.stdout)
+        self.assertIn('MCM_TLS_CERT=' + str(cert) + '\n', config)
+        self.assertIn('MCM_TLS_KEY=' + str(key) + '\n', config)
+        self.assertIn('MCM_HTTP_ONLY=false\n', config)
+        self.assertIn('MCM_TLS_REDIRECT=true\n', config)
+
+    def test_guided_reinstall_build_failure_preserves_saved_settings(self):
+        self.run_manager('install')
+        original = self.config.read_bytes()
+        self.clear_calls()
+        self.run_manager('install', '--interactive', input_text=self.wizard_answers(address=':9090'),
+                         ok=False, MCM_TEST_BUILD_FAIL='1')
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertTrue((self.root / 'active').exists())
+        self.assertNotIn(['systemctl', '--user', 'stop', 'mcm.service'], self.calls())
+
+    def test_guided_reinstall_snapshot_uses_previous_database_and_configuration(self):
+        self.run_manager('install')
+        original = self.config.read_bytes()
+        database = self.root / 'data/mcm/mcm.db'
+        database.write_text('previous database')
+        self.run_manager('install', '--interactive', input_text=self.wizard_answers(data=str(self.root / 'new data')))
+        backup = Path((self.config.parent / 'last-backup').read_text().strip())
+        self.assertEqual((backup / 'mcm.env').read_bytes(), original)
+        self.assertEqual((backup / 'database').read_text(), 'previous database')
+
+    def test_guided_reinstall_refuses_engine_switch(self):
+        self.run_manager('install', '--runtime', 'docker')
+        result = self.run_manager('install', '--interactive', input_text=self.wizard_answers(runtime='podman\ndocker'))
+        self.assertIn('Keep docker for existing containers', result.stdout)
+        self.assertIn('MCM_CONTAINER_RUNTIME=docker\n', self.config.read_text())
+
+    def test_config_requires_terminal_or_explicit_mode_and_keeps_editor_escape_hatch(self):
+        self.run_manager('install')
+        result = self.run_manager('config', ok=False)
+        self.assertIn('config --interactive', result.stderr)
+        self.run_manager('config', '--editor', EDITOR='true')
+
+    def test_explicit_unattended_install_never_prompts(self):
+        result = self.run_manager('install', '--non-interactive', input_text=':cancel\n')
+        self.assertTrue(self.config.is_file())
+        self.assertNotIn('Step 1/7', result.stdout)
+
+    def test_terminal_install_is_guided_by_default_and_can_be_disabled(self):
+        for flags, guided in (([], True), (['--non-interactive'], False)):
+            with self.subTest(flags=flags):
+                master, slave = pty.openpty()
+                process = None
+                try:
+                    process = subprocess.Popen(
+                        ['bash', str(self.source / 'mcmctl'), 'install', *flags],
+                        env=self.env, stdin=slave, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, text=True,
+                    )
+                    if guided:
+                        os.write(master, b':cancel\n')
+                    stdout, stderr = process.communicate(timeout=60)
+                    self.assertEqual(process.returncode, 0, stdout + stderr)
+                    self.assertEqual('MCM guided setup' in stdout, guided)
+                    if guided:
+                        self.assertIn('Setup cancelled.', stdout)
+                    else:
+                        self.assertTrue(self.config.exists())
+                finally:
+                    if process is not None and process.poll() is None:
+                        process.kill()
+                        process.communicate()
+                    os.close(master)
+                    os.close(slave)
+
+    def test_guided_config_keeps_saved_credentials_with_literal_special_characters(self):
+        self.run_manager('install')
+        credential = 'CURSEFORGE_API_KEY="literal-key-with-\\-escape"\n'
+        self.config.write_text(self.config.read_text() + credential)
+        result = self.run_manager('config', '--interactive', input_text=self.wizard_answers(restart='no'))
+        self.assertIn(credential, self.config.read_text())
+        self.assertNotIn('literal-key', result.stdout + result.stderr)
+
+    def test_input_ending_after_config_save_defers_restart(self):
+        self.run_manager('install')
+        self.clear_calls()
+        result = self.run_manager('config', '--interactive', input_text=self.wizard_answers(address=':9090'))
+        self.assertIn('MCM_ADDR=:9090\n', self.config.read_text())
+        self.assertIn('Settings are saved.', result.stdout)
+        self.assertNotIn('No settings were saved', result.stdout + result.stderr)
+        self.assertNotIn(['systemctl', '--user', 'restart', 'mcm.service'], self.calls())
+
+    def test_interactive_mode_flags_cannot_conflict(self):
+        self.run_manager('install', '--interactive', '--non-interactive', ok=False)
+        self.assertFalse(self.config.exists())
 
     def git(self, directory, *args):
         result = subprocess.run(

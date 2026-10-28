@@ -15,11 +15,39 @@ users. Resource limits need cgroup v2 and delegated controllers. Confirm
 ```sh
 git clone https://github.com/ChokunPlayZ/Minecraft-Container-Manager.git
 cd Minecraft-Container-Manager
-./mcmctl install --runtime podman
+./mcmctl install
 ```
 
-For Docker, use `./mcmctl install --runtime docker` as a user who can access
-the daemon. Do not run the installer with `sudo`.
+The terminal installer guides you through seven steps:
+
+1. Choose Podman or Docker and its API endpoint.
+2. Select the server data directory, optional separate database, and backup media.
+3. Set the panel address, Minecraft port range, timezone, and passkey browser settings.
+4. Choose automatic self-signed HTTPS, your own certificate/key, an HTTPS reverse proxy, or local HTTP.
+5. Set the CPU, memory, and runtime image defaults for new servers.
+6. Optionally configure S3 storage, a CurseForge API key, and login/request limits.
+7. Review settings, revisit any numbered step, and save.
+
+Press Enter to keep the displayed value, use `-` to clear an optional value,
+or type `:cancel` at any prompt to cancel. Ctrl+C or input ending before saving
+also discards the draft. Invalid answers prompt again. Secrets are hidden
+during terminal input and in the review. Existing settings, comments, custom
+entries, and the session secret are preserved unless edited. A guided reinstall
+keeps the saved configuration and running panel intact if the build fails.
+Changing a storage path does not move files; select existing paths to retain data.
+
+Flags provide prompt defaults. For Docker, use
+`./mcmctl install --runtime docker` as a user who can access the daemon.
+For scripts, choose `--non-interactive` to skip prompts:
+
+```sh
+./mcmctl install --non-interactive --runtime podman --port 9090
+```
+
+Without a terminal, installation uses existing settings, flags, and defaults
+automatically. `--interactive` forces guided prompts, including for piped input.
+Do not run the installer with `sudo`. Host dependencies must be installed first;
+the wizard does not install system packages or change your firewall.
 
 Installation builds the app before replacing the running binary, enables
 Podman's user socket when selected, creates a persistent random session secret,
@@ -132,14 +160,28 @@ servers through the panel before host maintenance that requires them offline.
 `MCM_BIN_DIR` before running the manager if you use another directory for
 installed commands. Continue using the same values for later management.
 
-Edit application settings and restart:
+Edit application settings step by step:
 
 ```sh
 ./mcmctl config
+```
+
+This opens the same configuration wizard, backs up the previous settings under
+`~/.config/mcm/backups/config-*/mcm.env`, and offers to restart the panel after
+saving (default: defer). To apply later, use `./mcmctl restart`. End-of-input
+after saving also defers the restart. Runtime changes are blocked to preserve
+access to existing containers; migrate the engine and API endpoint together
+manually if needed. Guided configuration takes the same installation lock as
+install/update. Use `config --interactive` for explicit redirected input.
+
+To edit the raw environment file instead:
+
+```sh
+./mcmctl config --editor
 ./mcmctl restart
 ```
 
-The editor comes from `EDITOR`, falling back to `vi`. Settings use one
+The text editor comes from `EDITOR`, falling back to `vi`. Settings use one
 `KEY=value` assignment per line. Use literal absolute file paths; systemd does
 not expand `$HOME`, `${PWD}`, or shell commands in this file. Example:
 

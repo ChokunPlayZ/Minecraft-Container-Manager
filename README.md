@@ -7,8 +7,8 @@ Each Minecraft server container runs with MCM's custom native lifecycle entrypoi
 ## Install, manage, and update (Linux)
 
 Use the included `mcmctl` command on a Linux host with systemd. Run it as your
-normal user. It builds the complete panel with Podman or Docker, creates its
-configuration and session secret, installs a user service, and starts the app.
+normal user. Its guided installer walks through configuration, builds the
+complete panel with Podman or Docker, installs a user service, and starts the app.
 Go, Node.js, and pnpm are supplied by the build image.
 
 On Debian/Ubuntu, install the host dependencies:
@@ -29,11 +29,23 @@ Then install MCM:
 ```sh
 git clone https://github.com/ChokunPlayZ/Minecraft-Container-Manager.git
 cd Minecraft-Container-Manager
-./mcmctl install --runtime podman
+./mcmctl install
 ```
 
-Open `https://YOUR_SERVER_IP:8080` and complete onboarding. MCM generates a
-self-signed certificate by default; trust its public certificate or accept the
+The terminal wizard walks through the engine and API socket, storage, panel
+address, Minecraft ports, timezone, passkeys, HTTPS, default server limits,
+optional S3/CurseForge credentials, and login protection. Press Enter to keep
+each default. Review all settings and revisit any step before saving; type
+`:cancel` at any prompt to exit without saving. Existing settings and session
+secrets are kept, and credential input is hidden in the terminal.
+
+Flags such as `--runtime podman`, `--data-dir /absolute/path`, and `--port 9090`
+set the wizard's defaults. Use `--non-interactive` for unattended installation;
+without a terminal the installer also uses existing settings, flags, and defaults.
+Use `--interactive` to explicitly request the wizard with redirected input.
+
+Open `https://YOUR_SERVER_IP:8080` (or your configured address) and complete
+onboarding. MCM generates a self-signed certificate by default; trust its public certificate or accept the
 browser warning on first use. Open port 8080 and
 any published Minecraft ports in the host firewall if you connect remotely.
 For a host already running Docker, use `./mcmctl install --runtime docker` with
@@ -62,7 +74,8 @@ From the checkout, use:
 | Check status | `./mcmctl status` |
 | Follow logs | `./mcmctl logs` |
 | Start / stop / restart | `./mcmctl start` / `./mcmctl stop` / `./mcmctl restart` |
-| Edit settings | `./mcmctl config`, then `./mcmctl restart` |
+| Edit settings step by step | `./mcmctl config` (offers a restart after saving) |
+| Open settings in a text editor | `./mcmctl config --editor`, then `./mcmctl restart` |
 | Download and install updates | `./mcmctl update` |
 | Build local changes | `./mcmctl update --local` |
 | Back up panel settings and database | `./mcmctl backup` |
@@ -76,7 +89,8 @@ and panel database, and restore them if the new version cannot become ready.
 Minecraft containers continue running during a panel update.
 
 Settings live in `~/.config/mcm/mcm.env`; the default database and server files
-live in `~/.local/share/mcm`. The installer enables the user service and tries
+live in `~/.local/share/mcm`. Guided changes save a copy of the previous settings
+under `~/.config/mcm/backups`. The installer enables the user service and tries
 to enable lingering so it starts at boot and continues after logout. If your
 host requires administrator authorization, it prints the one command to finish
 that step. Keep the source checkout: `update` uses its current Git branch.
