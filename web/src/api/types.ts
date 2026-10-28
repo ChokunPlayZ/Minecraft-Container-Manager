@@ -414,6 +414,7 @@ export interface ModList {
 }
 
 export interface AvailableModJar {
+ hashes?: Record<string,string>;
   version_id: string;
   version_name: string;
   version_number: string;

@@ -223,6 +223,7 @@ func (s *Service) do(ctx context.Context, method, targetURL string, body []byte,
 	credential := sha256.Sum256([]byte(headers.Get("x-api-key")))
 	cacheKey := computeCacheKey(method, targetURL, body) + fmt.Sprintf(":%x", credential)
 
+	s.pruneCache()
 	// 1. Check in-memory cache
 	if !skipCache {
 		s.cacheMu.RLock()
@@ -425,6 +426,7 @@ func (s *Service) do(ctx context.Context, method, targetURL string, body []byte,
 			TTL:         ttl,
 		}
 		s.cacheMu.Unlock()
+		s.pruneCache()
 	}
 
 	res := &ProxyResponse{
@@ -435,4 +437,33 @@ func (s *Service) do(ctx context.Context, method, targetURL string, body []byte,
 	}
 	call.resp = res
 	return res, nil
+}
+
+func (s *Service) pruneCache() {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	now := time.Now()
+	bytes := 0
+	for key, entry := range s.cache {
+		if entry.isExpired(now) {
+			delete(s.cache, key)
+		} else {
+			bytes += len(key) + len(entry.Body)
+		}
+	}
+	for len(s.cache) > 512 || bytes > 32<<20 {
+		oldest := ""
+		var created time.Time
+		for key, entry := range s.cache {
+			if oldest == "" || entry.CreatedAt.Before(created) {
+				oldest = key
+				created = entry.CreatedAt
+			}
+		}
+		if oldest == "" {
+			break
+		}
+		bytes -= len(oldest) + len(s.cache[oldest].Body)
+		delete(s.cache, oldest)
+	}
 }

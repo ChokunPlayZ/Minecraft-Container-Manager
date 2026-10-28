@@ -438,4 +438,30 @@ describe('VersionUpdateHelper', () => {
       ).toBeInTheDocument();
     });
   });
+  it('invalidates all readiness actions when the selected target or installed artifacts change',async()=>{
+    const user=userEvent.setup();vi.mocked(api.checkVersionUpgradeCompatibility).mockResolvedValue({...mockReport,ready_to_update:true,not_available_count:0});
+    const view=render(<VersionUpdateHelper server={mockServer} installedMods={mockMods}/>);
+    const scan=screen.getByRole('button',{name:/Check Compatibility Now/i});await waitFor(()=>expect(scan).toBeEnabled());await user.click(scan);
+    await screen.findByRole('button',{name:/Upgrade server & mods to MC 1.21.1/i});
+    const selector=screen.getByRole('combobox',{name:'Target Minecraft version'});await user.click(selector);await user.click(screen.getByRole('option',{name:/MC 1.20.1/}));
+    expect(screen.queryByRole('button',{name:/Upgrade server & mods to MC/i})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/Update All Compatible Mods/i})).not.toBeInTheDocument();
+    await user.click(selector);await user.click(screen.getByRole('option',{name:'MC 1.21.1'}));
+    await screen.findByRole('button',{name:/Upgrade server & mods to MC 1.21.1/i});
+    view.rerender(<VersionUpdateHelper server={mockServer} installedMods={[...mockMods,{name:'new',file:'new.jar',enabled:true}]}/>);
+    expect(screen.queryByRole('button',{name:/Upgrade server & mods to MC/i})).not.toBeInTheDocument();
+  });
+  it('stops a one-click upgrade before switching software after a mod failure',async()=>{
+    vi.mocked(api.checkVersionUpgradeCompatibility).mockResolvedValue({...mockReport,ready_to_update:true,not_available_count:0});
+    vi.spyOn(api,'createBackup').mockResolvedValue({id:'recovery',server_id:mockServer.id,name:'recovery',status:'completed',size_bytes:1,location:'local',created_at:new Date().toISOString()});
+    vi.spyOn(api,'applyVersionUpgradeMods').mockResolvedValue({updated:0,failed:1,target_version:'1.21.1',total:1,items:[]});
+    const install=vi.spyOn(api,'installServer');const builds=vi.spyOn(api,'jarBuilds');
+    render(<VersionUpdateHelper server={mockServer} installedMods={mockMods}/>);
+    const scan=screen.getByRole('button',{name:/Check Compatibility Now/i});await waitFor(()=>expect(scan).toBeEnabled());fireEvent.click(scan);
+    fireEvent.click(await screen.findByRole('button',{name:/Upgrade server & mods to MC 1.21.1/i}));
+    fireEvent.click(await screen.findByRole('button',{name:/^Upgrade server & mods$/i}));
+    await screen.findByText(/Server software was left at its current version/i);
+    expect(install).not.toHaveBeenCalled();expect(builds).not.toHaveBeenCalled();expect(screen.queryByText(/Server and mods successfully upgraded/i)).not.toBeInTheDocument();
+  });
+
 });

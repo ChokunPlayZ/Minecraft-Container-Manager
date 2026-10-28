@@ -1,3 +1,5 @@
+import { clearArtifactHashes } from './artifact-hashes';
+import { authenticatedFetch } from './csrf';
 /**
  * Rate-limited and cached fetch utility for external mod APIs
  * (Modrinth, Hangar, SpigotMC / Spiget, CurseForge).
@@ -59,15 +61,8 @@ function getDomainState(hostname: string): DomainState {
   return state;
 }
 
-const isTestEnv =
-  (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test') ||
-  (typeof window !== 'undefined' && Boolean((window as unknown as { __VITEST__?: boolean }).__VITEST__));
-
 export function resolveFetchUrl(targetUrl: string, skipCache = false): string {
   if (targetUrl.startsWith('/') || targetUrl.startsWith('./')) {
-    return targetUrl;
-  }
-  if (isTestEnv) {
     return targetUrl;
   }
   if (
@@ -100,9 +95,6 @@ export function resolveFetchUrl(targetUrl: string, skipCache = false): string {
 }
 
 function getDomainConfig(hostname: string): DomainQueueConfig {
-  if (isTestEnv) {
-    return { maxConcurrent: 10, minIntervalMs: 0 };
-  }
   return DOMAIN_CONFIGS[hostname] || DEFAULT_CONFIG;
 }
 
@@ -128,9 +120,10 @@ export function getDomainBackoffRemainingMs(hostname: string): number {
  * Clears all cached responses and resets domain queues (useful in tests).
  */
 export function clearRateLimitCache(): void {
+ clearArtifactHashes();
   responseCache.clear();
   inFlightRequests.clear();
-  domainStates.clear();
+  for(const [key,state] of domainStates){if(state.activeCount===0&&state.queue.length===0)domainStates.delete(key);}
 }
 
 export interface RateLimitedFetchOptions {
@@ -145,7 +138,8 @@ export interface RateLimitedFetchOptions {
 function getCacheKey(url: string, init?: RequestInit): string {
   const method = (init?.method || 'GET').toUpperCase();
   const body = init?.body ? String(init.body) : '';
-  return `${method}:${url}:${body}`;
+  const headers=Array.from(new Headers(init?.headers).entries()).sort(([a],[b])=>a.localeCompare(b));
+  return JSON.stringify([method,url,body,headers]);
 }
 
 /**
@@ -159,54 +153,30 @@ async function scheduleDomainRequest<T>(
   const state = getDomainState(hostname);
   const config = getDomainConfig(hostname);
 
-  return new Promise<T>((resolve, reject) => {
-    const runTask = async () => {
-      if (signal?.aborted) {
-        reject(new DOMException('The operation was aborted', 'AbortError'));
-        return;
-      }
-
-      // Check if domain is currently blocked due to a 429 response
-      const now = Date.now();
-      if (state.blockedUntil > now) {
-        const waitMs = state.blockedUntil - now;
-        await new Promise((r) => setTimeout(r, Math.min(waitMs, 10000)));
-      }
-
-      // Ensure minimum interval between requests has passed
-      const elapsed = Date.now() - state.lastDispatchedAt;
-      if (elapsed < config.minIntervalMs) {
-        await new Promise((r) => setTimeout(r, config.minIntervalMs - elapsed));
-      }
-
-      if (signal?.aborted) {
-        reject(new DOMException('The operation was aborted', 'AbortError'));
-        return;
-      }
-
+  return new Promise<T>((resolve,reject)=>{
+    const runTask=()=>{
+      // Reserve before any pacing, backoff or cancellation await.
       state.activeCount++;
-      state.lastDispatchedAt = Date.now();
-
-      try {
-        const result = await execute();
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      } finally {
-        state.activeCount--;
-        // Process next item in domain queue
-        const next = state.queue.shift();
-        if (next) {
-          next();
-        }
-      }
+      const dispatchAt=Math.max(Date.now(),state.lastDispatchedAt+config.minIntervalMs,state.blockedUntil);
+      state.lastDispatchedAt=dispatchAt;
+      void (async()=>{
+        try{
+          while(true){
+            if(signal?.aborted)throw new DOMException('The operation was aborted','AbortError');
+            const delay=Math.max(dispatchAt,state.blockedUntil)-Date.now();
+            if(delay<=0)break;
+            await new Promise<void>((done,fail)=>{
+              const abort=()=>{clearTimeout(timer);fail(new DOMException('The operation was aborted','AbortError'));};
+              const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);done();},delay);
+              signal?.addEventListener('abort',abort,{once:true});
+            });
+          }
+          resolve(await execute());
+        }catch(error){reject(error);}
+        finally{state.activeCount--;state.queue.shift()?.();}
+      })();
     };
-
-    if (state.activeCount < config.maxConcurrent) {
-      void runTask();
-    } else {
-      state.queue.push(() => void runTask());
-    }
+    if(state.activeCount<config.maxConcurrent)runTask();else state.queue.push(runTask);
   });
 }
 
@@ -218,6 +188,7 @@ export async function rateLimitedFetchJson<T>(
   init?: RequestInit,
   options?: RateLimitedFetchOptions,
 ): Promise<T> {
+  pruneResponseCache();
   const cacheKey = getCacheKey(url, init);
   const cacheTtlMs = options?.cacheTtlMs ?? 180000; // default 3 minutes
   const skipCache = options?.skipCache ?? false;
@@ -247,23 +218,9 @@ export async function rateLimitedFetchJson<T>(
     hostname,
     async () => {
       const effectiveUrl = resolveFetchUrl(url, skipCache);
-      let resp: Response;
-      try {
-        resp = await fetch(effectiveUrl, {
-          ...init,
-          credentials: 'include',
-          signal: options?.signal,
-        });
-      } catch (fetchErr) {
-        if (effectiveUrl !== url) {
-          resp = await fetch(url, {
-            ...init,
-            signal: options?.signal,
-          });
-        } else {
-          throw fetchErr;
-        }
-      }
+      const resp = effectiveUrl.startsWith('/api/')
+        ? await authenticatedFetch(effectiveUrl,{...init,signal:options?.signal??init?.signal})
+        : await fetch(effectiveUrl,{...init,signal:options?.signal??init?.signal});
 
       // Track rate limit headers
       const remainingHeader =
@@ -313,13 +270,16 @@ export async function rateLimitedFetchJson<T>(
 
       // Store in cache if successful and TTL > 0
       if (cacheTtlMs > 0) {
-        responseCache.set(cacheKey, {
+        pruneResponseCache();
+        const bytes=JSON.stringify(data).length*2;
+        if(bytes<=MAX_CACHE_BYTES) responseCache.set(cacheKey, {
           data,
           timestamp: Date.now(),
           ttl: cacheTtlMs,
         });
       }
 
+      pruneResponseCache();
       return data;
     },
     options?.signal,
@@ -332,4 +292,17 @@ export async function rateLimitedFetchJson<T>(
   } finally {
     inFlightRequests.delete(cacheKey);
   }
+}
+
+const MAX_CACHE_BYTES=16*1024*1024;
+function pruneResponseCache():void{
+ let bytes=0;
+ for(const [key,entry] of responseCache){
+  if(Date.now()-entry.timestamp>=entry.ttl){responseCache.delete(key);continue;}
+  bytes+=key.length*2+JSON.stringify(entry.data).length*2;
+ }
+ while(responseCache.size>200||bytes>MAX_CACHE_BYTES){
+  const key=responseCache.keys().next().value;if(key===undefined)break;
+  const entry=responseCache.get(key);bytes-=key.length*2+JSON.stringify(entry?.data).length*2;responseCache.delete(key);
+ }
 }

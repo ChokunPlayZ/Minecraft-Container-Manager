@@ -1,3 +1,4 @@
+import { rememberArtifactHashes } from './artifact-hashes';
 import type {
   Mod,
   ModrinthProject,
@@ -412,7 +413,7 @@ export async function getProjectVersions(
   const query = searchParams.toString();
   const url = `${MODRINTH_API_BASE}/project/${encodeURIComponent(projectSlugOrId)}/version${query ? `?${query}` : ''}`;
 
-  return rateLimitedFetchJson<ModrinthVersion[]>(
+  const versions=await rateLimitedFetchJson<ModrinthVersion[]>(
     url,
     {
       headers: {
@@ -424,6 +425,8 @@ export async function getProjectVersions(
       signal,
     },
   );
+ for(const version of versions)for(const file of version.files)rememberArtifactHashes(file.url,file.hashes);
+ return versions;
 }
 
 /**
@@ -529,7 +532,7 @@ export async function getVersions(
   if (ids.length === 0) return [];
   const url = `${MODRINTH_API_BASE}/versions?ids=${encodeURIComponent(JSON.stringify(ids))}`;
   try {
-    return await rateLimitedFetchJson<ModrinthVersion[]>(
+    const versions=await rateLimitedFetchJson<ModrinthVersion[]>(
       url,
       {
         headers: {
@@ -541,6 +544,8 @@ export async function getVersions(
         signal,
       },
     );
+ for(const version of versions)for(const file of version.files)rememberArtifactHashes(file.url,file.hashes);
+ return versions;
   } catch {
     return [];
   }

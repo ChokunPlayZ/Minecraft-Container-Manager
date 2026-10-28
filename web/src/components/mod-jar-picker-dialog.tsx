@@ -94,6 +94,7 @@ export function ModJarPickerDialog({
             loaders: j.loaders,
             datePublished: j.date_published,
             isCurrent: j.is_current,
+ hashes:j.hashes,
           }));
           setJars(mapped);
           setActiveTab('catalog');
@@ -171,6 +172,7 @@ export function ModJarPickerDialog({
           projectId: updateInfo?.projectId || mod.project_id,
           projectSlug: updateInfo?.projectSlug || mod.project_slug,
           provider: updateInfo?.provider || mod.provider,
+ hashes:jar.hashes,
         },
       );
       onUpdated(updated);

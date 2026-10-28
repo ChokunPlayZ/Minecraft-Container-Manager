@@ -1,3 +1,5 @@
+import { catalogTarget, emptyCatalog, jsonResponse } from './catalog-fixtures';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,8 +32,11 @@ describe('CatalogBrowser multi-provider component', () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+ clearRateLimitCache();
+ document.cookie="mcm_csrf=test-csrf; path=/";
     vi.restoreAllMocks();
     localStorage.clear();
+ global.fetch=vi.fn(async(input:RequestInfo|URL)=>emptyCatalog(input));
   });
 
   afterEach(() => {
@@ -104,11 +109,12 @@ describe('CatalogBrowser multi-provider component', () => {
     };
 
     global.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('/versions')) {
+      const url = catalogTarget(input);
+      if (url.includes('hangar.papermc.io') && url.includes('/versions')) {
         return { ok: true, json: async () => mockHangarVersions };
       }
-      return { ok: true, json: async () => mockHangarSearch };
+      if(url.includes('hangar.papermc.io/api/v1/projects'))return jsonResponse(mockHangarSearch);
+ return emptyCatalog(input);
     });
 
     vi.spyOn(api, 'downloadMod').mockResolvedValue({
@@ -172,10 +178,7 @@ describe('CatalogBrowser multi-provider component', () => {
       },
     ];
 
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => mockSpigotResources,
-    });
+    global.fetch=vi.fn(async(input:RequestInfo|URL)=>catalogTarget(input).includes('api.spiget.org')?jsonResponse(mockSpigotResources):emptyCatalog(input));
 
     vi.spyOn(api, 'downloadMod').mockResolvedValue({
       name: 'LuckPerms',

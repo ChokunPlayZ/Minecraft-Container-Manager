@@ -1,3 +1,5 @@
+import { catalogTarget } from './catalog-fixtures';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
   findInstalledMod,
@@ -180,13 +182,15 @@ describe('modrinth api & matching utilities', () => {
 
   describe('searchModrinth API client', () => {
     beforeEach(() => {
+ clearRateLimitCache();
+ document.cookie="mcm_csrf=test-csrf; path=/";
       vi.restoreAllMocks();
     });
 
     it('builds search facets with loaders, game version, and server_side filter', async () => {
       let capturedUrl = '';
       vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-        capturedUrl = String(url);
+        capturedUrl = catalogTarget(url);
         return {
           ok: true,
           json: async () => ({ hits: [], offset: 0, limit: 20, total_hits: 0 }),
@@ -221,7 +225,7 @@ describe('modrinth api & matching utilities', () => {
     it('builds search facets with onlyServerSide filter', async () => {
       let capturedUrl = '';
       vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-        capturedUrl = String(url);
+        capturedUrl = catalogTarget(url);
         return {
           ok: true,
           json: async () => ({ hits: [], offset: 0, limit: 20, total_hits: 0 }),
@@ -252,7 +256,7 @@ describe('modrinth api & matching utilities', () => {
     it('handles query for project versions', async () => {
       let capturedUrl = '';
       vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-        capturedUrl = String(url);
+        capturedUrl = catalogTarget(url);
         return {
           ok: true,
           json: async () => [

@@ -60,7 +60,7 @@ export function VersionUpdateHelper({
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanStage, setScanStage] = useState('');
-  const [report, setReport] = useState<VersionUpdateReport | null>(null);
+  const [scanResult, setReport] = useState<{ report: VersionUpdateReport; scope: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -125,6 +125,11 @@ export function VersionUpdateHelper({
 
   const effectiveTargetVersion = isCustom ? customVersion.trim() : targetVersion.trim();
 
+  const artifactScope=JSON.stringify(installedMods.map(m=>[m.file,m.sha1,m.enabled]).sort());
+  const reportScope=JSON.stringify([server.id,server.server_type,server.version,effectiveTargetVersion,artifactScope]);
+  const report=scanResult?.scope===reportScope&&scanResult.report.target_version===effectiveTargetVersion&&scanResult.report.server_type===server.server_type&&scanResult.report.current_version===server.version?scanResult.report:null;
+  useEffect(()=>{setPickerMod(null);},[reportScope]);
+
   // Scan compatibility for effective target version
   const scanCompatibility = useCallback(
     async (force = false) => {
@@ -165,7 +170,7 @@ export function VersionUpdateHelper({
         setScanProgress(100);
         setScanStage('Compatibility check complete!');
         await new Promise((resolve) => setTimeout(resolve, 150));
-        setReport(res);
+        setReport({report:res,scope:reportScope});
       } catch (err) {
         timersRef.current.forEach((t) => clearTimeout(t));
         timersRef.current = [];
@@ -174,7 +179,7 @@ export function VersionUpdateHelper({
         setScanning(false);
       }
     },
-    [effectiveTargetVersion, server.id],
+    [effectiveTargetVersion, server.id, reportScope],
   );
 
   // Create pre-upgrade server backup
@@ -247,7 +252,7 @@ export function VersionUpdateHelper({
           effectiveTargetVersion,
           true,
         );
-        setReport(freshReport);
+        setReport({report:freshReport,scope:reportScope});
       } catch {
         // Fallback: report will refresh on next manual check
       }
@@ -273,7 +278,7 @@ export function VersionUpdateHelper({
   // One-Click Full Upgrade: Backup -> Update Mods -> Upgrade Server Jar
   async function handleOneClickUpgrade() {
     const v = effectiveTargetVersion;
-    if (!v || !report) return;
+    if (!v || !report || !report.ready_to_update) return;
 
     const modUpdateMsg =
       report.update_count > 0
@@ -310,9 +315,7 @@ export function VersionUpdateHelper({
         );
         const res = await api.applyVersionUpgradeMods(server.id, v);
         if (res.failed > 0) {
-          setError(
-            `Updated ${res.updated} mods, but ${res.failed} failed. Continuing server software upgrade...`,
-          );
+          throw new Error(`Updated ${res.updated} mods, but ${res.failed} failed. Server software was left at its current version. Restore the pre-upgrade backup to undo applied mod changes, then scan again.`);
         }
       }
 
@@ -332,10 +335,10 @@ export function VersionUpdateHelper({
       // Silently refresh compatibility report
       try {
         const freshReport = await api.checkVersionUpgradeCompatibility(server.id, v, true);
-        setReport(freshReport);
+        setReport({report:freshReport,scope:reportScope});
       } catch { /* Keep the completed upgrade result if the refresh fails. */ }
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Upgrade failed.');
+      setError(err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Upgrade failed.');
     } finally {
       setUpgradingAll(false);
       setOneClickStage('');

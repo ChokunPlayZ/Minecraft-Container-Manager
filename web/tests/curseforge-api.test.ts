@@ -1,3 +1,5 @@
+import { catalogTarget } from './catalog-fixtures';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getCurseForgeApiKey,
@@ -15,6 +17,8 @@ describe('CurseForge API client', () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+ clearRateLimitCache();
+ document.cookie="mcm_csrf=test-csrf; path=/";
     vi.restoreAllMocks();
     localStorage.clear();
   });
@@ -88,7 +92,9 @@ describe('CurseForge API client', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    const rawUrl=String(fetchMock.mock.calls[0][0]);
+ expect(rawUrl).toMatch(/^\/api\/proxy\?url=/);
+ const calledUrl = catalogTarget(rawUrl);
     const calledInit = fetchMock.mock.calls[0][1] as RequestInit;
 
     expect(calledUrl).toContain('https://api.curseforge.com/v1/mods/search');
@@ -96,7 +102,7 @@ describe('CurseForge API client', () => {
     expect(calledUrl).toContain('modLoaderType=4');
     expect(calledUrl).toContain('gameVersion=1.20.4');
 
-    expect((calledInit.headers as Record<string, string>)['x-api-key']).toBe('my-cf-token');
+    expect(new Headers(calledInit.headers).get('x-api-key')).toBe('my-cf-token');
     expect(res.data[0].name).toBe('JEI - Just Enough Items');
   });
 

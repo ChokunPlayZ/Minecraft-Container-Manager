@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
-import { checkModsForUpdates, fetchModAvailableJars } from '../src/api/mod-updates';
+import { fetchModAvailableJars } from '../src/api/mod-updates';
 import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import type { Mod, Server } from '../src/api/types';
 import { ModsPanel } from '../src/components/mods-panel';
@@ -40,121 +40,42 @@ describe('Mod Update Tool & Jar Picker', () => {
     clearRateLimitCache();
   });
 
-  describe('checkModsForUpdates API', () => {
-    it('detects available updates for mods via Modrinth batch hashes', async () => {
-      const installedMods: Mod[] = [
-        {
-          name: 'fabric-api',
-          file: 'fabric-api-0.100.0.jar',
-          enabled: true,
-          sha1: 'oldhash123',
-          version: '0.100.0',
+  describe('server update planner contract', () => {
+    it('uses the server update decision without issuing browser catalog checks', async () => {
+      const decision = {
+        updates: {
+          'fabric-api': {
+            mod_name: 'fabric-api',
+            latest_version: '0.105.0',
+            latest_jar: 'fabric-api-0.105.0.jar',
+            provider: 'modrinth',
+          },
         },
-        {
-          name: 'sodium',
-          file: 'sodium-fabric-0.5.8.jar',
-          enabled: true,
-          sha1: 'uptodatehash456',
-          version: '0.5.8',
-        },
-      ];
-
-      const mockBatchResponse = {
-        oldhash123: {
-          id: 'ver-new',
-          project_id: 'P7dR8mSH',
-          name: 'Fabric API 0.105.0',
-          version_number: '0.105.0',
-          version_type: 'release',
-          date_published: '2026-09-01T12:00:00Z',
-          files: [
-            {
-              url: 'https://cdn.modrinth.com/data/fabric-api-0.105.0.jar',
-              filename: 'fabric-api-0.105.0.jar',
-              primary: true,
-              size: 2048576,
-              hashes: { sha1: 'newhash789' },
-            },
-          ],
-        },
-        uptodatehash456: {
-          id: 'ver-current',
-          project_id: 'AANobbMI',
-          name: 'Sodium 0.5.8',
-          version_number: '0.5.8',
-          version_type: 'release',
-          files: [
-            {
-              url: 'https://cdn.modrinth.com/data/sodium-fabric-0.5.8.jar',
-              filename: 'sodium-fabric-0.5.8.jar',
-              primary: true,
-              size: 1048576,
-              hashes: { sha1: 'uptodatehash456' },
-            },
-          ],
-        },
+        last_checked: '2026-10-28T00:00:00Z',
       };
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(decision), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      }));
+      global.fetch = fetchMock;
 
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => mockBatchResponse,
-      });
-
-      const updates = await checkModsForUpdates(installedMods, mockServer);
-
-      // Only fabric-api should have an update detected
-      expect(Object.keys(updates)).toHaveLength(1);
-      expect(updates['fabric-api']).toBeDefined();
-      expect(updates['fabric-api'].latestJar).toBe('fabric-api-0.105.0.jar');
-      expect(updates['fabric-api'].latestVersion).toBe('0.105.0');
-      expect(updates['sodium']).toBeUndefined();
+      await expect(api.checkModUpdates(mockServer.id)).resolves.toEqual(decision);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][0]).toBe(`/api/servers/${mockServer.id}/mods/updates?cached=true`);
     });
 
-    it('detects available updates for Hangar provider mods', async () => {
-      const installedMods: Mod[] = [
-        {
-          name: 'Chunky',
-          file: 'Chunky-1.4.9.jar',
-          enabled: true,
-          provider: 'hangar',
-          project_slug: 'Chunky',
-          version: '1.4.9',
-        },
-      ];
-
-      const mockHangarVersions = {
-        pagination: { count: 1, limit: 5, offset: 0 },
-        result: [
-          {
-            id: 200,
-            name: '1.4.11',
-            channel: { name: 'Release', color: '#00cc88' },
-            downloads: {
-              PAPER: {
-                fileInfo: {
-                  name: 'Chunky-1.4.11.jar',
-                  sizeBytes: 950000,
-                  sha256Hash: 'hash256',
-                },
-                downloadUrl: 'https://hangarcdn.papermc.io/plugins/Chunky-1.4.11.jar',
-              },
-            },
-            createdAt: '2026-09-05T00:00:00Z',
-          },
-        ],
-      };
-
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => mockHangarVersions,
-      });
-
-      const paperServer = { ...mockServer, server_type: 'paper' as const };
-      const updates = await checkModsForUpdates(installedMods, paperServer);
-
-      expect(updates['Chunky']).toBeDefined();
-      expect(updates['Chunky'].latestJar).toBe('Chunky-1.4.11.jar');
-      expect(updates['Chunky'].latestVersion).toBe('1.4.11');
+    it('forwards the provider credential and surfaces a server planning failure', async () => {
+      localStorage.setItem('mcm_curseforge_api_key', ' provider-key ');
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        error: { code: 'upstream_error', message: 'Provider unavailable' },
+      }), { status: 502, headers: { 'Content-Type': 'application/json' } }));
+      global.fetch = fetchMock;
+      try {
+        await expect(api.checkModUpdates(mockServer.id, true)).rejects.toThrow('Provider unavailable');
+        expect(fetchMock.mock.calls[0][0]).toBe(`/api/servers/${mockServer.id}/mods/updates?force=true`);
+        expect(new Headers(fetchMock.mock.calls[0][1].headers).get('x-curseforge-api-key')).toBe('provider-key');
+      } finally {
+        localStorage.removeItem('mcm_curseforge_api_key');
+      }
     });
   });
 

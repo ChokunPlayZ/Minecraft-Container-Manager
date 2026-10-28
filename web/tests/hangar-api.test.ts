@@ -1,3 +1,5 @@
+import { catalogTarget } from './catalog-fixtures';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   findInstalledHangarProject,
@@ -12,6 +14,8 @@ describe('Hangar API client', () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+ clearRateLimitCache();
+ document.cookie="mcm_csrf=test-csrf; path=/";
     vi.restoreAllMocks();
   });
 
@@ -54,7 +58,9 @@ describe('Hangar API client', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    const rawUrl=String(fetchMock.mock.calls[0][0]);
+ expect(rawUrl).toMatch(/^\/api\/proxy\?url=/);
+ const calledUrl = catalogTarget(rawUrl);
     expect(calledUrl).toContain('https://hangar.papermc.io/api/v1/projects');
     expect(calledUrl).toContain('q=chunky');
     expect(calledUrl).toContain('category=world_management');

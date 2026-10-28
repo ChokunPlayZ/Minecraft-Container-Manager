@@ -1,3 +1,5 @@
+import { catalogTarget } from './catalog-fixtures';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -5,7 +7,7 @@ import { api } from '../src/api/client';
 import type { Mod, ModrinthSearchHit, ModrinthVersion, Server } from '../src/api/types';
 import { ModrinthBrowser } from '../src/components/modrinth-browser';
 import { ModsPanel } from '../src/components/mods-panel';
-import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
+
 
 const mockServer: Server = {
   id: 'server-1',
@@ -93,11 +95,13 @@ const mockVersions: ModrinthVersion[] = [
 
 describe('ModrinthBrowser component', () => {
   beforeEach(() => {
+ clearRateLimitCache();
+ document.cookie="mcm_csrf=test-csrf; path=/";
     vi.restoreAllMocks();
     clearRateLimitCache();
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-      const urlStr = String(url);
+      const urlStr = catalogTarget(url);
       if (urlStr.includes('/search')) {
         return {
           ok: true,
@@ -254,7 +258,7 @@ describe('ModrinthBrowser component', () => {
     };
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-      const urlStr = String(url);
+      const urlStr = catalogTarget(url);
       if (urlStr.includes('/search')) {
         if (urlStr.includes('offset=0')) {
           return {
@@ -332,7 +336,7 @@ describe('ModrinthBrowser component', () => {
     };
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-      const urlStr = String(url);
+      const urlStr = catalogTarget(url);
       if (urlStr.includes('/search')) {
         if (urlStr.includes('offset=0')) {
           return {
@@ -559,7 +563,7 @@ describe('ModrinthBrowser component', () => {
     let capturedSearchUrl = '';
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-      const urlStr = String(url);
+      const urlStr = catalogTarget(url);
       if (urlStr.includes('/search')) {
         capturedSearchUrl = urlStr;
         return {
@@ -694,7 +698,7 @@ describe('ModrinthBrowser component', () => {
     };
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-      const urlStr = String(url);
+      const urlStr = catalogTarget(url);
       if (urlStr.includes('/search')) {
         return {
           ok: true,

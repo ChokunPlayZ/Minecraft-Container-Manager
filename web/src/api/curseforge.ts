@@ -1,3 +1,5 @@
+import { rememberArtifactHashes } from './artifact-hashes';
+import { clearRateLimitCache } from './rate-limited-fetch';
 import type {
   CurseForgeFile,
   CurseForgeMod,
@@ -25,6 +27,7 @@ export function setCurseForgeApiKey(key: string): void {
   } else {
     localStorage.setItem(CF_STORAGE_KEY, key.trim());
   }
+  clearRateLimitCache();
 }
 
 export function hasCurseForgeApiKey(): boolean {
@@ -191,7 +194,9 @@ export async function getCurseForgeFiles(
     },
   );
 
-  return data.data ?? [];
+  const files=data.data??[];
+ for(const file of files){const hashes:Record<string,string>={};for(const hash of file.hashes??[]){if(hash.algo===1)hashes.sha1=hash.value;else if(hash.algo===2)hashes.md5=hash.value;}rememberArtifactHashes(file.downloadUrl??undefined,hashes);}
+ return files;
 }
 
 /**

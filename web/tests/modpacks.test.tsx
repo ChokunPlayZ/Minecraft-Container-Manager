@@ -1,3 +1,5 @@
+import { catalogTarget } from './catalog-fixtures';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +30,8 @@ const mockServer: Server = {
 
 describe('ModpacksPanel Component', () => {
   beforeEach(() => {
+ clearRateLimitCache();
+ document.cookie="mcm_csrf=test-csrf; path=/";
     vi.restoreAllMocks();
   });
 
@@ -140,7 +144,7 @@ describe('ModpacksPanel Component', () => {
     });
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-      const urlStr = String(url);
+      const urlStr = catalogTarget(url);
       if (urlStr.includes('/version')) {
         return {
           ok: true,
@@ -379,7 +383,7 @@ describe('CreateServerDialog Modpack Integration', () => {
     });
 
     vi.spyOn(global, 'fetch').mockImplementation(async (url) => {
-      const urlStr = String(url);
+      const urlStr = catalogTarget(url);
       if (urlStr.includes('/search')) {
         return {
           ok: true,

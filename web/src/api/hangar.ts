@@ -1,3 +1,4 @@
+import { rememberArtifactHashes } from './artifact-hashes';
 import type {
   HangarProject,
   HangarSearchResult,
@@ -124,7 +125,9 @@ export async function getHangarVersions(
     },
   );
 
-  return data.result ?? [];
+  const versions=data.result??[];
+ for(const version of versions)for(const download of Object.values(version.downloads??{}))rememberArtifactHashes(download.downloadUrl,{sha256:download.fileInfo?.sha256Hash});
+ return versions;
 }
 
 /**

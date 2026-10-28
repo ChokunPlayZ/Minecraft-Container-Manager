@@ -1,3 +1,5 @@
+import { catalogTarget } from './catalog-fixtures';
+import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   findInstalledSpigetResource,
@@ -13,6 +15,8 @@ describe('Spiget (SpigotMC) API client', () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+ clearRateLimitCache();
+ document.cookie="mcm_csrf=test-csrf; path=/";
     vi.restoreAllMocks();
   });
 
@@ -46,7 +50,9 @@ describe('Spiget (SpigotMC) API client', () => {
 
     const res = await searchSpiget({ query: 'luckperms', sort: '-downloads' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    const rawUrl=String(fetchMock.mock.calls[0][0]);
+ expect(rawUrl).toMatch(/^\/api\/proxy\?url=/);
+ const calledUrl = catalogTarget(rawUrl);
     expect(calledUrl).toContain('https://api.spiget.org/v2/search/resources/luckperms');
     expect(calledUrl).toContain('sort=-downloads');
     expect(res).toHaveLength(1);
@@ -61,7 +67,9 @@ describe('Spiget (SpigotMC) API client', () => {
     global.fetch = fetchMock;
 
     await searchSpiget({ query: '', sort: '-rating', limit: 10, page: 2 });
-    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    const rawUrl=String(fetchMock.mock.calls[0][0]);
+ expect(rawUrl).toMatch(/^\/api\/proxy\?url=/);
+ const calledUrl = catalogTarget(rawUrl);
     expect(calledUrl).toContain('https://api.spiget.org/v2/resources?');
     expect(calledUrl).toContain('size=10');
     expect(calledUrl).toContain('page=2');
