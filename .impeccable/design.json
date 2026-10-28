@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-26T14:30:43.277706Z",
+  "generatedAt": "2026-10-28T02:51:53.189Z",
   "title": "Design System: Minecraft Container Manager",
   "extensions": {
     "colorMeta": {
@@ -784,7 +784,7 @@
       {
         "name": "menu",
         "value": "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
-        "purpose": "Dropdown menu elevation."
+        "purpose": "Shared dropdown and select-menu elevation."
       },
       {
         "name": "submenu",
@@ -805,6 +805,11 @@
         "name": "field-focus",
         "value": "0 0 0 2px color-mix(in oklab, var(--ring) 20%, transparent)",
         "purpose": "Tinted field ring used with a primary border."
+      },
+      {
+        "name": "progress-fill",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Local shadow on determinate progress fills when their animation option is enabled."
       }
     ],
     "motion": [
@@ -825,13 +830,23 @@
       },
       {
         "name": "progress-feedback",
-        "value": "300ms ease-out",
+        "value": "300ms cubic-bezier(0, 0, 0.2, 1)",
         "purpose": "Determinate progress value changes."
       },
       {
         "name": "reduced-motion",
         "value": "0.01ms",
         "purpose": "Reduced-motion transition and animation duration override; dialog reveal is disabled entirely."
+      },
+      {
+        "name": "resource-meter",
+        "value": "300ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Resource meter width changes."
+      },
+      {
+        "name": "loading-pulse",
+        "value": "2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "purpose": "Muted skeletons and indeterminate progress pulse to 50% opacity at the midpoint."
       }
     ],
     "breakpoints": [
@@ -848,6 +863,10 @@
         "value": "64rem"
       },
       {
+        "name": "fleet-actions",
+        "value": "1200px"
+      },
+      {
         "name": "xl",
         "value": "80rem"
       }
@@ -860,7 +879,7 @@
       "refersTo": "button-primary",
       "description": "The shipped primary variant at the default control size.",
       "html": "<button class=\"ds-button-primary\" type=\"button\">Create server</button>",
-      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:8px;font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--primary, #236d61);color:var(--primary-foreground, #ffffff);border:1px solid transparent;}.ds-button-primary:hover{background:color-mix(in oklab,var(--primary, #236d61) 90%,transparent);}.ds-button-primary:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-primary:active{transform:translateY(1px);}.ds-button-primary:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-primary{transition-duration:.01ms;}}"
+      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:var(--radius, 8px);font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--primary, #236d61);color:var(--primary-foreground, #ffffff);border:1px solid transparent;}.ds-button-primary:hover{background:color-mix(in oklab,var(--primary, #236d61) 90%,transparent);}.ds-button-primary:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-primary:active{transform:translateY(1px);}.ds-button-primary:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-primary{transition-duration:.01ms;}}"
     },
     {
       "name": "Destructive button",
@@ -868,7 +887,7 @@
       "refersTo": "button-destructive",
       "description": "The shipped destructive variant at the default control size.",
       "html": "<button class=\"ds-button-destructive\" type=\"button\">Delete server</button>",
-      "css": ".ds-button-destructive{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:8px;font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--destructive, #b63842);color:var(--destructive-foreground, #ffffff);border:1px solid transparent;}.ds-button-destructive:hover{background:color-mix(in oklab,var(--destructive, #b63842) 90%,transparent);}.ds-button-destructive:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-destructive:active{transform:translateY(1px);}.ds-button-destructive:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-destructive{transition-duration:.01ms;}}"
+      "css": ".ds-button-destructive{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:var(--radius, 8px);font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--destructive, #b63842);color:var(--destructive-foreground, #ffffff);border:1px solid transparent;}.ds-button-destructive:hover{background:color-mix(in oklab,var(--destructive, #b63842) 90%,transparent);}.ds-button-destructive:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-destructive:active{transform:translateY(1px);}.ds-button-destructive:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-destructive{transition-duration:.01ms;}}"
     },
     {
       "name": "Outline button",
@@ -876,7 +895,7 @@
       "refersTo": "button-outline",
       "description": "The shipped outline variant at the default control size.",
       "html": "<button class=\"ds-button-outline\" type=\"button\">Cancel</button>",
-      "css": ".ds-button-outline{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:8px;font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--card, #ffffff);color:var(--foreground, #1c2b2e);border:1px solid var(--input, #cdd8d6);}.ds-button-outline:hover{background:var(--accent, #e7efed);color:var(--accent-foreground, #1e5d53);}.ds-button-outline:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-outline:active{transform:translateY(1px);}.ds-button-outline:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-outline{transition-duration:.01ms;}}"
+      "css": ".ds-button-outline{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:var(--radius, 8px);font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--card, #ffffff);color:var(--foreground, #1c2b2e);border:1px solid var(--input, #cdd8d6);}.ds-button-outline:hover{background:var(--accent, #e7efed);color:var(--accent-foreground, #1e5d53);}.ds-button-outline:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-outline:active{transform:translateY(1px);}.ds-button-outline:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-outline{transition-duration:.01ms;}}"
     },
     {
       "name": "Secondary button",
@@ -884,7 +903,7 @@
       "refersTo": "button-secondary",
       "description": "The shipped secondary variant at the default control size.",
       "html": "<button class=\"ds-button-secondary\" type=\"button\">Copy address</button>",
-      "css": ".ds-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:8px;font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--secondary, #edf2f1);color:var(--secondary-foreground, #344846);border:1px solid transparent;}.ds-button-secondary:hover{background:color-mix(in oklab,var(--secondary, #edf2f1) 80%,transparent);}.ds-button-secondary:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-secondary:active{transform:translateY(1px);}.ds-button-secondary:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-secondary{transition-duration:.01ms;}}"
+      "css": ".ds-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:var(--radius, 8px);font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:var(--secondary, #edf2f1);color:var(--secondary-foreground, #344846);border:1px solid transparent;}.ds-button-secondary:hover{background:color-mix(in oklab,var(--secondary, #edf2f1) 80%,transparent);}.ds-button-secondary:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-secondary:active{transform:translateY(1px);}.ds-button-secondary:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-secondary{transition-duration:.01ms;}}"
     },
     {
       "name": "Ghost button",
@@ -892,7 +911,7 @@
       "refersTo": "button-ghost",
       "description": "The shipped ghost variant at the default control size.",
       "html": "<button class=\"ds-button-ghost\" type=\"button\">Refresh</button>",
-      "css": ".ds-button-ghost{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:8px;font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:transparent;color:var(--muted-foreground, #607172);border:1px solid transparent;}.ds-button-ghost:hover{background:var(--accent, #e7efed);color:var(--accent-foreground, #1e5d53);}.ds-button-ghost:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-ghost:active{transform:translateY(1px);}.ds-button-ghost:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-ghost{transition-duration:.01ms;}}"
+      "css": ".ds-button-ghost{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:var(--radius, 8px);font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:transparent;color:var(--muted-foreground, #607172);border:1px solid transparent;}.ds-button-ghost:hover{background:var(--accent, #e7efed);color:var(--accent-foreground, #1e5d53);}.ds-button-ghost:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-ghost:active{transform:translateY(1px);}.ds-button-ghost:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-ghost{transition-duration:.01ms;}}"
     },
     {
       "name": "Link button",
@@ -900,7 +919,7 @@
       "refersTo": "button-link",
       "description": "The shipped link variant at the default control size.",
       "html": "<button class=\"ds-button-link\" type=\"button\">Manage server</button>",
-      "css": ".ds-button-link{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:8px;font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:transparent;color:var(--primary, #236d61);border:0;text-underline-offset:4px;}.ds-button-link:hover{text-decoration:underline;}.ds-button-link:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-link:active{transform:translateY(1px);}.ds-button-link:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-link{transition-duration:.01ms;}}"
+      "css": ".ds-button-link{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;border-radius:var(--radius, 8px);font-size:14px;font-weight:500;line-height:20px;height:40px;padding:8px 16px;cursor:pointer;transition:background-color 150ms cubic-bezier(.4,0,.2,1),color 150ms cubic-bezier(.4,0,.2,1),border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;background:transparent;color:var(--primary, #236d61);border:0;text-underline-offset:4px;}.ds-button-link:hover{text-decoration:underline;}.ds-button-link:focus-visible{outline:none;box-shadow:0 0 0 2px var(--background, #f5f7f7),0 0 0 4px var(--ring, #347e71);}.ds-button-link:active{transform:translateY(1px);}.ds-button-link:disabled{pointer-events:none;opacity:.45;}@media(prefers-reduced-motion:reduce){.ds-button-link{transition-duration:.01ms;}}"
     },
     {
       "name": "Text input",
@@ -908,7 +927,7 @@
       "refersTo": "input",
       "description": "A full-width field with a primary border and tinted focus ring.",
       "html": "<input class=\"ds-input\" type=\"search\" aria-label=\"Search servers\" placeholder=\"Search servers…\">",
-      "css": ".ds-input{display:flex;height:40px;width:100%;border:1px solid var(--input, #cdd8d6);border-radius:8px;background:var(--card, #ffffff);color:var(--foreground, #1c2b2e);padding:4px 12px;font-size:14px;font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;transition:border-color 150ms,box-shadow 150ms;caret-color:var(--primary, #236d61);}.ds-input::placeholder{color:var(--muted-foreground, #607172);}.ds-input:hover{border-color:color-mix(in oklab,var(--muted-foreground, #607172) 50%,transparent);}.ds-input:focus-visible{outline:none;border-color:var(--primary, #236d61);box-shadow:0 0 0 2px color-mix(in oklab,var(--ring, #347e71) 20%,transparent);}.ds-input:disabled{cursor:not-allowed;background:var(--muted, #edf1f1);opacity:.6;}@media(max-width:767px){.ds-input{font-size:16px;}}@media(prefers-reduced-motion:reduce){.ds-input{transition-duration:.01ms;}}"
+      "css": ".ds-input{display:flex;height:40px;width:100%;border:1px solid var(--input, #cdd8d6);border-radius:var(--radius, 8px);background:var(--card, #ffffff);color:var(--foreground, #1c2b2e);padding:4px 12px;font-size:14px;line-height:20px;font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;transition:border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);caret-color:var(--primary, #236d61);}.ds-input::placeholder{color:var(--muted-foreground, #607172);}.ds-input:hover{border-color:color-mix(in oklab,var(--muted-foreground, #607172) 50%,transparent);}.ds-input:focus-visible{outline:none;border-color:var(--primary, #236d61);box-shadow:0 0 0 2px color-mix(in oklab,var(--ring, #347e71) 20%,transparent);}.ds-input:disabled{cursor:not-allowed;background:var(--muted, #edf1f1);opacity:.6;}@media(max-width:767px){.ds-input{font-size:16px;}}@media(prefers-reduced-motion:reduce){.ds-input{transition-duration:.01ms;}}"
     },
     {
       "name": "Custom select",
@@ -916,7 +935,7 @@
       "refersTo": "select",
       "description": "The shared field dropdown, shown open with a selected option and disabled choice; menu and highlighted item use select-menu and select-item-highlighted.",
       "html": "<div class=\"ds-select\"><button class=\"ds-select-trigger\" type=\"button\" aria-label=\"Backup storage\" aria-haspopup=\"listbox\" aria-expanded=\"true\"><span>Local storage</span><svg class=\"ds-select-chevron\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m6 9 6 6 6-6\"/></svg></button><div class=\"ds-select-menu\" role=\"listbox\" aria-label=\"Backup storage\"><div class=\"ds-select-item\" role=\"option\" aria-selected=\"true\" data-highlighted tabindex=\"0\"><span>Local storage</span><svg class=\"ds-select-check\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m20 6-11 11-5-5\"/></svg></div><div class=\"ds-select-item\" role=\"option\" aria-selected=\"false\" aria-disabled=\"true\"><span>S3 storage</span></div></div></div>",
-      "css": ".ds-select{width:min(100%,320px);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:14px;line-height:20px;}.ds-select-trigger{display:flex;min-width:0;width:100%;height:40px;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--input,#cdd8d6);border-radius:8px;background:var(--card,#ffffff);color:var(--foreground,#1c2b2e);padding:4px 12px;text-align:left;font:inherit;cursor:pointer;transition:border-color 150ms,box-shadow 150ms;}.ds-select-trigger>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.ds-select-chevron{width:16px;height:16px;flex-shrink:0;color:var(--muted-foreground,#607172);}.ds-select-trigger:hover{border-color:color-mix(in oklab,var(--muted-foreground,#607172) 50%,transparent);}.ds-select-trigger:focus-visible,.ds-select-trigger[aria-expanded=\"true\"]{outline:none;border-color:var(--primary,#236d61);box-shadow:0 0 0 2px color-mix(in oklab,var(--ring,#347e71) 20%,transparent);}.ds-select-trigger:disabled{cursor:not-allowed;background:var(--muted,#edf1f1);opacity:.45;}.ds-select-menu{position:relative;z-index:150;min-width:100%;max-width:calc(100vw - 24px);max-height:min(320px,calc(100vh - 24px));margin-top:4px;overflow:auto;border:1px solid var(--border,#dce4e3);border-radius:12px;background:var(--popover,#ffffff);color:var(--popover-foreground,#1c2b2e);padding:6px;box-shadow:0 4px 6px -1px rgb(0 0 0 / .1),0 2px 4px -2px rgb(0 0 0 / .1);}.ds-select-item{position:relative;display:flex;min-height:36px;align-items:center;border-radius:8px;padding:8px 36px 8px 12px;cursor:pointer;outline:none;}.ds-select-item>span{min-width:0;overflow-wrap:break-word;}.ds-select-item:hover,.ds-select-item:focus-visible,.ds-select-item[data-highlighted]{background:var(--accent,#e7efed);color:var(--accent-foreground,#1e5d53);}.ds-select-item[aria-disabled=\"true\"]{pointer-events:none;opacity:.45;}.ds-select-check{position:absolute;right:12px;width:16px;height:16px;}@media(prefers-reduced-motion:reduce){.ds-select-trigger{transition-duration:.01ms;}}"
+      "css": ".ds-select{width:min(100%,320px);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:14px;line-height:20px;}.ds-select-trigger{display:flex;min-width:0;width:100%;height:40px;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--input,#cdd8d6);border-radius:var(--radius, 8px);background:var(--card,#ffffff);color:var(--foreground,#1c2b2e);padding:4px 12px;text-align:left;font:inherit;cursor:pointer;transition:border-color 150ms cubic-bezier(.4,0,.2,1),box-shadow 150ms cubic-bezier(.4,0,.2,1);}.ds-select-trigger>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.ds-select-chevron{width:16px;height:16px;flex-shrink:0;color:var(--muted-foreground,#607172);}.ds-select-trigger:hover{border-color:color-mix(in oklab,var(--muted-foreground,#607172) 50%,transparent);}.ds-select-trigger:focus-visible,.ds-select-trigger[aria-expanded=\"true\"]{outline:none;border-color:var(--primary,#236d61);box-shadow:0 0 0 2px color-mix(in oklab,var(--ring,#347e71) 20%,transparent);}.ds-select-trigger:disabled{cursor:not-allowed;background:var(--muted,#edf1f1);opacity:.45;}.ds-select-menu{position:relative;z-index:150;min-width:100%;max-width:calc(100vw - 24px);max-height:min(320px,calc(100vh - 24px));margin-top:4px;overflow:auto;border:1px solid var(--border,#dce4e3);border-radius:calc(var(--radius, 8px) + 4px);background:var(--popover,#ffffff);color:var(--popover-foreground,#1c2b2e);padding:6px;box-shadow:0 4px 6px -1px rgb(0 0 0 / .1),0 2px 4px -2px rgb(0 0 0 / .1);}.ds-select-item{position:relative;display:flex;min-height:36px;align-items:center;border-radius:var(--radius, 8px);padding:8px 36px 8px 12px;cursor:pointer;outline:none;}.ds-select-item>span{min-width:0;overflow-wrap:break-word;}.ds-select-item:hover,.ds-select-item:focus-visible,.ds-select-item[data-highlighted]{background:var(--accent,#e7efed);color:var(--accent-foreground,#1e5d53);}.ds-select-item[aria-disabled=\"true\"]{pointer-events:none;opacity:.45;}.ds-select-check{position:absolute;right:12px;width:16px;height:16px;}@media(prefers-reduced-motion:reduce){.ds-select-trigger{transition-duration:.01ms;}}"
     },
     {
       "name": "Default badge",
@@ -932,15 +951,23 @@
       "refersTo": "card",
       "description": "A flat, ruled working surface with responsive internal padding.",
       "html": "<section class=\"ds-card\"><div class=\"ds-card-header\"><h3 class=\"ds-card-title\">Server files</h3><p class=\"ds-card-description\">Browse server files and edit configuration.</p></div><div class=\"ds-card-content\">server.properties</div></section>",
-      "css": ".ds-card{min-width:0;border:1px solid var(--border, #dce4e3);border-radius:12px;background:var(--card, #ffffff);color:var(--card-foreground, #1c2b2e);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-card-header{display:flex;flex-direction:column;gap:8px;padding:20px;}.ds-card-title{margin:0;font-size:14px;font-weight:600;line-height:1.375;letter-spacing:-.025em;}.ds-card-description{margin:0;font-size:14px;color:var(--muted-foreground, #607172);}.ds-card-content{padding:0 20px 20px;font-size:14px;}@media(min-width:640px){.ds-card-header{padding:24px;}.ds-card-content{padding:0 24px 24px;}}"
+      "css": ".ds-card{min-width:0;border:1px solid var(--border, #dce4e3);border-radius:calc(var(--radius, 8px) + 4px);background:var(--card, #ffffff);color:var(--card-foreground, #1c2b2e);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-card-header{display:flex;flex-direction:column;gap:8px;padding:20px;}.ds-card-title{margin:0;font-size:14px;font-weight:600;line-height:1.375;letter-spacing:-.025em;}.ds-card-description{margin:0;font-size:14px;line-height:20px;color:var(--muted-foreground, #607172);}.ds-card-content{padding:0 20px 20px;font-size:14px;}@media(min-width:640px){.ds-card-header{padding:24px;}.ds-card-content{padding:0 24px 24px;}}"
     },
     {
       "name": "Rail navigation",
       "kind": "nav",
       "refersTo": "navigation-active",
-      "description": "A selected route uses surface, ring, icon color, and current-page semantics.",
-      "html": "<nav class=\"ds-nav\" aria-label=\"Main navigation\"><a class=\"ds-nav-link\" href=\"#servers\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><rect x=\"2\" y=\"2\" width=\"20\" height=\"8\" rx=\"2\"/><rect x=\"2\" y=\"14\" width=\"20\" height=\"8\" rx=\"2\"/><path d=\"M6 6h.01M6 18h.01\"/></svg><span><span class=\"ds-nav-label\">Servers</span><span class=\"ds-nav-description\">Server instances</span></span><svg class=\"ds-nav-chevron\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m9 18 6-6-6-6\"/></svg></a><a class=\"ds-nav-link\" href=\"#settings\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><path d=\"M20 7h-9M14 17H5M20 17h-2M5 7H3\"/><circle cx=\"8\" cy=\"7\" r=\"3\"/><circle cx=\"16\" cy=\"17\" r=\"2\"/></svg><span><span class=\"ds-nav-label\">Settings</span><span class=\"ds-nav-description\">Account &amp; integrations</span></span></a></nav>",
-      "css": ".ds-nav{display:grid;gap:6px;padding:16px;background:var(--sidebar, #edf2f0);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-nav-link{display:flex;align-items:center;gap:12px;border-radius:12px;padding:12px;color:var(--muted-foreground, #607172);text-decoration:none;transition:background-color 150ms,color 150ms;}.ds-nav-link:not([aria-current]):hover{background:var(--accent, #e7efed);color:var(--foreground, #1c2b2e);}.ds-nav-link[aria-current=\"page\"]{background:var(--card, #ffffff);color:var(--foreground, #1c2b2e);box-shadow:0 0 0 1px var(--border, #dce4e3);}.ds-nav-link[aria-current=\"page\"]>svg:first-child{color:var(--primary, #236d61);}.ds-nav-link:focus-visible{outline:2px solid var(--ring, #347e71);outline-offset:3px;}.ds-nav-label{display:block;font-size:14px;font-weight:500;line-height:20px;}.ds-nav-description{display:block;margin-top:2px;font-size:12px;line-height:16px;color:var(--muted-foreground, #607172);}.ds-nav-chevron{margin-left:auto;color:var(--muted-foreground, #607172);}@media(prefers-reduced-motion:reduce){.ds-nav-link{transition-duration:.01ms;}}"
+      "description": "Current navigation labels, with a card surface, border ring, primary icon, and current-page semantics on the selected route.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Main navigation\"><a class=\"ds-nav-link\" href=\"#servers\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><rect x=\"2\" y=\"2\" width=\"20\" height=\"8\" rx=\"2\"/><rect x=\"2\" y=\"14\" width=\"20\" height=\"8\" rx=\"2\"/><path d=\"M6 6h.01M6 18h.01\"/></svg><span><span class=\"ds-nav-label\">Servers</span></span><svg class=\"ds-nav-chevron\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m9 18 6-6-6-6\"/></svg></a><a class=\"ds-nav-link\" href=\"#settings\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><path d=\"M20 7h-9M14 17H5M20 17h-2M5 7H3\"/><circle cx=\"8\" cy=\"7\" r=\"3\"/><circle cx=\"16\" cy=\"17\" r=\"2\"/></svg><span><span class=\"ds-nav-label\">Settings</span></span></a></nav>",
+      "css": ".ds-nav{display:grid;gap:6px;padding:16px;background:var(--sidebar, #edf2f0);font-family:-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-nav-link{display:flex;align-items:center;gap:12px;border-radius:calc(var(--radius, 8px) + 4px);padding:12px;color:var(--muted-foreground, #607172);text-decoration:none;transition:background-color 150ms,color 150ms;}.ds-nav-link:not([aria-current]):hover{background:var(--accent, #e7efed);color:var(--foreground, #1c2b2e);}.ds-nav-link[aria-current=\"page\"]{background:var(--card, #ffffff);color:var(--foreground, #1c2b2e);box-shadow:0 0 0 1px var(--border, #dce4e3);}.ds-nav-link[aria-current=\"page\"]>svg:first-child{color:var(--primary, #236d61);}.ds-nav-link:focus-visible{outline:2px solid var(--ring, #347e71);outline-offset:3px;}.ds-nav-label{display:block;font-size:14px;font-weight:500;line-height:20px;}.ds-nav-chevron{margin-left:auto;color:var(--muted-foreground, #607172);}@media(prefers-reduced-motion:reduce){.ds-nav-link{transition-duration:.01ms;}}"
+    },
+    {
+      "name": "Historical metric chart",
+      "kind": "custom",
+      "refersTo": "metric-chart",
+      "description": "Static sample of the implemented chart geometry, caption, primary line, grid, reference line, and missing interval. The application supplies live values and synchronized keyboard/pointer inspection.",
+      "html": "<figure class=\"ds-chart\"><figcaption class=\"ds-chart-caption\"><span>CPU usage · sample</span><span class=\"ds-chart-value\">14.8%</span></figcaption><div class=\"ds-chart-plot\"><div class=\"ds-chart-axis\" aria-hidden=\"true\"><span>108%</span><span>54%</span><span>0%</span></div><svg class=\"ds-chart-svg\" viewBox=\"0 0 600 160\" preserveAspectRatio=\"none\" role=\"img\" aria-label=\"CPU usage example with a missing interval. Static sample readings.\" tabindex=\"0\"><g class=\"ds-chart-grid\"><line x1=\"0\" x2=\"600\" y1=\"5\" y2=\"5\" vector-effect=\"non-scaling-stroke\"/><line x1=\"0\" x2=\"600\" y1=\"80\" y2=\"80\" vector-effect=\"non-scaling-stroke\"/><line x1=\"0\" x2=\"600\" y1=\"155\" y2=\"155\" vector-effect=\"non-scaling-stroke\"/></g><line class=\"ds-chart-reference\" x1=\"0\" x2=\"600\" y1=\"16\" y2=\"16\" stroke-dasharray=\"4 5\" vector-effect=\"non-scaling-stroke\"/><path d=\"M0,138 L50,132 L100,136 L150,118 L200,125 M300,129 L350,134 L400,123 L450,132 L500,128 L550,134 L600,134.44\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\" vector-effect=\"non-scaling-stroke\"/></svg></div><div class=\"ds-chart-time\" aria-hidden=\"true\"><span>10:00</span><span>11:00</span></div><p class=\"ds-chart-description\">Container CPU. 100% equals one fully used core.</p></figure>",
+      "css": ".ds-chart{min-width:0;margin:0;border:1px solid var(--border,#dce4e3);border-radius:var(--radius-xl,12px);background:var(--card,#fff);color:var(--card-foreground,#1c2b2e);padding:20px;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;}.ds-chart-caption{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;column-gap:16px;row-gap:4px;margin-bottom:16px;font-size:14px;font-weight:600;line-height:20px;}.ds-chart-value{font-size:18px;line-height:28px;font-variant-numeric:tabular-nums;}.ds-chart-plot{position:relative;display:flex;height:160px;gap:8px;}.ds-chart-axis{display:flex;width:48px;flex-shrink:0;flex-direction:column;justify-content:space-between;padding-bottom:4px;text-align:right;font-size:12px;line-height:16px;font-variant-numeric:tabular-nums;color:var(--muted-foreground,#607172);}.ds-chart-svg{min-width:0;flex:1;height:160px;overflow:visible;border-radius:calc(var(--radius,8px) - 2px);color:var(--primary,#236d61);outline:none;}.ds-chart-svg:focus-visible{box-shadow:0 0 0 2px var(--ring,#347e71);}.ds-chart-grid{stroke:var(--border,#dce4e3);}.ds-chart-reference{stroke:var(--muted-foreground,#607172);}.ds-chart-time{display:flex;justify-content:space-between;gap:8px;margin-top:8px;padding-left:56px;font-size:12px;line-height:16px;font-variant-numeric:tabular-nums;color:var(--muted-foreground,#607172);}.ds-chart-description{margin:12px 0 0;font-size:12px;line-height:20px;color:var(--muted-foreground,#607172);}"
     }
   ],
   "narrative": {
@@ -970,7 +997,7 @@
       },
       {
         "name": "The Flat Workspace Rule",
-        "body": "Ordinary panels and rows have no ambient shadow. Reserve elevation for overlays, menus, focus, and the switch thumb.",
+        "body": "Ordinary panels and rows have no ambient shadow. Reserve elevation for overlays, menus, focus, the switch thumb, and the small progress-fill treatment.",
         "section": "elevation"
       }
     ],

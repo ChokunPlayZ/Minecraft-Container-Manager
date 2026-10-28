@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowUp,
   Download,
+  Database,
   File,
   FileArchive,
   FilePlus2,
@@ -28,6 +29,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { useModal } from './ui/modal';
+import { NBTEditor } from './nbt-editor';
+import { isNBTFile } from '../lib/nbt';
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -48,7 +51,7 @@ const TEXT_EXTENSIONS = new Set([
   // Config / data
   'txt', 'json', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'properties', 'env',
   'xml', 'html', 'htm', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'md', 'sh',
-  'bat', 'ps1', 'cmd', 'csv', 'log', 'tsv', 'sql', 'nbt', 'dat', 'mcmeta', 'mcfunction',
+  'bat', 'ps1', 'cmd', 'csv', 'log', 'tsv', 'sql', 'mcmeta', 'mcfunction',
   'lang', 'snbt', 'npy', 'pem', 'key', 'crt', 'ignore', 'gitignore',
 ]);
 
@@ -69,13 +72,15 @@ const EDITABLE_NAMES = new Set([
 
 function isEditable(entry: FileEntry): boolean {
   if (entry.is_directory) return false;
+  if (isNBTFile(entry.name)) return false;
   const lower = entry.name.toLowerCase();
   const idx = lower.lastIndexOf('.');
   const ext = idx >= 0 ? lower.slice(idx + 1) : '';
   return TEXT_EXTENSIONS.has(ext) || EDITABLE_NAMES.has(lower);
 }
 
-export function FileManager({ server }: { server: Server }) {
+export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNBTDirtyChange?: (dirty: boolean) => void }) {
+  const [nbtPath, setNBTPath] = useState<string | null>(null);
   const [cwd, setCwd] = useState('');
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -436,12 +441,24 @@ export function FileManager({ server }: { server: Server }) {
       setCwd(joinPath(cwd, entry.name));
       return;
     }
+    if (isNBTFile(entry.name)) {
+      void openNBT(joinPath(cwd, entry.name));
+      return;
+    }
     if (isEditable(entry)) {
       void openEditor(joinPath(cwd, entry.name));
       return;
     }
     void handleDownload(entry);
   }
+
+  async function openNBT(path: string) {
+    if (editorBusy) return;
+    if (editorDirty && !(await confirm('Discard unsaved text changes and open the NBT editor?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
+    setEditorPath(null); setEditorDirty(false); setNBTPath(path);
+  }
+
+  if (nbtPath) return <NBTEditor key={nbtPath} serverId={server.id} path={nbtPath} state={server.state} onDirtyChange={onNBTDirtyChange} onClose={() => { setNBTPath(null); void load(); }} />;
 
   return (
     <>
@@ -644,6 +661,8 @@ export function FileManager({ server }: { server: Server }) {
                     >
                       {e.is_directory ? (
                         <Folder className="h-4 w-4 shrink-0 text-amber-600" />
+                      ) : isNBTFile(e.name) ? (
+                        <Database className="h-4 w-4 shrink-0 text-primary" />
                       ) : editable ? (
                         <FileText className="h-4 w-4 shrink-0 text-sky-600" />
                       ) : e.name.toLowerCase().endsWith('.zip') ? (
@@ -667,6 +686,11 @@ export function FileManager({ server }: { server: Server }) {
                         onClick={() => void handleDownload(e)}
                       >
                         <Download className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {!e.is_directory && (
+                      <Button variant="ghost" size="icon" title="Open as NBT" aria-label={`Open ${e.name} as NBT`} onClick={() => void openNBT(joinPath(cwd, e.name))}>
+                        <Database className="h-4 w-4" />
                       </Button>
                     )}
                     {editable && (

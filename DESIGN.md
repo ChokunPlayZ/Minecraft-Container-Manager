@@ -113,6 +113,7 @@ rounded:
   sm: "6px"
   md: "8px"
   lg: "12px"
+  xl: "12px"
   dialog: "16px"
   full: "calc(infinity * 1px)"
 spacing:
@@ -302,6 +303,16 @@ components:
     typography: "{typography.control}"
     rounded: "{rounded.lg}"
     padding: "12px"
+  metric-chart:
+    backgroundColor: "{colors.card}"
+    textColor: "{colors.card-foreground}"
+    rounded: "{rounded.xl}"
+    padding: "20px"
+  metric-chart-dark:
+    backgroundColor: "{colors.dark-card}"
+    textColor: "{colors.dark-card-foreground}"
+    rounded: "{rounded.xl}"
+    padding: "20px"
 ---
 
 # Design System: Minecraft Container Manager
@@ -321,7 +332,7 @@ Surfaces are flat and restrained. Borders group related work; spacing separates 
 - Compact controls, quiet panels, and readable operational data.
 - Direct labels, visible state, keyboard focus, and bounded dialogs.
 
-This record describes the final implementation in `web/src/styles/index.css`, the shared UI primitives, and the application shell. Theme-prefixed tokens in the frontmatter record the `.dark` overrides; the runtime keeps the same semantic CSS property names. The surface brief owns the dashboard composition and its mode.
+Refreshed from the current working tree on 2026-10-28. Sources are `web/src/styles/index.css`, the installed Tailwind theme, the shared UI primitives, the application shell, and the operational viewers and editors. Desktop dark and mobile light dashboard captures confirm the shared typography, surfaces, control geometry, and responsive resource grid. Theme-prefixed tokens in the frontmatter record the `.dark` overrides; the runtime keeps the same semantic CSS property names. Surface briefs own individual page compositions and modes.
 
 ## Colors
 
@@ -331,7 +342,7 @@ Cool, low-chroma surfaces carry the workspace; forest teal marks primary actions
 
 - **Forest teal / pale forest:** `primary` and `dark-primary` identify primary actions, focus-associated emphasis, and selected controls. Always pair them with their respective `primary-foreground` values.
 - **Quiet forest:** `accent` and `accent-foreground` supply hover and filter-selection surfaces. The ring tokens define visible keyboard focus.
-- Solid selected controls and active DNS badges use the primary pair. The final review measured this pair at (6.12:1) in light and (8.11:1) in dark. The active DNS badges keep that pair on hover.
+- Solid selected controls and active DNS badges use the primary pair. The active DNS badges keep that pair on hover.
 
 ### Secondary
 
@@ -379,13 +390,13 @@ The hierarchy is compact, with sentence-case labels, modest heading weights, and
 
 The shared shell fixes a rail at the left on wide screens and centers fluid content in the remaining space. The rail is (224px); the header is (64px) high. The header, main content, and footer share a maximum width of (1480px). Main horizontal padding is (20px), increasing to (32px) at the small breakpoint and (40px) at the large breakpoint. Main vertical padding grows from (32px) to (40px) at the large breakpoint.
 
-The spacing foundation is (4px), with frequently reused half steps (6px, 10px, 14px). Form groups normally use (16px), panel sections (20px or 24px), and larger task separations (24px or 28px). Page heading groups have a (20px) gap and a (28px) bottom margin, reducing the margin to (24px) on narrow screens.
+The spacing foundation is (4px), with frequently reused half steps (6px, 10px, 14px). Form groups normally use (16px), panel sections (20px or 24px), and larger task separations (24px or 28px). Page heading groups have a (20px) gap and a (28px) bottom margin, reducing the margin to (24px) on narrow screens. Toolbars wrap their controls; content columns can shrink, and paths and machine identifiers wrap within their own region.
 
 Responsive rules follow the shipped utility breakpoints, with a local fleet action threshold:
 
 - **Small (640px / 40rem):** panel padding grows from (20px) to (24px); multi-column form groups can open; search fields can become bounded rather than full width. Authentication form width remains capped at (384px).
 - **Medium (768px / 48rem):** fleet rows align identity, state, memory, and port. Actions occupy a separate full-width row until (1200px), when they share a fixed (232px) column with the Actions heading. Below (768px), rows retain identity/state with actions on a separate line; secondary columns and the table-like heading are hidden. Four resource cells become a two-by-two grid with matching dividers. Workspace tabs continue to scroll horizontally.
-- **Large (1024px / 64rem):** the fixed rail appears and content is offset by its width. Below it, a header menu button reveals labeled navigation in flow; selecting a destination closes the menu. The authentication layout becomes a split panel at this breakpoint.
+- **Large (1024px / 64rem):** the fixed rail appears and content is offset by its width. Below it, a header menu button reveals labeled navigation in flow; selecting a destination closes the menu. The authentication layout becomes a split panel at this breakpoint. Structured data editors split their browser and detail regions into equal columns here; below it they stack, with the selected detail scrolled into view.
 - **Extra large (1280px / 80rem):** dense settings and the file editor can use adjacent columns; below it, their sections stack.
 
 File identity precedes size and actions. Below the small breakpoint, populated file rows place the name on its own line and wrap a second action row. The dependency dialog stacks its action group on narrow screens, allows labels to wrap, and reverses the action stack so the primary operation appears first. At the small breakpoint the group returns to wrapping horizontal actions. Preserve these rules for long names.
@@ -394,20 +405,21 @@ The common prompt/confirmation panel is capped at (448px). Other workflows use (
 
 ## Elevation & Depth
 
-Depth comes primarily from adjacent surface tones, one-pixel rules, and the darker console inset. Ordinary cards, fleet rows, metrics, and the navigation frame remain flat. A selected rail item uses a one-pixel ring. Overlays use a structural shadow; the backdrop dims the workspace without blur.
+Depth comes primarily from adjacent surface tones, one-pixel rules, and the darker console inset. Ordinary cards, fleet rows, metrics, and the navigation frame remain flat. A selected rail item uses a one-pixel ring. Overlays use a structural shadow; the backdrop dims the workspace without blur. Determinate progress fills can carry the installed extra-small shadow; this is local feedback inside the track.
 
 ### Shadow Vocabulary
 
 - **Dialog:** a broad structural shadow (`0 24px 80px rgb(0 0 0 / 25%)`) shared by all dialog panels.
 - **Menu:** the installed medium shadow (`0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)`). Submenus use the installed large shadow.
 - **Switch thumb:** the installed small shadow is confined to the white moving thumb.
+- **Progress fill:** the installed extra-small shadow (`0 1px 2px 0 rgb(0 0 0 / 0.05)`) appears on determinate progress fills when their animation option is enabled.
 - **Focus:** an external ring, rather than a raised surface, marks keyboard position. The base outline is (2px) with (3px) offset. Buttons use a (2px) ring with (2px) surface-colored offset; fields use a (20%) ring tint and a primary border.
 
-**The Flat Workspace Rule.** Ordinary panels and rows have no ambient shadow. Reserve elevation for overlays, menus, focus, and the switch thumb.
+**The Flat Workspace Rule.** Ordinary panels and rows have no ambient shadow. Reserve elevation for overlays, menus, focus, the switch thumb, and the small progress-fill treatment.
 
 ## Shapes
 
-Controls have gently curved corners using the medium radius; ordinary panels use the large radius. Small menu items use the small radius. Dialog panels override their local radius to the shared dialog value. Badges, state dots, avatar initials, progress tracks, and switches use fully rounded ends. Thin borders and dividers establish alignment without decorative frames.
+Controls have gently curved corners using the medium radius; ordinary panels use the large radius. Small menu items use the small radius. Chart cards use the installed extra-large utility, which currently resolves to the same corner size as ordinary panels. Dialog panels override their local radius to the shared dialog value. Badges, state dots, avatar initials, progress tracks, and switches use fully rounded ends. Thin borders and dividers establish alignment without decorative frames.
 
 Icons are SVG line icons, normally (16px) in controls, (18px) in rail navigation, and (32px) in empty states. The MCM mark is a simple outlined box. No shipping raster asset was added; existing remote player avatars remain user data and keep their existing behavior.
 
@@ -424,6 +436,8 @@ Default buttons are (40px) high with (16px) horizontal padding. Small buttons ar
 Inputs are (40px) high, full width, with a card fill, input stroke, medium corners, and (12px) horizontal padding. Textareas begin at (100px) high. Focus changes the border to primary and adds a tinted ring. Disabled inputs use muted fill and (60%) opacity. Labels are explicitly associated with their fields. Below (768px), non-checkbox/radio inputs and textareas use (16px) text to keep mobile entry readable.
 
 The shared custom Select replaces visible native select fields across the application. Its trigger follows the select token mapping, with an input stroke, a muted (16px) chevron, and single-line selected text that truncates. Hover strengthens the stroke; focus and the open state use the primary border and tinted ring with (150ms) feedback. Disabled triggers use muted fill and (45%) opacity. The listbox follows the select-menu mapping, one-pixel border, and medium menu shadow. Items have a minimum height of (36px), wrapped labels, an accent highlighted state, and a trailing selected checkmark; disabled items remain unavailable. Groups retain labels and long lists expose scroll buttons.
+
+The Select trigger remains (14px) on mobile: it is a button and does not receive the global text-entry size override.
 
 Select supports keyboard navigation and typeahead. It preserves option values as strings, named form fields, required state, and disabled choices; numeric consumers convert values explicitly. An empty option supplies the placeholder. The menu is portaled above dialogs at layer (150), offset (4px), and kept inside a (12px) viewport gutter. Its width is at least the trigger width and at most the viewport minus (24px); height is bounded by (320px) and available space. Escape closes the listbox first and returns focus to its trigger. Existing action menus retain their separate menu pattern.
 
@@ -461,6 +475,22 @@ The dashboard places Host resources between the fleet summary and server collect
 
 Resource cells share dividers and tabular values. Console output uses the console token pair, (16px) padding, a (384px) normal height, a (320px) minimum height, and a (420px) height from the small breakpoint. Progress bars expose progress semantics, use labeled percentages when determinate, and animate value changes over (300ms, ease-out); indeterminate states use a pulse. Keep real state and progress supplied by the existing implementation.
 
+Progress tracks have fully rounded ends, a subdued secondary fill, a quiet border, and four heights (6px, 8px, 10px, 14px). Labels and percentage readings sit above the track. Resource meters use a thinner (4px) muted track and primary fill, switching to destructive above (90%). Skeletons use the muted surface and medium corners. Skeletons and indeterminate progress use the installed two-second pulse; reduced motion shortens it to one near-instant iteration.
+
+### Historical Charts
+
+Charts continue the flat card system with (20px) padding, a compact heading, and a tabular value aligned across the caption. The plot is (160px) high with a (48px) vertical-label column. Primary-colored lines use a (2px) stroke, quiet border-colored grid lines, and muted dashed reference lines. Missing samples break the line; unavailable values appear as an em dash and empty plots state that no readings are available.
+
+Inspection shares the selected timestamp across the chart group. Pointer movement selects the nearest sample; Left, Right, Home, and End support keyboard inspection; Escape or blur clears it. A dashed cursor and point marker indicate the selection, and accessible chart labels include the selected reading. Do not turn gaps into zeroes or interpolate across unavailable intervals. Individual chart arrangement and collection settings remain surface concerns.
+
+### Saved Logs and Structured Editors
+
+Saved logs reuse the dark console pair with line numbers, mono text, and a focusable scroll region (448px high). Search, optional line wrapping, and pagination sit outside the output. Line numbers remain visually separate from selectable output. Truncated previews and empty, filtered, loading, and failed states use explicit text; a preview must identify the scope of its search.
+
+The structured NBT editor pairs a scrollable tag browser with a labeled detail form inside one divided card. The browser is capped at (512px) high, uses compact mono identifiers, and highlights the current entry with the accent pair. Expand/collapse controls expose their state; search results show a count and offer more results in bounded batches. Detail fields reuse the shared input, select, and textarea primitives.
+
+Editor toolbars wrap, preserve file identity, and show unsaved, read-only, validation, save, and conflict states in text. Read-only or busy forms disable their controls; a save conflict retains edits and offers reload. Success messages use the accent surface, while failures use destructive borders or text with alert semantics. These treatments also apply to the surrounding file and player-data browsers; the exact workflow belongs in its surface brief.
+
 ## Do's and Don'ts
 
 ### Do:
@@ -479,4 +509,4 @@ Resource cells share dividers and tabular values. Console output uses the consol
 - **Don't** substitute low-contrast white-on-amber or white-on-emerald labels for the shared selected-state pair.
 - **Don't** add decorative raster imagery or ambient panel shadows to this system.
 
-Not canonized: no unresolved defect was identified by the final ship verdict. The earlier clipped dependency actions, unreadable mobile file identity, and low-contrast solid labels were corrected and are not retained as system patterns. Sidecar tonal ramps are synthesized swatch previews, not additional runtime colors.
+Sidecar tonal ramps are synthesized swatch previews, not additional runtime colors. Component previews illustrate the current primitives; data shown in those snippets is sample content.

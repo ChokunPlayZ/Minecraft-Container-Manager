@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Database,
   Crown,
   Gavel,
   LayoutGrid,
@@ -43,6 +44,8 @@ import {
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
+import { PlayerDataPanel } from './player-data-panel';
+import { useModal } from './ui/modal';
 
 interface ActionDef {
   action: PlayerCommandAction;
@@ -93,8 +96,16 @@ interface ActiveCommand {
   action: PlayerCommandAction;
 }
 
-export function PlayersPanel({ server }: { server: Server }) {
-  const [subTab, setSubTab] = useState<'online' | 'ops' | 'whitelist'>('online');
+export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onNBTDirtyChange?: (dirty: boolean) => void }) {
+  const [subTab, setSubTab] = useState<'online' | 'ops' | 'whitelist' | 'data'>('online');
+  const [nbtDirty, setNBTDirty] = useState(false);
+  const { confirm: confirmNBT, dialog: nbtDialog } = useModal();
+  const onDirtyChange = useCallback((dirty: boolean) => { setNBTDirty(dirty); onNBTDirtyChange?.(dirty); }, [onNBTDirtyChange]);
+  async function switchSubTab(next: typeof subTab) {
+    if (next === subTab) return;
+    if (nbtDirty && !(await confirmNBT('Discard unsaved NBT changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
+    setSubTab(next);
+  }
   const [players, setPlayers] = useState<Player[]>([]);
   const [ops, setOps] = useState<Op[]>([]);
   const [source, setSource] = useState<'rcon' | 'console'>('console');
@@ -238,12 +249,13 @@ export function PlayersPanel({ server }: { server: Server }) {
 
   return (
     <div className="space-y-4">
+      {nbtDialog}
       {/* Sub-tabs bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
         <div className="inline-flex max-w-full flex-wrap gap-1 rounded-lg border bg-card p-1">
           <button aria-pressed={subTab === 'online'}
             type="button"
-            onClick={() => setSubTab('online')}
+            onClick={() => void switchSubTab('online')}
             className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
               subTab === 'online'
                 ? 'bg-accent text-accent-foreground'
@@ -259,7 +271,7 @@ export function PlayersPanel({ server }: { server: Server }) {
 
           <button aria-pressed={subTab === 'ops'}
             type="button"
-            onClick={() => setSubTab('ops')}
+            onClick={() => void switchSubTab('ops')}
             className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
               subTab === 'ops'
                 ? 'bg-accent text-accent-foreground'
@@ -277,7 +289,7 @@ export function PlayersPanel({ server }: { server: Server }) {
 
           <button aria-pressed={subTab === 'whitelist'}
             type="button"
-            onClick={() => setSubTab('whitelist')}
+            onClick={() => void switchSubTab('whitelist')}
             className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
               subTab === 'whitelist'
                 ? 'bg-accent text-accent-foreground'
@@ -286,6 +298,10 @@ export function PlayersPanel({ server }: { server: Server }) {
           >
             <ShieldCheck className="h-4 w-4" />
             <span>Whitelist</span>
+          </button>
+          <button type="button" aria-pressed={subTab === 'data'} onClick={() => void switchSubTab('data')}
+            className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${subTab === 'data' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'}`}>
+            <Database className="h-4 w-4" /><span>Player data</span>
           </button>
         </div>
 
@@ -340,6 +356,7 @@ export function PlayersPanel({ server }: { server: Server }) {
       )}
 
       {/* Sub-tab content: Ops */}
+      {subTab === 'data' && <PlayerDataPanel serverId={server.id} state={server.state} onDirtyChange={onDirtyChange} />}
       {subTab === 'ops' && <OpsPanel server={server} refreshKey={server.state} />}
 
       {/* Sub-tab content: Whitelist */}

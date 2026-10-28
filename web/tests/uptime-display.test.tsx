@@ -12,6 +12,7 @@ vi.mock('@tanstack/react-router', () => ({
   }),
   Link: ({ children, ...props }: any) => <a {...props}>{children}</a>,
   useNavigate: () => vi.fn(),
+  useBlocker: () => ({}),
 }));
 
 vi.mock('../src/components/require-auth', () => ({

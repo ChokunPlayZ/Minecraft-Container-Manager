@@ -163,6 +163,7 @@ func (s *Server) routes() {
 
 	// Server management (players, ops, mods/plugins).
 	s.mux.HandleFunc("GET /api/servers/{id}/players", s.requireAuth(s.wrapJSON(s.handleListPlayers)))
+	s.mux.HandleFunc("GET /api/servers/{id}/players/data", s.requireAuth(s.wrapJSON(s.handleListPlayerData)))
 	s.mux.HandleFunc("POST /api/servers/{id}/players/{name}/command", s.requireAuth(s.wrapJSON(s.handleRunPlayerCommand)))
 	s.mux.HandleFunc("GET /api/servers/{id}/ops", s.requireAuth(s.wrapJSON(s.handleListOps)))
 	s.mux.HandleFunc("POST /api/servers/{id}/ops", s.requireAuth(s.wrapJSON(s.handleAddOP)))
@@ -227,6 +228,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/servers/{id}/files", s.requireAuth(s.wrapJSON(s.handleListFiles)))
 	s.mux.HandleFunc("GET /api/servers/{id}/files/download", s.requireAuth(s.handleDownloadFile))
 	s.mux.HandleFunc("GET /api/servers/{id}/files/content", s.requireAuth(s.wrapJSON(s.handleReadFileContent)))
+	s.mux.HandleFunc("GET /api/servers/{id}/files/nbt", s.requireAuth(s.wrapJSON(s.handleReadNBT)))
+	s.mux.HandleFunc("PUT /api/servers/{id}/files/nbt", s.requireAuth(s.wrapJSON(s.handleWriteNBT)))
 	s.mux.HandleFunc("PUT /api/servers/{id}/files/content", s.requireAuth(s.wrapJSON(s.handleWriteFileContent)))
 	s.mux.HandleFunc("POST /api/servers/{id}/files/upload", s.requireAuth(s.wrapJSON(s.handleUploadFile)))
 	s.mux.HandleFunc("POST /api/servers/{id}/files/archive", s.requireAuth(s.wrapJSON(s.handleArchiveFile)))

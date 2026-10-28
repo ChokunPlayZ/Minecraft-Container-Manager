@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Link, useBlocker, useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
@@ -83,6 +83,17 @@ export function ServerDetailRoute() {
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [copyDialogOpen, setCopyDialogOpen] = useState(false);
   const { confirm, dialog } = useModal();
+  const [nbtDirty, setNBTDirty] = useState(false);
+  useBlocker({
+    shouldBlockFn: async () => nbtDirty && !(await confirm('Discard unsaved NBT changes before leaving this server?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true })),
+    enableBeforeUnload: false,
+  });
+  async function switchTab(next: ServerTab) {
+    if (next === tab) return;
+    if (nbtDirty && !(await confirm('Discard unsaved NBT changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
+    setNBTDirty(false);
+    setTab(next);
+  }
 
   const [dnsAddress, setDnsAddress] = useState<string>('');
   const [copiedDns, setCopiedDns] = useState(false);
@@ -509,8 +520,8 @@ export function ServerDetailRoute() {
                 <p className="text-xs text-muted-foreground">Checked {updateResult?.checked_at ? new Date(updateResult.checked_at).toLocaleString() : ''}. Review compatibility before applying updates.</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {updateResult?.software?.available && <Button variant="outline" size="sm" onClick={() => setTab('settings')}>Review software</Button>}
-                {!!Object.keys(updateResult?.mods?.updates ?? {}).length && <Button variant="outline" size="sm" onClick={() => setTab('mods')}>Review plugins / mods</Button>}
+                {updateResult?.software?.available && <Button variant="outline" size="sm" onClick={() => void switchTab('settings')}>Review software</Button>}
+                {!!Object.keys(updateResult?.mods?.updates ?? {}).length && <Button variant="outline" size="sm" onClick={() => void switchTab('mods')}>Review plugins / mods</Button>}
               </div>
             </div>
             {updateResult?.error && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Some checks failed. Showing last known updates.</p>}
@@ -580,7 +591,7 @@ export function ServerDetailRoute() {
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setTab(t.id)}
+                  onClick={() => void switchTab(t.id)}
                   role="tab"
                   aria-selected={isSelected}
                   id={`server-tab-${t.id}`}
@@ -591,7 +602,7 @@ export function ServerDetailRoute() {
                     const next = event.key === 'ArrowRight' ? (index + 1) % TABS.length : event.key === 'ArrowLeft' ? (index - 1 + TABS.length) % TABS.length : event.key === 'Home' ? 0 : event.key === 'End' ? TABS.length - 1 : -1;
                     if (next < 0) return;
                     event.preventDefault();
-                    setTab(TABS[next].id);
+                    void switchTab(TABS[next].id);
                     document.getElementById(`server-tab-${TABS[next].id}`)?.focus();
                   }}
                   className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
@@ -621,11 +632,11 @@ export function ServerDetailRoute() {
           )}
 
           {effectiveTab === 'players' && (
-            <PlayersPanel server={server} />
+            <PlayersPanel server={{ ...server, state }} onNBTDirtyChange={setNBTDirty} />
           )}
 
           {effectiveTab === 'files' && (
-            <FileManager server={server} />
+            <FileManager server={{ ...server, state }} onNBTDirtyChange={setNBTDirty} />
           )}
 
           {effectiveTab === 'mods' && (
