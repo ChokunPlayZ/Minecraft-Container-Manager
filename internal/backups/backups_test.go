@@ -20,6 +20,9 @@ func openTestStore(t *testing.T) (*Store, *db.Store) {
 	}
 	t.Cleanup(func() { handle.Close() })
 	s := New(handle.DB, S3Config{}, t.TempDir())
+	for _, id := range []string{"srv-local-test", "srv-prog-test", "server"} {
+		seedBackupServer(t, s, id)
+	}
 	return s, handle
 }
 
@@ -270,7 +273,7 @@ func TestBackupProgressAndUpload(t *testing.T) {
 	}
 
 	// Test UploadBackup
-	uploadContent := "test-uploaded-tar-content"
+	uploadContent := string(validBackupBytes(t, s, serverID))
 	upBackup, err := s.UploadBackup(ctx, serverID, "manual-upload", strings.NewReader(uploadContent), int64(len(uploadContent)), "local")
 	if err != nil {
 		t.Fatalf("UploadBackup: %v", err)
@@ -285,4 +288,24 @@ func TestBackupProgressAndUpload(t *testing.T) {
 	}
 }
 
-
+func seedBackupServer(t *testing.T, s *Store, id string) {
+	t.Helper()
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO servers(id,name,server_type,version,ram_mb,host_port,state,created_at,updated_at) VALUES(?,?,'custom','custom',1024,0,'stopped','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, id, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+func validBackupBytes(t *testing.T, s *Store, id string) []byte {
+	t.Helper()
+	seedBackupServer(t, s, id)
+	file, err := s.archiveWorld(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(file)
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}

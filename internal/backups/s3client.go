@@ -1,15 +1,16 @@
 package backups
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/mcm-panel/mcm/internal/storage"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -33,7 +34,7 @@ func newS3Client(cfg S3Config) *s3Client {
 		region:     cfg.Region,
 		accessKey:  cfg.AccessKey,
 		secretKey:  cfg.SecretKey,
-		httpClient: &http.Client{Timeout: 0},
+		httpClient: &http.Client{Timeout: 30 * time.Minute},
 	}
 }
 
@@ -45,19 +46,47 @@ func (c *s3Client) objectURL(key string) string {
 	return u.String()
 }
 
-// putObject uploads body to key. It chunks the reader when the store supports
-// streaming writes by reading the whole payload into memory for simplicity.
-func (c *s3Client) putObject(ctx context.Context, key string, body io.Reader) error {
-	data, err := io.ReadAll(body)
-	if err != nil {
-		return fmt.Errorf("read upload body: %w", err)
+// putObject signs a bounded-memory stream with a precomputed payload hash.
+func (c *s3Client) putObject(ctx context.Context, key string, body io.Reader, progress ...func(int)) error {
+	source, ok := body.(io.ReadSeeker)
+	if !ok {
+		f, err := os.CreateTemp("", "mcm-s3-upload-*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(f.Name())
+		defer f.Close()
+		if _, err = storage.Copy(ctx, f, body, storage.MaxArchiveBytes); err != nil {
+			return err
+		}
+		if _, err = f.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		source = f
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.objectURL(key), bytes.NewReader(data))
+	start, err := source.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}
+	hash := sha256.New()
+	size, err := storage.Copy(ctx, hash, source, storage.MaxArchiveBytes)
+	if err != nil {
+		return err
+	}
+	if _, err = source.Seek(start, io.SeekStart); err != nil {
+		return err
+	}
+	var upload io.Reader = source
+	if len(progress) > 0 {
+		upload = &countingReader{r: source, onRead: progress[0]}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.objectURL(key), io.NopCloser(upload))
+	if err != nil {
+		return err
+	}
+	req.ContentLength = size
 	req.Header.Set("Content-Type", "application/octet-stream")
-	c.sign(req, sha256Bytes(data))
+	c.sign(req, hash.Sum(nil))
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload object: %w", err)

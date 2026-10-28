@@ -259,7 +259,7 @@ export function BackupsPanel({ server }: { server: Server }) {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".tar.gz,.zip"
+                accept=".tar.gz"
                 aria-label="Upload backup archive"
                 disabled={disabled}
                 className="hidden"
@@ -345,7 +345,7 @@ export function BackupsPanel({ server }: { server: Server }) {
 
           <div className="space-y-2">
             {loading ? <div className="space-y-3 py-4" aria-label="Loading backups"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : !loadError && backups.length === 0 && (
-              <div className="empty-state"><Archive /><h3 className="section-heading">No backups yet</h3><p>Create a backup or upload a .tar.gz or .zip archive for this server.</p></div>
+              <div className="empty-state"><Archive /><h3 className="section-heading">No backups yet</h3><p>Create a backup or upload a .tar.gz archive for this server.</p></div>
             )}
             {backups.length > 0 && visibleBackups.length === 0 && <div className="empty-state"><Search /><h3 className="section-heading">No matching backups</h3><p>Try another name or storage target.</p><Button variant="outline" className="mt-5" onClick={() => { setQuery(''); setLocationFilter('all'); }}>Reset filters</Button></div>}
             {visibleBackups.map((b) => {

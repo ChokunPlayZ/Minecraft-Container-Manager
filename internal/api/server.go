@@ -84,6 +84,9 @@ func New(opts Options) http.Handler {
 	if opts.Notifications == nil && opts.DB != nil {
 		opts.Notifications = notifications.New(opts.DB.DB, opts.Logger)
 	}
+	if opts.Servers != nil && opts.Backups != nil {
+		opts.Backups.SetDataCoordinator(opts.Servers.WithStoppedData)
+	}
 	px := proxy.NewService()
 	if opts.Servers != nil {
 		opts.Servers.SetProxy(px)

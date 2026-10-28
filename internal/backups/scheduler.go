@@ -17,10 +17,12 @@ type Scheduler struct {
 	log   *log.Logger
 	every time.Duration
 
-	cancel context.CancelFunc
-	done   chan struct{}
-	mu     sync.Mutex
-	last   map[string]time.Time
+	cancel  context.CancelFunc
+	done    chan struct{}
+	mu      sync.Mutex
+	last    map[string]time.Time
+	running map[string]bool
+	jobs    sync.WaitGroup
 }
 
 // NewScheduler builds a backup scheduler. every is the poll cadence; a zero or
@@ -30,11 +32,12 @@ func NewScheduler(store *Store, db *sql.DB, logger *log.Logger, every time.Durat
 		logger = log.Default()
 	}
 	return &Scheduler{
-		store: store,
-		db:    db,
-		log:   logger,
-		every: every,
-		last:  map[string]time.Time{},
+		store:   store,
+		db:      db,
+		log:     logger,
+		every:   every,
+		last:    map[string]time.Time{},
+		running: map[string]bool{},
 	}
 }
 
@@ -56,6 +59,7 @@ func (s *Scheduler) Stop() {
 	}
 	s.cancel()
 	<-s.done
+	s.jobs.Wait()
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
@@ -76,7 +80,7 @@ func (s *Scheduler) loop(ctx context.Context) {
 
 func (s *Scheduler) tick(ctx context.Context) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, backup_enabled, backup_interval_minutes FROM servers WHERE backup_enabled = 1`)
+		`SELECT id, backup_enabled, backup_interval_minutes, COALESCE((SELECT MAX(created_at) FROM backups WHERE server_id=servers.id AND status='completed'),servers.created_at) FROM servers WHERE backup_enabled = 1`)
 	if err != nil {
 		s.log.Printf("backup scheduler: query servers: %v", err)
 		return
@@ -84,20 +88,23 @@ func (s *Scheduler) tick(ctx context.Context) {
 	defer rows.Close()
 
 	type srv struct {
-		id       string
-		interval int
+		id          string
+		interval    int
+		lastSuccess time.Time
 	}
 	var servers []srv
 	for rows.Next() {
-		var id string
+		var id, rawLast string
 		var enabled, interval int
-		if err := rows.Scan(&id, &enabled, &interval); err != nil {
+		if err := rows.Scan(&id, &enabled, &interval, &rawLast); err != nil {
 			s.log.Printf("backup scheduler: scan server: %v", err)
 			return
 		}
-		servers = append(servers, srv{id: id, interval: interval})
+		lastSuccess, _ := time.Parse(time.RFC3339, rawLast)
+		servers = append(servers, srv{id: id, interval: interval, lastSuccess: lastSuccess})
 	}
 
+	rows.Close()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -106,21 +113,25 @@ func (s *Scheduler) tick(ctx context.Context) {
 		if interval <= 0 {
 			interval = 12 * time.Hour
 		}
-		last, ok := s.last[sr.id]
-		if !ok {
-			// Never tracked in this process; record it so the first backup is
-			// not fired immediately on startup unless truly overdue.
-			s.last[sr.id] = now
+
+		if s.running[sr.id] || now.Sub(sr.lastSuccess) < interval {
 			continue
 		}
-		if now.Sub(last) < interval {
+		// Failures retry after a short backoff, independently of the regular interval.
+		if last, ok := s.last[sr.id]; ok && now.Sub(last) < time.Minute {
 			continue
 		}
 		s.last[sr.id] = now
-		go func(ctx context.Context, id string) {
-			if _, err := s.store.Backup(ctx, id, ""); err != nil {
+		s.running[sr.id] = true
+		s.jobs.Add(1)
+		go func(id string) {
+			defer s.jobs.Done()
+			defer func() { s.mu.Lock(); delete(s.running, id); s.mu.Unlock() }()
+			jobCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+			defer cancel()
+			if _, err := s.store.Backup(jobCtx, id, ""); err != nil {
 				s.log.Printf("backup scheduler: server %s: %v", id, err)
 			}
-		}(context.WithoutCancel(ctx), sr.id)
+		}(sr.id)
 	}
 }

@@ -106,7 +106,8 @@ func (s *Server) handleUploadBackup(w http.ResponseWriter, r *http.Request) {
 		s.writeServerErr(w, err)
 		return
 	}
-	if err := r.ParseMultipartForm(512 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, (2<<30)+(1<<20))
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse upload")
 		return
 	}
@@ -152,6 +153,15 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 		s.writeServerErr(w, err)
 		return
 	}
+	backup, err := s.backups.Get(r.Context(), r.PathValue("backupId"))
+	if err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	if backup.ServerID != id {
+		writeError(w, http.StatusBadRequest, "backup_server_mismatch", "backup belongs to a different server")
+		return
+	}
 	if err := s.backups.Restore(context.WithoutCancel(r.Context()), r.PathValue("backupId")); err != nil {
 		s.writeBackupErr(w, err)
 		return
@@ -192,10 +202,11 @@ func (s *Server) writeBackupErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "backup not found")
 	case errors.Is(err, backups.ErrNotConfigured):
 		writeError(w, http.StatusServiceUnavailable, "backup_not_configured", "S3 backup storage is not configured")
+	case errors.Is(err, servers.ErrWorldBusy), errors.Is(err, servers.ErrNBTBusy):
+		writeError(w, http.StatusConflict, "server_busy", err.Error())
 	case errors.Is(err, servers.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "server not found")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
 }
-

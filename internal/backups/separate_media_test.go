@@ -14,6 +14,7 @@ import (
 
 func writeTestWorld(t *testing.T, s *Store, serverID, content string) string {
 	t.Helper()
+	seedBackupServer(t, s, serverID)
 	path := filepath.Join(s.serverDataDir(serverID), "world", "level.dat")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -187,7 +188,8 @@ func TestBackupMediaFailureDoesNotWriteToDataDisk(t *testing.T) {
 func TestFailedLocalDeletePreservesBackupRecord(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
-	b, err := s.UploadBackup(ctx, "server", "archive", strings.NewReader("archive"), 7, "local")
+	payload := validBackupBytes(t, s, "server")
+	b, err := s.UploadBackup(ctx, "server", "archive", bytes.NewReader(payload), int64(len(payload)), "local")
 	if err != nil {
 		t.Fatal(err)
 	}

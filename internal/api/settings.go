@@ -45,6 +45,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "use the update checker settings endpoint")
 		return
 	}
+	if value, ok := body.Settings["backup_storage_type"]; ok && value != "local" && value != "s3" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "backup storage must be local or s3")
+		return
+	}
 	tx, err := s.db.DB.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "could not update settings")
