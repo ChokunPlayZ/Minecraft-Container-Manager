@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -99,11 +102,9 @@ func main() {
 	backupStore.SetDataCoordinator(serverStore.WithStoppedData)
 	backupScheduler := backups.NewScheduler(backupStore, handle.DB, logger, 1*time.Minute)
 	backupScheduler.Start()
-	defer backupScheduler.Stop()
 	scheduleStore := schedules.NewStore(handle.DB)
 	taskScheduler := schedules.NewScheduler(scheduleStore, serverStore.ExecuteScheduledTask, logger)
 	taskScheduler.Start()
-	defer taskScheduler.Stop()
 
 	handler := api.New(api.Options{
 		Cfg:           cfg,
@@ -122,23 +123,50 @@ func main() {
 		PanelUpdates:  panelupdate.New(),
 	})
 
+	server := &http.Server{Addr: cfg.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	serving := make(chan error, 1)
 	if !cfg.HTTPOnly {
 		tlsConfig, err := tlsconfig.Load(cfg)
 		if err != nil {
 			logger.Fatalf("configure HTTPS: %v", err)
 		}
-		if cfg.TLSCert == "" {
-			logger.Printf("using self-signed TLS certificate in %s/tls; trust cert.pem in your browser or provide MCM_TLS_CERT and MCM_TLS_KEY", cfg.DataDir)
-		}
+		server.TLSConfig = tlsConfig
 		logger.Printf("listening on https://%s (data dir %s)", cfg.Addr, cfg.DataDir)
-		server := &http.Server{Addr: cfg.Addr, Handler: handler, TLSConfig: tlsConfig}
-		if err := tlsconfig.ListenAndServe(server, cfg.TLSRedirect); err != nil && err != http.ErrServerClosed {
+		go func() { serving <- tlsconfig.ListenAndServe(server, cfg.TLSRedirect) }()
+	} else {
+		logger.Printf("listening on http://%s (data dir %s)", cfg.Addr, cfg.DataDir)
+		go func() { serving <- server.ListenAndServe() }()
+	}
+	select {
+	case err := <-serving:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("server exited: %v", err)
 		}
-		return
-	}
-	logger.Printf("listening on http://%s (data dir %s)", cfg.Addr, cfg.DataDir)
-	if err := http.ListenAndServe(cfg.Addr, handler); err != nil && err != http.ErrServerClosed {
-		logger.Fatalf("server exited: %v", err)
+	case <-signalCtx.Done():
+		logger.Println("shutting down; draining active requests")
+		stopPerformance()
+		stopNotifications()
+		drainCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		workersDone := make(chan struct{})
+		go func() {
+			backupScheduler.Stop()
+			taskScheduler.Stop()
+			_ = serverStore.WaitProvisioning(drainCtx)
+			close(workersDone)
+		}()
+
+		if err := server.Shutdown(drainCtx); err != nil {
+			logger.Printf("shutdown: %v", err)
+			server.Close()
+		}
+		select {
+		case <-workersDone:
+		case <-drainCtx.Done():
+			logger.Println("worker shutdown deadline reached")
+		}
+
 	}
 }
