@@ -238,7 +238,7 @@ func (m *Manager) Start(ctx context.Context, expected string) (Status, error) {
 	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
 		args = append(args, "--setenv=XDG_CONFIG_HOME="+base)
 	}
-	args = append(args, "--", m.executable, "--update-worker", m.directory, m.helper)
+	args = append(args, "--", m.executable, "--update-worker", m.directory, m.helper, expected)
 	if _, err := m.run(ctx, "systemd-run", args...); err != nil {
 		now := time.Now().UTC()
 		job.State, job.FinishedAt, job.Message = "failed", &now, "Could not start the update service: "+err.Error()
@@ -289,7 +289,10 @@ func logTail(name string) (string, error) {
 
 // RunWorker is invoked by systemd independently of the panel service, so stopping
 // mcm.service during update does not kill the build or its result reporting.
-func RunWorker(directory, helper string) error {
+func RunWorker(directory, helper, expected string) error {
+	if len(expected) != 40 || strings.Trim(expected, "0123456789abcdef") != "" {
+		return errors.New("invalid approved commit")
+	}
 	job := Job{State: "running", StartedAt: time.Now().UTC(), Message: "Building the panel. The panel will restart when the build is ready."}
 	if err := saveJob(directory, job); err != nil {
 		return err
@@ -299,9 +302,9 @@ func RunWorker(directory, helper string) error {
 		return err
 	}
 	defer log.Close()
-	cmd := exec.Command(helper, "update")
+	cmd := exec.Command(helper, "update", "--commit", expected)
 	cmd.Stdout, cmd.Stderr = log, log
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -oBatchMode=yes -oConnectTimeout=10")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -oBatchMode=yes -oConnectTimeout=10", "MCM_UPDATE_COMMIT="+expected)
 	err = cmd.Run()
 	now := time.Now().UTC()
 	job.FinishedAt = &now

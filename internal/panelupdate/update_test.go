@@ -63,7 +63,7 @@ func TestCheckAndDetachedLaunch(t *testing.T) {
 			launch = call
 		}
 	}
-	if len(launch) == 0 || strings.Join(launch[len(launch)-4:], "|") != "/bin with spaces/mcm|--update-worker|"+m.directory+"|/bin with spaces/mcmctl" {
+	if len(launch) == 0 || strings.Join(launch[len(launch)-5:], "|") != "/bin with spaces/mcm|--update-worker|"+m.directory+"|/bin with spaces/mcmctl|"+"1234567890abcdef1234567890abcdef12345678" {
 		t.Fatalf("worker arguments: %q", launch)
 	}
 	if _, err := m.Start(context.Background(), testCommit); !errors.Is(err, ErrConflict) {
@@ -153,7 +153,7 @@ func TestWorkerPersistsSuccessAndFailure(t *testing.T) {
 			if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
-			err := RunWorker(dir, helper)
+			err := RunWorker(dir, helper, strings.Repeat("a", 40))
 			if (err != nil) != fail {
 				t.Fatalf("worker: %v", err)
 			}

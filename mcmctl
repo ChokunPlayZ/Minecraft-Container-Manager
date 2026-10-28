@@ -416,10 +416,8 @@ FIELDS
     while IFS='|' read -r key label; do
         value=$(setting "$key")
         if [[ -n "$value" ]]; then value='<saved; hidden>'; else value='<unset>'; fi
-        [[ "$key" != MCM_SESSION_SECRET || "$value" != '<unset>' ]] || value='<generated automatically>'
         printf '  %s: %s\n' "$label" "$value"
     done <<'SECRETS'
-MCM_SESSION_SECRET|Session signing secret
 MCM_S3_ACCESS_KEY|S3 access key
 MCM_S3_SECRET_KEY|S3 secret key
 CURSEFORGE_API_KEY|CurseForge API key
@@ -522,7 +520,7 @@ ensure_runtime_image() {
 }
 
 prepare_config() {
-    local data_dir="$1" port="$2" backup_dir="$3" secret
+    local data_dir="$1" port="$2" backup_dir="$3"
     mkdir -p "$CONFIG_DIR" "$BIN_DIR" "$UNIT_DIR"
     touch "$CONFIG"
     chmod 600 "$CONFIG"
@@ -538,12 +536,6 @@ prepare_config() {
         else
             set_setting MCM_CONTAINER_HOST "${DOCKER_HOST:-unix:///var/run/docker.sock}"
         fi
-    fi
-    secret=$(setting MCM_SESSION_SECRET)
-    if [[ -z "$secret" || "$secret" == change-me-to-a-long-random-string ]]; then
-        secret=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
-        [[ ${#secret} == 64 ]] || die "Could not create a session secret."
-        set_setting MCM_SESSION_SECRET "$secret"
     fi
     check_config_paths
 }
@@ -845,6 +837,15 @@ update_source() {
         die "The source checkout has a detached HEAD. Check out a branch in $SOURCE_DIR, or use mcmctl update --local."
     remote=$(git -C "$SOURCE_DIR" config --get "branch.$branch.remote" || true)
     merge=$(git -C "$SOURCE_DIR" config --get "branch.$branch.merge" || true)
+    if [[ -n "${MCM_UPDATE_COMMIT:-}" ]]; then
+        [[ "$MCM_UPDATE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || die 'Invalid approved update commit.'
+        [[ -n "$remote" && -n "$merge" ]] || die 'Pinned updates require a configured upstream.'
+        git -C "$SOURCE_DIR" fetch "$remote" "$merge"
+        git -C "$SOURCE_DIR" merge-base --is-ancestor "$MCM_UPDATE_COMMIT" FETCH_HEAD || die 'Approved commit is not in the tracked upstream history.'
+        git -C "$SOURCE_DIR" merge --ff-only "$MCM_UPDATE_COMMIT"
+        [[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" == "$MCM_UPDATE_COMMIT" ]] || die 'Checkout differs from approved commit.'
+        return
+    fi
     if [[ -n "$remote" && -n "$merge" ]]; then
         git -C "$SOURCE_DIR" pull --ff-only
     else
@@ -858,8 +859,11 @@ update_source() {
 update_app() {
     local local_build=false command_source
     if (($#)); then
-        [[ $# == 1 && "$1" == --local ]] || die "Usage: mcmctl update [--local]"
-        local_build=true
+        case "$1" in
+            --local) [[ $# == 1 ]] || die 'Usage: mcmctl update [--local|--commit SHA]'; local_build=true ;;
+            --commit) [[ $# == 2 && "$2" =~ ^[0-9a-f]{40}$ ]] || die 'Invalid approved update commit.'; MCM_UPDATE_COMMIT="$2" ;;
+            *) die 'Usage: mcmctl update [--local|--commit SHA]' ;;
+        esac
     fi
     load_state
     command_source=$(command_source_dir) || command_source=""
@@ -875,6 +879,10 @@ update_app() {
     fi
     ensure_runtime_image
     build_app
+    if [[ -n "${MCM_UPDATE_COMMIT:-}" ]]; then
+        [[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" == "$MCM_UPDATE_COMMIT" ]] || die 'Checkout changed during build.'
+        "$STAGING/mcm" --version | tr -d ' ' | grep -Fq "\"commit\":\"$MCM_UPDATE_COMMIT\"" || die 'Built binary differs from approved commit.'
+    fi
     mkdir -p "$CONFIG_DIR/backups"
     systemctl --user stop mcm.service
     if ! snapshot; then

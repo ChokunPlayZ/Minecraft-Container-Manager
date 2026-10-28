@@ -33,11 +33,13 @@ elif name in ('podman', 'docker'):
     if args[0] == 'build':
         if os.environ.get('MCM_TEST_BUILD_FAIL'): sys.exit(1)
         (root / 'built-version').write_text(os.environ.get('MCM_TEST_VERSION', 'one'))
+        commit = next((arg.split('=', 1)[1] for arg in args if arg.startswith('MCM_BUILD_COMMIT=')), 'unknown')
+        (root / 'built-commit').write_text(os.environ.get('MCM_TEST_BUILD_COMMIT', commit))
     elif args[0] == 'create': print('build-container')
     elif args[0] == 'inspect' and os.environ.get('MCM_TEST_PANEL_CONTAINER'): print('true')
     elif args[0] == 'cp':
         if os.environ.get('MCM_TEST_COPY_FAIL'): sys.exit(1)
-        pathlib.Path(args[-1]).write_text('#!/bin/sh\n# version: ' + (root / 'built-version').read_text() + '\n')
+        pathlib.Path(args[-1]).write_text('#!/bin/sh\n# version: ' + (root / 'built-version').read_text() + '\n' + "if [ \"$1\" = --version ]; then echo '" + json.dumps({'commit': (root / 'built-commit').read_text()}) + "'; fi\n")
     elif args[:2] == ['image', 'inspect']:
         sys.exit(0 if (root / 'runtime-image').exists() else 1)
     elif args[0] == 'pull': (root / 'runtime-image').touch()
@@ -260,7 +262,7 @@ class ManagerTests(unittest.TestCase):
 
     def test_guided_config_preserves_unknown_settings_secret_and_saves_backup(self):
         self.run_manager('install')
-        original = self.config.read_text() + '# personal setting\nCUSTOM_SETTING=keep-me\n'
+        original = self.config.read_text() + '# personal setting\nCUSTOM_SETTING=keep-me\nMCM_SESSION_SECRET=legacy-value-preserved\n'
         self.config.write_text(original)
         secret = next(line.split('=', 1)[1] for line in original.splitlines()
                       if line.startswith('MCM_SESSION_SECRET='))
@@ -456,11 +458,30 @@ class ManagerTests(unittest.TestCase):
         self.git(self.writer, 'push', 'origin', 'HEAD')
         return self.git(self.writer, 'rev-parse', 'HEAD')
 
+    def test_pinned_update_installs_approved_commit_even_if_remote_advances(self):
+        self.prepare_real_git(tracking=True)
+        approved = self.advance_remote()
+        (self.writer / 'later-change').write_text('later commit')
+        self.git(self.writer, 'add', 'later-change')
+        self.git(self.writer, 'commit', '-m', 'Advance after approval')
+        self.git(self.writer, 'push', 'origin', 'HEAD')
+        self.run_manager('update', '--commit', approved)
+        self.assertEqual(self.git(self.source, 'rev-parse', 'HEAD'), approved)
+        self.assertNotIn('later-change', [path.name for path in self.source.iterdir()])
+        self.assertIn(approved, self.binary.read_text())
+
+    def test_pinned_update_rejects_a_different_built_binary_before_stopping(self):
+        self.prepare_real_git(tracking=True)
+        approved = self.advance_remote()
+        self.env['MCM_TEST_BUILD_COMMIT'] = 'a' * 40
+        result = self.run_manager('update', '--commit', approved, ok=False)
+        self.assertIn('Built binary differs from approved commit', result.stderr + result.stdout)
+        self.assertTrue((self.root / 'active').exists())
+
     def test_install_creates_config_before_start_and_embeds_frontend(self):
         self.run_manager('install', '--runtime', 'podman')
         config = self.config.read_text()
-        secret = next(line.split('=', 1)[1] for line in config.splitlines() if line.startswith('MCM_SESSION_SECRET='))
-        self.assertRegex(secret, r'^[a-f0-9]{64}$')
+        self.assertNotIn('MCM_SESSION_SECRET=', config)
         self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
         self.assertIn('MCM_CONTAINER_RUNTIME=podman', config)
         self.assertIn('MCM_CONTAINER_HOST=unix://' + self.socket_dir.name, config)

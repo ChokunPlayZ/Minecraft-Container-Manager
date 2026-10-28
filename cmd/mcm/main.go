@@ -32,10 +32,10 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--update-worker" {
-		if len(os.Args) != 4 {
+		if len(os.Args) != 5 {
 			logger.Fatal("invalid update worker arguments")
 		}
-		if err := panelupdate.RunWorker(os.Args[2], os.Args[3]); err != nil {
+		if err := panelupdate.RunWorker(os.Args[2], os.Args[3], os.Args[4]); err != nil {
 			logger.Fatal(err)
 		}
 		return

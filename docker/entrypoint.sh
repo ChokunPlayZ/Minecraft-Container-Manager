@@ -21,7 +21,19 @@ if [ "$(id -u)" = "0" ]; then
         mkdir -p "$MCM_BACKUP_DIR"
         chown -R "${PUID}:${PGID}" "$MCM_BACKUP_DIR"
     fi
-    exec su-exec "${PUID}:${PGID}" /usr/local/bin/mcm "$@"
+    # su-exec sets exactly one group. Use the mounted runtime socket's group
+    # as the process group; PUID still owns the data files prepared above.
+    runtime_gid="$PGID"
+    runtime_endpoint="${MCM_CONTAINER_HOST:-${DOCKER_HOST:-unix:///var/run/docker.sock}}"
+    case "$runtime_endpoint" in
+        unix://*)
+            runtime_socket="${runtime_endpoint#unix://}"
+            if [ -S "$runtime_socket" ]; then
+                runtime_gid=$(stat -c '%g' "$runtime_socket")
+            fi
+            ;;
+    esac
+    exec su-exec "${PUID}:${runtime_gid}" /usr/local/bin/mcm "$@"
 fi
 
 exec /usr/local/bin/mcm "$@"
