@@ -473,6 +473,7 @@ service lifecycle and recovery commands.
 | `MCM_TLS` | `false` | Force Secure cookies when using HTTP behind an HTTPS reverse proxy. Native HTTPS always enables Secure cookies. |
 | `MCM_TLS_CERT` | *(empty)* | Path to TLS certificate (PEM). Without a supplied pair, MCM generates and reuses `$MCM_DATA_DIR/tls/cert.pem` and `key.pem`. |
 | `MCM_TLS_KEY` | *(empty)* | Path to TLS private key (PEM). |
+| `MCM_TLS_REDIRECT` | `false` | Redirect plain HTTP to HTTPS on the same `MCM_ADDR` port (301). Only applies to native HTTPS. |
 | `MCM_LOGIN_MAX_ATTEMPTS` | `5` | Maximum failed login attempts allowed before lockout. |
 | `MCM_LOGIN_LOCKOUT` | `15m` | Lockout duration after exceeding failed login attempts. |
 | `MCM_RATE_LIMIT_MAX` | `100` | Maximum state-changing requests permitted per client per window. |
@@ -507,9 +508,12 @@ Trust `tls/cert.pem` on your client devices to remove the browser warning; keep
 mount those files into the panel and use their container-side paths. Invalid or
 incomplete supplied certificates cause startup to fail.
 
-`MCM_ADDR` controls the only panel listener. Legacy `MCM_TLS_REDIRECT` and
-`MCM_TLS_REDIRECT_ADDR` settings are ignored, including values saved by older
-installations; MCM does not open a separate port-80 listener. For plain HTTP, set
+`MCM_ADDR` controls the only panel listener. Set `MCM_TLS_REDIRECT=true` to redirect
+plain HTTP to HTTPS on that same port. For example, `http://mc.example.com:8080/login`
+redirects to `https://mc.example.com:8080/login`, preserving the path and query.
+The legacy `MCM_TLS_REDIRECT_ADDR` setting is ignored; MCM never opens a separate
+redirect port. With redirects disabled, plain HTTP receives an HTTPS-required
+error. For plain HTTP service, set
 `MCM_HTTP_ONLY=true`; behind an HTTPS reverse proxy, also set `MCM_TLS=true` and
 configure `MCM_WEB_AUTHN_RPID` and `MCM_WEB_AUTHN_RP_ORIGIN` for the public URL.
 

@@ -27,6 +27,7 @@ type Config struct {
 	HTTPOnly         bool
 	TLSCert          string
 	TLSKey           string
+	TLSRedirect      bool
 	LoginMaxAttempts int
 	LoginLockout     time.Duration
 	RateLimitMax     int
@@ -91,6 +92,7 @@ const (
 	EnvHTTPOnly         = "MCM_HTTP_ONLY"
 	EnvTLSCert          = "MCM_TLS_CERT"
 	EnvTLSKey           = "MCM_TLS_KEY"
+	EnvTLSRedirect      = "MCM_TLS_REDIRECT"
 	EnvLoginMaxAttempts = "MCM_LOGIN_MAX_ATTEMPTS"
 	EnvLoginLockout     = "MCM_LOGIN_LOCKOUT"
 	EnvRateLimitMax     = "MCM_RATE_LIMIT_MAX"
@@ -138,6 +140,7 @@ func Load() (*Config, error) {
 		HTTPOnly:         parseBoolEnv(EnvHTTPOnly, false),
 		TLSCert:          getenv(EnvTLSCert, ""),
 		TLSKey:           getenv(EnvTLSKey, ""),
+		TLSRedirect:      parseBoolEnv(EnvTLSRedirect, false),
 		WebAuthn: WebAuthnConfig{
 			RPID:          getenv(EnvWebAuthnRPID, defaultRPID),
 			RPOrigins:     splitOrigins(getenv(EnvWebAuthnOrigin, "")),

@@ -32,8 +32,9 @@ Without supplied certificates, MCM saves a self-signed certificate under
 keep `key.pem` private. The installer verifies HTTPS readiness using that public
 certificate. Existing installs also switch to HTTPS after updating. For a
 TLS-terminating reverse proxy, set `MCM_HTTP_ONLY=true` and `MCM_TLS=true` in the
-managed configuration. MCM only listens on `MCM_ADDR`; legacy `MCM_TLS_REDIRECT`
-and `MCM_TLS_REDIRECT_ADDR` settings are ignored and cannot open an extra port.
+managed configuration. MCM only listens on `MCM_ADDR`. With `MCM_TLS_REDIRECT=true`,
+plain HTTP redirects to HTTPS on that same port. The old `MCM_TLS_REDIRECT_ADDR`
+setting is ignored and cannot open an extra port.
 The host firewall must permit the panel port and any published Minecraft
 ports. Change the panel port during installation if necessary:
 

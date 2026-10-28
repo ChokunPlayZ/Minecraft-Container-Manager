@@ -115,7 +115,7 @@ func main() {
 		}
 		logger.Printf("listening on https://%s (data dir %s)", cfg.Addr, cfg.DataDir)
 		server := &http.Server{Addr: cfg.Addr, Handler: handler, TLSConfig: tlsConfig}
-		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		if err := tlsconfig.ListenAndServe(server, cfg.TLSRedirect); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("server exited: %v", err)
 		}
 		return

@@ -355,3 +355,21 @@ func TestLoadTLSModes(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadTLSRedirect(t *testing.T) {
+	for _, value := range []string{"", "false", "true", "1"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv(EnvTLSRedirect, value)
+			// This legacy setting must not select a second listener.
+			t.Setenv("MCM_TLS_REDIRECT_ADDR", ":80")
+			t.Setenv(EnvAddr, ":9090")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TLSRedirect != (value == "true" || value == "1") || cfg.Addr != ":9090" {
+				t.Fatalf("TLSRedirect/Addr = %v/%q for %q", cfg.TLSRedirect, cfg.Addr, value)
+			}
+		})
+	}
+}

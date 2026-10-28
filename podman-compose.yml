@@ -22,6 +22,7 @@ services:
       MCM_TLS: ${MCM_TLS:-false}
       MCM_TLS_CERT: ${MCM_TLS_CERT:-}
       MCM_TLS_KEY: ${MCM_TLS_KEY:-}
+      MCM_TLS_REDIRECT: ${MCM_TLS_REDIRECT:-false}
       MCM_WEB_AUTHN_RPID: ${MCM_WEB_AUTHN_RPID:-localhost}
       MCM_WEB_AUTHN_RP_ORIGIN: ${MCM_WEB_AUTHN_RP_ORIGIN:-}
       # Root inside rootless containers maps to the host user. Keep both the
