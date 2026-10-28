@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,8 +27,6 @@ type Config struct {
 	HTTPOnly         bool
 	TLSCert          string
 	TLSKey           string
-	TLSRedirect      bool
-	TLSRedirectAddr  string
 	LoginMaxAttempts int
 	LoginLockout     time.Duration
 	RateLimitMax     int
@@ -94,8 +91,6 @@ const (
 	EnvHTTPOnly         = "MCM_HTTP_ONLY"
 	EnvTLSCert          = "MCM_TLS_CERT"
 	EnvTLSKey           = "MCM_TLS_KEY"
-	EnvTLSRedirect      = "MCM_TLS_REDIRECT"
-	EnvTLSRedirectAddr  = "MCM_TLS_REDIRECT_ADDR"
 	EnvLoginMaxAttempts = "MCM_LOGIN_MAX_ATTEMPTS"
 	EnvLoginLockout     = "MCM_LOGIN_LOCKOUT"
 	EnvRateLimitMax     = "MCM_RATE_LIMIT_MAX"
@@ -143,8 +138,6 @@ func Load() (*Config, error) {
 		HTTPOnly:         parseBoolEnv(EnvHTTPOnly, false),
 		TLSCert:          getenv(EnvTLSCert, ""),
 		TLSKey:           getenv(EnvTLSKey, ""),
-		TLSRedirect:      parseBoolEnv(EnvTLSRedirect, false),
-		TLSRedirectAddr:  getenv(EnvTLSRedirectAddr, redirectAddrFor(getenv(EnvAddr, defaultAddr))),
 		WebAuthn: WebAuthnConfig{
 			RPID:          getenv(EnvWebAuthnRPID, defaultRPID),
 			RPOrigins:     splitOrigins(getenv(EnvWebAuthnOrigin, "")),
@@ -314,16 +307,6 @@ func splitOrigins(s string) []string {
 		}
 	}
 	return out
-}
-
-// redirectAddrFor derives the plain-HTTP redirect listen address from a
-// host:port by forcing the port to 80, preserving the host.
-func redirectAddrFor(addr string) string {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return ":80"
-	}
-	return net.JoinHostPort(host, "80")
 }
 
 func defaultOrigin(addr string, https bool) string {

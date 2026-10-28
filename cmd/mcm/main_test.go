@@ -1,23 +1,101 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"net"
 	"net/http"
-	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestHTTPSRedirect(t *testing.T) {
-	for _, tc := range []struct{ addr, request, want string }{
-		{":8080", "http://panel.example.com/servers/one?tab=console", "https://panel.example.com:8080/servers/one?tab=console"},
-		{":8443", "http://panel.example.com:8081/login", "https://panel.example.com:8443/login"},
-		{"[::]:8443", "http://[::1]:8081/login", "https://[::1]:8443/login"},
-	} {
-		t.Run(tc.request, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			httpsRedirect(tc.addr).ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.request, nil))
-			if w.Code != http.StatusMovedPermanently || w.Header().Get("Location") != tc.want {
-				t.Fatalf("redirect = %d %q, want 301 %q", w.Code, w.Header().Get("Location"), tc.want)
+// Run the real entrypoint in a child process so fatal startup errors are
+// caught without terminating the test runner.
+func TestRunMCM(t *testing.T) {
+	if os.Getenv("MCM_TEST_RUN_MAIN") == "1" {
+		main()
+	}
+}
+
+func TestLegacyRedirectUsesOnlyConfiguredPanelPort(t *testing.T) {
+	for _, legacyAddr := range []string{":80", "same as panel"} {
+		t.Run(legacyAddr, func(t *testing.T) {
+			reservation, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
 			}
+			addr := reservation.Addr().String()
+			reservation.Close()
+			if legacyAddr == "same as panel" {
+				legacyAddr = addr
+			}
+			dataDir := t.TempDir()
+			logPath := filepath.Join(dataDir, "mcm.log")
+			log, err := os.Create(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer log.Close()
+			cmd := exec.Command(os.Args[0], "-test.run=^TestRunMCM$")
+			cmd.Env = append(os.Environ(),
+				"MCM_TEST_RUN_MAIN=1", "MCM_ADDR="+addr,
+				"MCM_DATA_DIR="+dataDir, "MCM_DB_PATH="+filepath.Join(dataDir, "mcm.db"),
+				"MCM_CONTAINER_RUNTIME=docker", "MCM_CONTAINER_HOST=unix:///tmp/mcm-port-test-unused.sock",
+				"MCM_SESSION_SECRET=temporary-test-secret", "MCM_HTTP_ONLY=false",
+				"MCM_TLS_CERT=", "MCM_TLS_KEY=", "MCM_TLS_REDIRECT=true", "MCM_TLS_REDIRECT_ADDR="+legacyAddr,
+				"MCM_WEB_AUTHN_RPID=localhost", "MCM_WEB_AUTHN_RP_ORIGIN=", "MCM_PORT_RANGE=25565-25665",
+			)
+			cmd.Stdout, cmd.Stderr = log, log
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan struct{})
+			go func() { cmd.Wait(); close(done) }()
+			defer func() { cmd.Process.Kill(); <-done }()
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+				select {
+				case <-done:
+					output, _ := os.ReadFile(logPath)
+					t.Fatalf("MCM exited instead of serving on %s: %s", addr, output)
+				default:
+				}
+				cert, err := os.ReadFile(filepath.Join(dataDir, "tls", "cert.pem"))
+				if err != nil {
+					continue
+				}
+				roots := x509.NewCertPool()
+				if !roots.AppendCertsFromPEM(cert) {
+					t.Fatal("invalid generated public certificate")
+				}
+				client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}}, Timeout: time.Second}
+				response, err := client.Get("https://" + addr + "/healthz")
+				if err != nil {
+					client.CloseIdleConnections()
+					continue
+				}
+				response.Body.Close()
+				client.CloseIdleConnections()
+				if response.StatusCode != http.StatusOK {
+					t.Fatalf("health response = %d", response.StatusCode)
+				}
+				select {
+				case <-done:
+					output, _ := os.ReadFile(logPath)
+					t.Fatalf("MCM exited after becoming healthy: %s", output)
+				case <-time.After(100 * time.Millisecond):
+				}
+				output, _ := os.ReadFile(logPath)
+				if strings.Contains(string(output), "redirecting HTTP") {
+					t.Fatalf("legacy settings started a second listener: %s", output)
+				}
+				return
+			}
+			output, _ := os.ReadFile(logPath)
+			t.Fatalf("MCM did not serve HTTPS on configured address %s: %s", addr, output)
 		})
 	}
 }

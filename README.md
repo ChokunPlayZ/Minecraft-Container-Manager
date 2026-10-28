@@ -247,7 +247,7 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
   - **WebAuthn / Passkeys**: Hardware security keys (YubiKey), Apple Touch ID / Face ID, and Windows Hello.
 - **Multi-User Administration**: Manage panel user accounts, user creation, password updates, and user deletion.
 - **Hardening**: Built-in double-submit CSRF cookie protection, brute-force login lockout (5 failed attempts / 15 min), and sliding-window rate limiting.
-- **Native TLS Support**: HTTPS by default with a persistent, automatically renewed self-signed certificate when no certificate is supplied, plus an optional HTTP-to-HTTPS redirect.
+- **Native TLS Support**: HTTPS on the configured panel port, with a persistent, automatically renewed self-signed certificate when no certificate is supplied.
 
 ---
 
@@ -473,8 +473,6 @@ service lifecycle and recovery commands.
 | `MCM_TLS` | `false` | Force Secure cookies when using HTTP behind an HTTPS reverse proxy. Native HTTPS always enables Secure cookies. |
 | `MCM_TLS_CERT` | *(empty)* | Path to TLS certificate (PEM). Without a supplied pair, MCM generates and reuses `$MCM_DATA_DIR/tls/cert.pem` and `key.pem`. |
 | `MCM_TLS_KEY` | *(empty)* | Path to TLS private key (PEM). |
-| `MCM_TLS_REDIRECT` | `false` | Opt in to a separate HTTP listener that redirects to the configured HTTPS port (301). Port 80 requires bind permission and, in containers, a published port. |
-| `MCM_TLS_REDIRECT_ADDR` | Derived (`:80`) | Listen address for HTTP-to-HTTPS redirection. |
 | `MCM_LOGIN_MAX_ATTEMPTS` | `5` | Maximum failed login attempts allowed before lockout. |
 | `MCM_LOGIN_LOCKOUT` | `15m` | Lockout duration after exceeding failed login attempts. |
 | `MCM_RATE_LIMIT_MAX` | `100` | Maximum state-changing requests permitted per client per window. |
@@ -509,9 +507,9 @@ Trust `tls/cert.pem` on your client devices to remove the browser warning; keep
 mount those files into the panel and use their container-side paths. Invalid or
 incomplete supplied certificates cause startup to fail.
 
-The optional redirect listener is disabled by default so native rootless installs
-can start without permission to bind port 80. Enable it with `MCM_TLS_REDIRECT=true`
-and choose an accessible `MCM_TLS_REDIRECT_ADDR`. For plain HTTP, explicitly set
+`MCM_ADDR` controls the only panel listener. Legacy `MCM_TLS_REDIRECT` and
+`MCM_TLS_REDIRECT_ADDR` settings are ignored, including values saved by older
+installations; MCM does not open a separate port-80 listener. For plain HTTP, set
 `MCM_HTTP_ONLY=true`; behind an HTTPS reverse proxy, also set `MCM_TLS=true` and
 configure `MCM_WEB_AUTHN_RPID` and `MCM_WEB_AUTHN_RP_ORIGIN` for the public URL.
 

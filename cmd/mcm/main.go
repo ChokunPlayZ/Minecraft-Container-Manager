@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"time"
 
@@ -115,14 +113,6 @@ func main() {
 		if cfg.TLSCert == "" {
 			logger.Printf("using self-signed TLS certificate in %s/tls; trust cert.pem in your browser or provide MCM_TLS_CERT and MCM_TLS_KEY", cfg.DataDir)
 		}
-		if cfg.TLSRedirect {
-			go func() {
-				logger.Printf("redirecting HTTP %s to HTTPS %s", cfg.TLSRedirectAddr, cfg.Addr)
-				if err := http.ListenAndServe(cfg.TLSRedirectAddr, httpsRedirect(cfg.Addr)); err != nil && err != http.ErrServerClosed {
-					logger.Fatalf("http redirect server exited: %v", err)
-				}
-			}()
-		}
 		logger.Printf("listening on https://%s (data dir %s)", cfg.Addr, cfg.DataDir)
 		server := &http.Server{Addr: cfg.Addr, Handler: handler, TLSConfig: tlsConfig}
 		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
@@ -134,18 +124,4 @@ func main() {
 	if err := http.ListenAndServe(cfg.Addr, handler); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server exited: %v", err)
 	}
-}
-
-func httpsRedirect(addr string) http.Handler {
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		port = "443"
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u := *r.URL
-		u.Scheme = "https"
-		host := (&url.URL{Host: r.Host}).Hostname()
-		u.Host = net.JoinHostPort(host, port)
-		http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
-	})
 }

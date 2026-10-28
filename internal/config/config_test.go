@@ -234,8 +234,6 @@ func TestDefaultDBPathUsesDataDir(t *testing.T) {
 func TestLoadHardeningDefaults(t *testing.T) {
 	t.Setenv(EnvTLSCert, "")
 	t.Setenv(EnvTLSKey, "")
-	t.Setenv(EnvTLSRedirect, "")
-	t.Setenv(EnvTLSRedirectAddr, "")
 	t.Setenv(EnvLoginMaxAttempts, "")
 	t.Setenv(EnvLoginLockout, "")
 	t.Setenv(EnvRateLimitMax, "")
@@ -250,12 +248,6 @@ func TestLoadHardeningDefaults(t *testing.T) {
 	}
 	if cfg.TLSCert != "" || cfg.TLSKey != "" {
 		t.Errorf("TLS cert/key should default to empty, got %q / %q", cfg.TLSCert, cfg.TLSKey)
-	}
-	if cfg.TLSRedirect {
-		t.Error("TLSRedirect should default to false for unprivileged installations")
-	}
-	if cfg.TLSRedirectAddr != ":80" {
-		t.Errorf("TLSRedirectAddr = %q, want :80", cfg.TLSRedirectAddr)
 	}
 	if cfg.LoginMaxAttempts != 5 {
 		t.Errorf("LoginMaxAttempts = %d, want 5", cfg.LoginMaxAttempts)
@@ -281,8 +273,6 @@ func TestLoadHardeningOverrides(t *testing.T) {
 	t.Setenv(EnvAddr, ":9090")
 	t.Setenv(EnvTLSCert, "/certs/tls.crt")
 	t.Setenv(EnvTLSKey, "/certs/tls.key")
-	t.Setenv(EnvTLSRedirect, "false")
-	t.Setenv(EnvTLSRedirectAddr, ":7666")
 	t.Setenv(EnvLoginMaxAttempts, "10")
 	t.Setenv(EnvLoginLockout, "2m")
 	t.Setenv(EnvRateLimitMax, "250")
@@ -297,12 +287,6 @@ func TestLoadHardeningOverrides(t *testing.T) {
 	}
 	if cfg.TLSCert != "/certs/tls.crt" || cfg.TLSKey != "/certs/tls.key" {
 		t.Errorf("TLS cert/key = %q / %q", cfg.TLSCert, cfg.TLSKey)
-	}
-	if cfg.TLSRedirect {
-		t.Error("TLSRedirect should be false")
-	}
-	if cfg.TLSRedirectAddr != ":7666" {
-		t.Errorf("TLSRedirectAddr = %q, want :7666", cfg.TLSRedirectAddr)
 	}
 	if cfg.LoginMaxAttempts != 10 {
 		t.Errorf("LoginMaxAttempts = %d, want 10", cfg.LoginMaxAttempts)
@@ -324,21 +308,6 @@ func TestLoadHardeningOverrides(t *testing.T) {
 	}
 	if cfg.ServerImage != "itzg/minecraft-server:latest" {
 		t.Errorf("ServerImage = %q, want itzg/minecraft-server:latest", cfg.ServerImage)
-	}
-}
-
-func TestRedirectAddrFor(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{":8080", ":80"},
-		{"0.0.0.0:8443", "0.0.0.0:80"},
-		{"mc.example.com:443", "mc.example.com:80"},
-	}
-	for _, tc := range cases {
-		if got := redirectAddrFor(tc.in); got != tc.want {
-			t.Errorf("redirectAddrFor(%q) = %q, want %q", tc.in, got, tc.want)
-		}
 	}
 }
 
