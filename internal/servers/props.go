@@ -1,6 +1,7 @@
 package servers
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -96,25 +97,22 @@ func (s *Store) propertiesPath(id string) (string, string, string) {
 // file has not been generated yet (a stopped or never-started server), Exists
 // is false and Content is empty so the UI can still render an editor.
 func (s *Store) GetProperties(id string) (ServerProperties, error) {
-	path, fileName, srvType := s.propertiesPath(id)
-	data, err := os.ReadFile(path)
+	_, fileName, srvType := s.propertiesPath(id)
+	content, err := s.ReadFileContent(id, fileName)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || errors.Is(err, ErrPathNotFound) {
 			return ServerProperties{Content: "", Exists: false, FileName: fileName, ServerType: srvType}, nil
 		}
 		return ServerProperties{FileName: fileName, ServerType: srvType}, err
 	}
-	return ServerProperties{Content: string(data), Exists: true, FileName: fileName, ServerType: srvType}, nil
+	return ServerProperties{Content: content, Exists: true, FileName: fileName, ServerType: srvType}, nil
 }
 
 // SaveProperties writes the full configuration content for a server,
 // creating the data directory and file if they do not exist yet.
 func (s *Store) SaveProperties(id, content string) (ServerProperties, error) {
-	if err := os.MkdirAll(s.dataPath(id), 0o755); err != nil {
-		return ServerProperties{}, err
-	}
-	path, fileName, srvType := s.propertiesPath(id)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	_, fileName, srvType := s.propertiesPath(id)
+	if _, err := s.WriteFileContent(id, fileName, content); err != nil {
 		return ServerProperties{}, err
 	}
 	return ServerProperties{Content: content, Exists: true, FileName: fileName, ServerType: srvType}, nil

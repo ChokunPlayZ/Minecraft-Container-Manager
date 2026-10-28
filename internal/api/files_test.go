@@ -26,6 +26,9 @@ func TestFileContentRevisionAPI(t *testing.T) {
 	}
 	t.Cleanup(func() { database.Close() })
 	store := servers.NewStore(database, nil, nil, 25565, 25575, dir, "")
+	if _, err := database.DB.Exec(`INSERT INTO servers(id,name,server_type,version,ram_mb,host_port,state,created_at,updated_at) VALUES('id','test','custom','custom',1024,0,'stopped','now','now')`); err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{servers: store}
 	if _, err := store.WriteFileContent("id", "config.txt", "opened"); err != nil {
 		t.Fatal(err)

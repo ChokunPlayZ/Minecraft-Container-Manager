@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/mcm-panel/mcm/internal/servers"
+	"github.com/mcm-panel/mcm/internal/storage"
 )
 
 // Normalize a client-supplied relative path by stripping a leading slash so it
@@ -68,7 +69,7 @@ func (s *Server) handleWriteFileContent(w http.ResponseWriter, r *http.Request) 
 		Content          string  `json:"content"`
 		ExpectedRevision *string `json:"expected_revision"`
 	}
-	if err := decodeJSON(w, r, &in); err != nil {
+	if err := decodeJSONLimit(w, r, &in, servers.MaxEditRequestBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
@@ -96,7 +97,8 @@ func (s *Server) handleWriteFileContent(w http.ResponseWriter, r *http.Request) 
 // The multipart request may carry multiple "file" fields, which are all saved
 // into the same destination directory.
 func (s *Server) handleUploadFile(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(256 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, storage.MaxUploadBytes+(1<<20))
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "could not parse upload")
 		return
 	}
@@ -164,7 +166,7 @@ func (s *Server) handleUnzipFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	count, err := s.servers.Unzip(r.PathValue("id"), in.Archive, in.Dest)
+	count, err := s.servers.UnzipContext(r.Context(), r.PathValue("id"), in.Archive, in.Dest)
 	if err != nil {
 		s.writeFileErr(w, r, err)
 		return
@@ -251,9 +253,9 @@ func (s *Server) writeFileErr(w http.ResponseWriter, r *http.Request, err error)
 	switch {
 	case errors.Is(err, servers.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "server not found")
-	case errors.Is(err, servers.ErrInvalidPath):
+	case errors.Is(err, servers.ErrInvalidPath), errors.Is(err, storage.ErrUnsafe):
 		writeError(w, http.StatusBadRequest, "invalid_path", "That path isn't valid.")
-	case errors.Is(err, servers.ErrPathNotFound), errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, servers.ErrNotFound), errors.Is(err, servers.ErrPathNotFound), errors.Is(err, fs.ErrNotExist):
 		writeError(w, http.StatusNotFound, "not_found", "That file or folder doesn't exist.")
 	case errors.Is(err, servers.ErrIsDirectory), errors.Is(err, syscall.EISDIR):
 		writeError(w, http.StatusBadRequest, "is_directory", "That entry is a folder, not a file.")

@@ -1,20 +1,28 @@
 package servers
 
 import (
+	"github.com/mcm-panel/mcm/internal/db"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// minimalStore returns a Store whose data directory is dir. These properties
-// helpers are pure filesystem operations keyed off dataPath, so no DB is needed.
-func minimalStore(dir string) *Store {
-	return &Store{dataDir: dir}
+func minimalStore(t *testing.T, dir string) *Store {
+	t.Helper()
+	handle, err := db.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { handle.Close() })
+	for _, id := range []string{"id", "srv", "abc", "xyz", "some-id"} {
+		insertServer(t, handle, id, 0, "", StateStopped)
+	}
+	return &Store{dataDir: dir, db: handle.DB}
 }
 
 func TestGetPropertiesMissing(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	props, err := s.GetProperties("some-id")
 	if err != nil {
 		t.Fatalf("GetProperties(missing) returned error: %v", err)
@@ -28,7 +36,7 @@ func TestGetPropertiesMissing(t *testing.T) {
 }
 
 func TestSaveThenGetRoundTrip(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	const content = "# Minecraft server properties\nserver-port=25565\nmotd=A cool server\ndifficulty=normal\n"
 
 	saved, err := s.SaveProperties("abc", content)
@@ -59,7 +67,7 @@ func TestSaveThenGetRoundTrip(t *testing.T) {
 
 func TestSaveCreatesParentDir(t *testing.T) {
 	dir := t.TempDir()
-	s := minimalStore(dir)
+	s := minimalStore(t, dir)
 	// dataPath is dir/servers/<id>; its parent dir/servers does not exist yet.
 	if _, err := os.Stat(filepath.Join(dir, "servers")); !os.IsNotExist(err) {
 		t.Fatalf("expected servers dir to not exist yet")

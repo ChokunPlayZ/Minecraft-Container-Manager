@@ -12,7 +12,7 @@ import (
 )
 
 func TestResolvePathTraversal(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	bad := []string{
 		"../",
 		"../secret",
@@ -30,7 +30,7 @@ func TestResolvePathTraversal(t *testing.T) {
 
 func TestResolvePathValid(t *testing.T) {
 	dir := t.TempDir()
-	s := minimalStore(dir)
+	s := minimalStore(t, dir)
 	root := filepath.Join(dir, "servers", "srv")
 	cases := []struct {
 		rel string
@@ -54,7 +54,7 @@ func TestResolvePathValid(t *testing.T) {
 }
 
 func TestListFilesEmptyAndMissing(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	res, err := s.ListFiles("id", "worlds")
 	if err != nil {
 		t.Fatalf("ListFiles(missing) error: %v", err)
@@ -65,7 +65,7 @@ func TestListFilesEmptyAndMissing(t *testing.T) {
 }
 
 func TestArchiveNestedDirAndUnzipRoundTrip(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	root := filepath.Join(s.dataPath("id"), "worlds", "survival")
 	if err := os.MkdirAll(filepath.Join(root, "region"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -103,7 +103,7 @@ func TestArchiveNestedDirAndUnzipRoundTrip(t *testing.T) {
 }
 
 func TestArchiveSingleFile(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	if err := os.MkdirAll(s.dataPath("id"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestArchiveSingleFile(t *testing.T) {
 }
 
 func TestUnzipRejectsZipSlip(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	root := s.dataPath("id")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -137,8 +137,8 @@ func TestUnzipRejectsZipSlip(t *testing.T) {
 	}
 
 	count, err := s.Unzip("id", "evil.zip", "dest")
-	if err != nil {
-		t.Fatalf("Unzip error: %v", err)
+	if err == nil {
+		t.Fatal("expected unsafe archive rejection")
 	}
 	if count != 0 {
 		t.Fatalf("expected 0 extracted (all slip entries rejected), got %d", count)
@@ -153,7 +153,7 @@ func TestUnzipRejectsZipSlip(t *testing.T) {
 }
 
 func TestMkdirRenameDelete(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	if _, err := s.Mkdir("id", "plugins"); err != nil {
 		t.Fatalf("Mkdir error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestMkdirRenameDelete(t *testing.T) {
 }
 
 func TestUnzipInvalidArchive(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	if err := os.MkdirAll(s.dataPath("id"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestUnzipInvalidArchive(t *testing.T) {
 }
 
 func TestWriteAndReadFileContentRoundTrip(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	const rel = "config/ops.yml"
 	const content = "ops:\n  - uuid: abc\n    name: steve\n    level: 4\n"
 
@@ -221,7 +221,7 @@ func TestWriteAndReadFileContentRoundTrip(t *testing.T) {
 }
 
 func TestFileEditorRejectsChangedContent(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	const rel = "config/settings.yml"
 	if _, err := s.WriteFileContent("id", rel, "pvp: true\n"); err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func TestFileEditorRejectsChangedContent(t *testing.T) {
 }
 
 func TestFileEditorCreationAndDeletionConflicts(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	entry, err := s.WriteFileContent("id", "empty.txt", "", "")
 	if err != nil || entry.Revision == "" {
 		t.Fatalf("create empty file: %+v, %v", entry, err)
@@ -290,7 +290,7 @@ func TestFileEditorCreationAndDeletionConflicts(t *testing.T) {
 }
 
 func TestFileEditorSerializesConditionalSaves(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	entry, err := s.WriteFileContent("id", "config.txt", "original")
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestFileEditorSerializesConditionalSaves(t *testing.T) {
 }
 
 func TestReadFileContentRejectsDirectoryAndTooLarge(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	if err := os.MkdirAll(filepath.Join(s.dataPath("id"), "worlds"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestReadFileContentRejectsDirectoryAndTooLarge(t *testing.T) {
 }
 
 func TestWriteFileContentRejectsTraversal(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	bad := []string{
 		"",
 		".",
@@ -360,7 +360,7 @@ func TestWriteFileContentRejectsTraversal(t *testing.T) {
 }
 
 func TestUploadFileSavesIntoDir(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	entry, err := s.UploadFile("id", "plugins", "my-plugin.jar", strings.NewReader("jarbytes"))
 	if err != nil {
 		t.Fatalf("UploadFile error: %v", err)
@@ -378,7 +378,7 @@ func TestUploadFileSavesIntoDir(t *testing.T) {
 }
 
 func TestUploadFileRejectsTraversal(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	bad := []string{"", ".", "..", "../escape.jar", "a/../../escape.jar", "plugins/weird"}
 	for _, name := range bad {
 		if _, err := s.UploadFile("id", "plugins", name, strings.NewReader("x")); err == nil {

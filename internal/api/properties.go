@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/mcm-panel/mcm/internal/servers"
 	"net/http"
 	"strings"
 )
@@ -28,7 +29,7 @@ func (s *Server) handleSaveProperties(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Content string `json:"content"`
 	}
-	if err := decodeJSON(w, r, &in); err != nil {
+	if err := decodeJSONLimit(w, r, &in, servers.MaxEditRequestBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}

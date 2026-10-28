@@ -435,6 +435,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	return decodeJSONLimit(w, r, v, 1<<20)
+}
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	return dec.Decode(v)
 }

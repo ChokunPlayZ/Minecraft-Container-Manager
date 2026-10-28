@@ -2,10 +2,13 @@ package servers
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/mcm-panel/mcm/internal/storage"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,7 +16,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -76,9 +78,20 @@ func (s *Store) readFileSnapshot(id, rel string) (FileContent, error) {
 }
 
 func (s *Store) ReadFileSnapshot(id, rel string) (FileContent, error) {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
 	s.fileEditMu.Lock()
 	defer s.fileEditMu.Unlock()
-	return s.readFileSnapshot(id, rel)
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return FileContent{}, err
+	}
+	defer root.Close()
+	rel, err = safeRel(rel)
+	if err != nil {
+		return FileContent{}, err
+	}
+	return s.readFileSnapshotLocked(root, rel)
 }
 
 // FileListResult is a directory listing for a server data directory.
@@ -87,455 +100,321 @@ type FileListResult struct {
 	Entries []FileEntry `json:"entries"`
 }
 
-// resolvePath resolves a server-relative path against the server's data
-// directory, guaranteeing the result stays within it. Absolute paths and path
-// traversal are rejected.
+// resolvePath is only a lexical helper. Filesystem operations below use rooted handles.
 func (s *Store) resolvePath(id, rel string) (string, error) {
-	root := s.dataPath(id)
-	if rel == "" {
-		return root, nil
-	}
-	clean := path.Clean(rel)
-	// Reject anything that escapes toward the root or is absolute.
-	if clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
+	if !storage.ValidID(id) {
 		return "", ErrInvalidPath
 	}
-	joined := filepath.Join(root, filepath.FromSlash(clean))
-	// Belt-and-braces containment check.
-	if !strings.HasPrefix(joined, root+string(os.PathSeparator)) && joined != root {
+	clean, err := storage.Clean(rel)
+	if err != nil {
 		return "", ErrInvalidPath
 	}
-	return joined, nil
+	return filepath.Join(s.dataPath(id), filepath.FromSlash(clean)), nil
 }
 
-// ListFiles returns the contents of a directory inside the server's data dir.
+func (s *Store) openDataRoot(id string) (*os.Root, error) {
+	if !storage.ValidID(id) {
+		return nil, ErrInvalidPath
+	}
+	if _, err := s.Get(context.Background(), id); err != nil {
+		return nil, err
+	}
+	root, err := storage.OpenServer(s.dataDir, id)
+	if errors.Is(err, storage.ErrUnsafe) {
+		return nil, ErrInvalidPath
+	}
+	return root, err
+}
+func safeRel(rel string) (string, error) {
+	clean, err := storage.Clean(rel)
+	if err != nil {
+		return "", ErrInvalidPath
+	}
+	return clean, nil
+}
+func rootedEntry(root *os.Root, rel string) (FileEntry, error) {
+	info, err := root.Stat(rel)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	return FileEntry{Name: path.Base(rel), IsDir: info.IsDir(), SizeBytes: info.Size(), ModifiedAt: info.ModTime()}, nil
+}
 func (s *Store) ListFiles(id, rel string) (FileListResult, error) {
-	dir, err := s.resolvePath(id, rel)
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
+
+	root, err := s.openDataRoot(id)
 	if err != nil {
 		return FileListResult{}, err
 	}
-	entries, err := os.ReadDir(dir)
+	defer root.Close()
+	clean, err := safeRel(rel)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return FileListResult{Path: rel, Entries: []FileEntry{}}, nil
-		}
 		return FileListResult{}, err
 	}
-	out := make([]FileEntry, 0, len(entries))
+	if err = storage.Check(root, clean); err != nil {
+		return FileListResult{}, err
+	}
+	entries, err := fs.ReadDir(root.FS(), clean)
+	out := FileListResult{Path: rel, Entries: []FileEntry{}}
+	if os.IsNotExist(err) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
 	for _, e := range entries {
-		info, ierr := e.Info()
-		if ierr != nil {
-			info = nil
-		}
-		fe := FileEntry{
-			Name:  e.Name(),
-			IsDir: e.IsDir(),
-		}
-		if info != nil {
-			fe.SizeBytes = info.Size()
-			fe.ModifiedAt = info.ModTime()
-		}
-		out = append(out, fe)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].IsDir != out[j].IsDir {
-			return out[i].IsDir
-		}
-		return out[i].Name < out[j].Name
-	})
-	return FileListResult{Path: rel, Entries: out}, nil
-}
-
-// resolveDownloadPath resolves a requested file for download, rejecting
-// directories.
-func (s *Store) resolveDownloadPath(id, rel string) (string, error) {
-	f, err := s.resolvePath(id, rel)
-	if err != nil {
-		return "", err
-	}
-	info, statErr := os.Stat(f)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return "", ErrPathNotFound
-		}
-		return "", statErr
-	}
-	if info.IsDir() {
-		return "", ErrIsDirectory
-	}
-	return f, nil
-}
-
-// UploadFile saves an uploaded file into a directory inside the server data dir.
-func (s *Store) UploadFile(id, dir, name string, r io.Reader) (FileEntry, error) {
-	if name == "" || name == "." || name == ".." {
-		return FileEntry{}, ErrInvalidPath
-	}
-	if filepath.Base(name) != name {
-		return FileEntry{}, ErrInvalidPath
-	}
-	target, err := s.resolvePath(id, path.Join(dir, name))
-	if err != nil {
-		return FileEntry{}, err
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return FileEntry{}, err
-	}
-	dst, err := os.Create(target)
-	if err != nil {
-		return FileEntry{}, err
-	}
-	_, werr := io.Copy(dst, r)
-	cerr := dst.Close()
-	if werr != nil {
-		return FileEntry{}, werr
-	}
-	if cerr != nil {
-		return FileEntry{}, cerr
-	}
-	return statEntry(target, name)
-}
-
-// zipWriter is a helper to write one file into a zip archive.
-// onFile is called before each file is written with its relative path and size.
-type zipWriter struct {
-	zw     *zip.Writer
-	onFile func(base string, size int64)
-}
-
-func (z *zipWriter) addFile(base, fsPath string, info os.FileInfo) error {
-	if info.IsDir() {
-		_, err := z.zw.Create(base + "/")
-		return err
-	}
-	if z.onFile != nil {
-		z.onFile(base, info.Size())
-	}
-	hdr, err := zip.FileInfoHeader(info)
-	if err != nil {
-		return err
-	}
-	hdr.Name = base
-	hdr.Method = zip.Deflate
-	w, err := z.zw.CreateHeader(hdr)
-	if err != nil {
-		return err
-	}
-	f, err := os.Open(fsPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = io.Copy(w, f)
-	return err
-}
-
-// addTree recursively adds a file or directory rooted at fsRoot to the archive
-// under the given base name.
-func (z *zipWriter) addTree(base, fsRoot string) error {
-	info, err := os.Stat(fsRoot)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return z.addFile(base, fsRoot, info)
-	}
-	entry, err := os.ReadDir(fsRoot)
-	if err != nil {
-		return err
-	}
-	if closeErr := z.addFile(base, fsRoot, info); closeErr != nil {
-		return closeErr
-	}
-	for _, e := range entry {
-		child := filepath.Join(fsRoot, e.Name())
-		childBase := path.Join(base, e.Name())
-		if e.IsDir() {
-			if err := z.addTree(childBase, child); err != nil {
-				return err
-			}
-		} else {
-			info, ierr := e.Info()
-			if ierr != nil {
-				return ierr
-			}
-			if err := z.addFile(childBase, child, info); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// scanArchiveSources pre-walks all sources and returns total file count and total bytes.
-func scanArchiveSources(absPaths []string) (totalFiles int64, totalBytes int64) {
-	var walkFn filepath.WalkFunc = func(p string, info os.FileInfo, err error) error {
+		info, err := e.Info()
 		if err != nil {
-			return nil
+			return out, err
 		}
-		if !info.IsDir() {
-			totalFiles++
-			totalBytes += info.Size()
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			continue
 		}
-		return nil
+		out.Entries = append(out.Entries, FileEntry{Name: e.Name(), IsDir: e.IsDir(), SizeBytes: info.Size(), ModifiedAt: info.ModTime()})
 	}
-	for _, src := range absPaths {
-		_ = filepath.Walk(src, walkFn)
-	}
-	return
+	sort.SliceStable(out.Entries, func(i, j int) bool {
+		a, b := out.Entries[i], out.Entries[j]
+		if a.IsDir != b.IsDir {
+			return a.IsDir
+		}
+		return a.Name < b.Name
+	})
+	return out, nil
 }
+func (s *Store) UploadFile(id, dir, name string, r io.Reader) (FileEntry, error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
 
-// Archive creates a zip of a source file or directory into the server data dir,
-// returning the new zip entry. The default archive name is the source basename.
+	if name == "" || name == "." || name == ".." || path.Base(name) != name || strings.Contains(name, "\\") {
+		return FileEntry{}, ErrInvalidPath
+	}
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	defer root.Close()
+	rel, err := safeRel(path.Join(dir, name))
+	if err != nil {
+		return FileEntry{}, err
+	}
+	_, err = storage.Write(context.Background(), root, rel, r, storage.MaxUploadBytes, 0644)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	return rootedEntry(root, rel)
+}
 func (s *Store) Archive(id, source, name string) (FileEntry, error) {
 	return s.ArchiveMultiple(id, []string{source}, "", name)
 }
+func (s *Store) ArchiveMultiple(id string, sources []string, destDir, name string) (entry FileEntry, err error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
 
-// ArchiveMultiple archives multiple source files and directories into a zip file in destDir.
-// It emits real-time progress via SetTaskProgress while compressing.
-func (s *Store) ArchiveMultiple(id string, sources []string, destDir, name string) (FileEntry, error) {
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return entry, err
+	}
+	defer root.Close()
 	if len(sources) == 0 {
-		return FileEntry{}, ErrInvalidPath
+		return entry, ErrInvalidPath
 	}
 	if name == "" {
+		name = "archive"
 		if len(sources) == 1 {
-			name = filepath.Base(sources[0])
-		} else {
-			name = "archive"
+			name = path.Base(sources[0])
 		}
 	}
 	if !strings.HasSuffix(strings.ToLower(name), ".zip") {
 		name += ".zip"
 	}
-	if filepath.Base(name) != name || name == "." || name == ".." {
-		return FileEntry{}, ErrInvalidPath
+	if path.Base(name) != name || strings.Contains(name, "\\") {
+		return entry, ErrInvalidPath
 	}
-
-	targetRel := name
-	if destDir != "" {
-		targetRel = path.Join(destDir, name)
-	}
-	target, err := s.resolvePath(id, targetRel)
+	target, err := safeRel(path.Join(destDir, name))
 	if err != nil {
-		return FileEntry{}, err
+		return entry, err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return FileEntry{}, err
+	for i, source := range sources {
+		source, err = safeRel(source)
+		if err != nil {
+			return entry, err
+		}
+		sources[i] = source
+		if target == source || source == "." || strings.HasPrefix(target, source+"/") {
+			return entry, ErrInvalidPath
+		}
+		if err = storage.Check(root, source); err != nil {
+			return entry, err
+		}
+		if _, err = root.Stat(source); err != nil {
+			return entry, err
+		}
 	}
-
-	// Resolve all source absolute paths first.
-	absPaths := make([]string, 0, len(sources))
+	// Temporary output is outside every selected source and published only after ZIP close.
+	temp, err := os.CreateTemp("", "mcm-archive-*.zip")
+	if err != nil {
+		return entry, err
+	}
+	defer os.Remove(temp.Name())
+	defer temp.Close()
+	zw := zip.NewWriter(temp)
+	var count int64
+	s.SetTaskProgress(id, TaskProgress{Operation: "archive", ID: name, Stage: "compressing", Message: "Compressing files"})
+	defer func() {
+		if err != nil {
+			s.SetTaskProgress(id, TaskProgress{Operation: "archive", ID: name, Stage: "failed", Error: err.Error(), Message: err.Error()})
+		}
+	}()
 	for _, source := range sources {
-		src, err := s.resolvePath(id, source)
+		err = fs.WalkDir(root.FS(), source, func(rel string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if err := storage.Check(root, rel); err != nil {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && !info.Mode().IsRegular() {
+				return ErrInvalidPath
+			}
+			base := path.Base(source)
+			if rel != source {
+				base = path.Join(base, strings.TrimPrefix(rel, source+"/"))
+			}
+			hdr, err := zip.FileInfoHeader(info)
+			if err != nil {
+				return err
+			}
+			hdr.Name = base
+			hdr.Method = zip.Deflate
+			if info.IsDir() {
+				hdr.Name += "/"
+			}
+			w, err := zw.CreateHeader(hdr)
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			f, err := storage.OpenRegular(root, rel)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.Copy(w, f)
+			count++
+			s.SetTaskProgress(id, TaskProgress{Operation: "archive", ID: name, Stage: "compressing", Current: count, Message: "Compressing " + rel})
+			return err
+		})
 		if err != nil {
-			return FileEntry{}, err
-		}
-		if _, statErr := os.Stat(src); statErr != nil {
-			if os.IsNotExist(statErr) {
-				return FileEntry{}, ErrPathNotFound
-			}
-			return FileEntry{}, statErr
-		}
-		absPaths = append(absPaths, src)
-	}
-
-	// Emit scanning stage progress.
-	s.SetTaskProgress(id, TaskProgress{
-		ID:         name,
-		Operation:  "archive",
-		Stage:      "scanning",
-		StageTitle: "Scanning Files",
-		StageIndex: 1,
-		StageTotal: 2,
-		Percent:    2,
-		Message:    fmt.Sprintf("Scanning %d source(s)...", len(absPaths)),
-	})
-
-	totalFiles, totalBytes := scanArchiveSources(absPaths)
-
-	var doneFiles atomic.Int64
-	var doneBytes atomic.Int64
-	var lastUpdate time.Time
-
-	emitProgress := func(currentFile string, force bool) {
-		if !force && time.Since(lastUpdate) < 100*time.Millisecond {
-			return
-		}
-		lastUpdate = time.Now()
-		df := doneFiles.Load()
-		db := doneBytes.Load()
-		pct := 5
-		if totalBytes > 0 {
-			pct = 5 + int((float64(db)/float64(totalBytes))*92.0)
-			if pct > 97 {
-				pct = 97
-			}
-		} else if totalFiles > 0 {
-			pct = 5 + int((float64(df)/float64(totalFiles))*92.0)
-			if pct > 97 {
-				pct = 97
-			}
-		}
-		msg := fmt.Sprintf("Compressing %s (%d / %d files)", currentFile, df, totalFiles)
-		s.SetTaskProgress(id, TaskProgress{
-			ID:         name,
-			Operation:  "archive",
-			Stage:      "compressing",
-			StageTitle: fmt.Sprintf("Compressing Files (%d/%d)", df, totalFiles),
-			StageIndex: 2,
-			StageTotal: 2,
-			Percent:    pct,
-			Message:    msg,
-			Current:    df,
-			Total:      totalFiles,
-			BytesDone:  db,
-			BytesTotal: totalBytes,
-		})
-	}
-
-	dst, err := os.Create(target)
-	if err != nil {
-		return FileEntry{}, err
-	}
-	zw := zip.NewWriter(dst)
-	z := &zipWriter{
-		zw: zw,
-		onFile: func(base string, size int64) {
-			doneFiles.Add(1)
-			doneBytes.Add(size)
-			emitProgress(base, false)
-		},
-	}
-
-	for _, src := range absPaths {
-		base := filepath.Base(src)
-		if perr := z.addTree(base, src); perr != nil {
-			_ = zw.Close()
-			_ = dst.Close()
-			_ = os.Remove(target)
-			s.SetTaskProgress(id, TaskProgress{
-				ID:        name,
-				Operation: "archive",
-				Stage:     "failed",
-				Percent:   100,
-				Message:   perr.Error(),
-				Error:     perr.Error(),
-			})
-			return FileEntry{}, perr
+			zw.Close()
+			return entry, err
 		}
 	}
-
-	if cerr := zw.Close(); cerr != nil {
-		_ = dst.Close()
-		_ = os.Remove(target)
-		s.SetTaskProgress(id, TaskProgress{
-			ID:        name,
-			Operation: "archive",
-			Stage:     "failed",
-			Percent:   100,
-			Message:   cerr.Error(),
-			Error:     cerr.Error(),
-		})
-		return FileEntry{}, cerr
+	if err = zw.Close(); err != nil {
+		return entry, err
 	}
-	if cerr := dst.Close(); cerr != nil {
-		_ = os.Remove(target)
-		return FileEntry{}, cerr
+	if _, err = temp.Seek(0, 0); err != nil {
+		return entry, err
 	}
-
-	s.SetTaskProgress(id, TaskProgress{
-		ID:         name,
-		Operation:  "archive",
-		Stage:      "completed",
-		StageTitle: "Compression Complete",
-		StageIndex: 2,
-		StageTotal: 2,
-		Percent:    100,
-		Message:    fmt.Sprintf("Compressed %d files into %s", doneFiles.Load(), name),
-		Current:    doneFiles.Load(),
-		Total:      totalFiles,
-		BytesDone:  doneBytes.Load(),
-		BytesTotal: totalBytes,
-	})
-	return statEntry(target, name)
+	if _, err = storage.Write(context.Background(), root, target, temp, storage.MaxArchiveBytes, 0644); err != nil {
+		return entry, err
+	}
+	s.SetTaskProgress(id, TaskProgress{Operation: "archive", ID: name, Stage: "completed", Percent: 100, Current: count, Message: "Compression complete"})
+	return rootedEntry(root, target)
 }
-
-// Unzip extracts a zip archive inside the server data dir into dest, with
-// zip-slip protection. dest defaults to the archive's parent directory.
 func (s *Store) Unzip(id, archive, dest string) (int, error) {
-	arc, err := s.resolvePath(id, archive)
+	return s.UnzipContext(context.Background(), id, archive, dest)
+}
+func (s *Store) UnzipContext(ctx context.Context, id, archive, dest string) (int, error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
+
+	root, err := s.openDataRoot(id)
 	if err != nil {
 		return 0, err
 	}
-	info, statErr := os.Stat(arc)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return 0, ErrPathNotFound
-		}
-		return 0, statErr
-	}
-	if info.IsDir() {
-		return 0, ErrIsDirectory
-	}
-	if dest == "" {
-		dest = filepath.Dir(arc)
-	} else {
-		dest, err = s.resolvePath(id, dest)
-		if err != nil {
-			return 0, err
-		}
-	}
-	if err := os.MkdirAll(dest, 0o755); err != nil {
+	defer root.Close()
+	archive, err = safeRel(archive)
+	if err != nil {
 		return 0, err
 	}
-	zr, err := zip.OpenReader(arc)
+	f, err := storage.OpenRegular(root, archive)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	zr, err := zip.NewReader(f, info.Size())
 	if err != nil {
 		return 0, ErrInvalidArchive
 	}
-	defer zr.Close()
-
+	if dest == "" {
+		dest = path.Dir(archive)
+	}
+	dest, err = safeRel(dest)
+	if err != nil {
+		return 0, err
+	}
+	if len(zr.File) > storage.MaxArchiveEntries {
+		return 0, ErrInvalidArchive
+	}
+	var total uint64
+	// Validate every entry before changing the destination.
+	for _, member := range zr.File {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		clean, e := safeRel(member.Name)
+		if e != nil || clean == "." || (!member.Mode().IsRegular() && !member.FileInfo().IsDir()) {
+			return 0, ErrInvalidArchive
+		}
+		total += member.UncompressedSize64
+		if member.UncompressedSize64 > uint64(storage.MaxArchiveBytes) || total > uint64(storage.MaxArchiveBytes) {
+			return 0, ErrInvalidArchive
+		}
+		if e = storage.Check(root, path.Join(dest, clean)); e != nil {
+			return 0, e
+		}
+	}
 	count := 0
-	destClean := filepath.Clean(dest)
-	for _, f := range zr.File {
-		// Zip-slip protection: reject any entry whose cleaned target escapes
-		// the destination directory.
-		target := filepath.Join(destClean, filepath.FromSlash(f.Name))
-		if target != destClean && !strings.HasPrefix(target, destClean+string(os.PathSeparator)) {
-			continue
+	var expanded int64
+	for _, member := range zr.File {
+		if err := ctx.Err(); err != nil {
+			return 0, err
 		}
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return count, err
+		target := path.Join(dest, member.Name)
+		if member.FileInfo().IsDir() {
+			err = root.MkdirAll(target, 0755)
+		} else {
+			var rc io.ReadCloser
+			rc, err = member.Open()
+			if err != nil {
+				return count, ErrInvalidArchive
 			}
-			count++
-			continue
+			var n int64
+			n, err = storage.Write(ctx, root, target, rc, storage.MaxArchiveBytes-expanded, 0644)
+			rc.Close()
+			expanded += n
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err != nil {
 			return count, err
-		}
-		rc, rerr := f.Open()
-		if rerr != nil {
-			return count, ErrInvalidArchive
-		}
-		dst, cerr := os.Create(target)
-		if cerr != nil {
-			_ = rc.Close()
-			return count, cerr
-		}
-		_, cerr = io.Copy(dst, rc)
-		_ = rc.Close()
-		_ = dst.Close()
-		if cerr != nil {
-			return count, cerr
 		}
 		count++
 	}
 	return count, nil
 }
-
-// DownloadFromURL downloads a file from urlStr into the server data dir. The
-// filename is derived from the URL basename unless name is provided.
 func (s *Store) DownloadFromURL(id, urlStr, dir, name string) (FileEntry, error) {
+	unlock := s.lockWorld(id, false)
+	defer unlock()
 	u, err := url.Parse(urlStr)
 	if err != nil {
 		return FileEntry{}, ErrDownloadFailed
@@ -546,17 +425,11 @@ func (s *Store) DownloadFromURL(id, urlStr, dir, name string) (FileEntry, error)
 	if name == "" {
 		name = path.Base(u.Path)
 	}
-	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
-		return FileEntry{}, ErrInvalidPath
-	}
-	target, err := s.resolvePath(id, path.Join(dir, name))
+	root, err := s.openDataRoot(id)
 	if err != nil {
 		return FileEntry{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return FileEntry{}, err
-	}
-
+	root.Close()
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(urlStr)
 	if err != nil {
@@ -566,155 +439,154 @@ func (s *Store) DownloadFromURL(id, urlStr, dir, name string) (FileEntry, error)
 	if resp.StatusCode != http.StatusOK {
 		return FileEntry{}, ErrDownloadFailed
 	}
-
-	dst, err := os.Create(target)
+	if name == "" || name == "." || name == ".." || path.Base(name) != name {
+		return FileEntry{}, ErrInvalidPath
+	}
+	root, err = s.openDataRoot(id)
 	if err != nil {
 		return FileEntry{}, err
 	}
-	_, werr := io.Copy(dst, io.LimitReader(resp.Body, maxDownloadBytes+1))
-	cerr := dst.Close()
-	if werr != nil {
-		_ = os.Remove(target)
-		return FileEntry{}, werr
-	}
-	if cerr != nil {
-		_ = os.Remove(target)
-		return FileEntry{}, cerr
-	}
-	if fi, ferr := os.Stat(target); ferr == nil && fi.Size() > maxDownloadBytes {
-		_ = os.Remove(target)
-		return FileEntry{}, fmt.Errorf("%w: file too large", ErrDownloadFailed)
-	}
-	return statEntry(target, name)
-}
+	defer root.Close()
 
-// DeleteFile removes a file or directory recursively from the server data dir.
+	rel, err := safeRel(path.Join(dir, name))
+	if err != nil {
+		return FileEntry{}, err
+	}
+	if _, err = storage.Write(context.Background(), root, rel, resp.Body, maxDownloadBytes, 0644); err != nil {
+		return FileEntry{}, err
+	}
+	return rootedEntry(root, rel)
+}
 func (s *Store) DeleteFile(id, rel string) error {
-	target, err := s.resolvePath(id, rel)
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
+
+	root, err := s.openDataRoot(id)
 	if err != nil {
 		return err
 	}
-	if target == s.dataPath(id) {
+	defer root.Close()
+	rel, err = safeRel(rel)
+	if err != nil || rel == "." {
 		return ErrInvalidPath
 	}
-	info, statErr := os.Stat(target)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return ErrPathNotFound
-		}
-		return statErr
+	if err = storage.Check(root, rel); err != nil {
+		return err
+	}
+	if _, err = root.Lstat(rel); err != nil {
+		return err
+	}
+	return root.RemoveAll(rel)
+}
+func (s *Store) Mkdir(id, rel string) (FileEntry, error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
+
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	defer root.Close()
+	rel, err = safeRel(rel)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	if err = storage.Check(root, rel); err != nil {
+		return FileEntry{}, err
+	}
+	if err = root.MkdirAll(rel, 0755); err != nil {
+		return FileEntry{}, err
+	}
+	return rootedEntry(root, rel)
+}
+func (s *Store) Rename(id, rel, name string) (FileEntry, error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
+
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return FileEntry{}, err
+	}
+	defer root.Close()
+	rel, err = safeRel(rel)
+	if err != nil || rel == "." {
+		return FileEntry{}, ErrInvalidPath
+	}
+	if name == "" || name == "." || name == ".." || path.Base(name) != name || strings.Contains(name, "\\") {
+		return FileEntry{}, ErrInvalidPath
+	}
+	target := path.Join(path.Dir(rel), name)
+	if err = storage.Check(root, rel); err != nil {
+		return FileEntry{}, err
+	}
+	if err = storage.Check(root, target); err != nil {
+		return FileEntry{}, err
+	}
+	if err = root.Rename(rel, target); err != nil {
+		return FileEntry{}, err
+	}
+	return rootedEntry(root, target)
+}
+func (s *Store) OpenFileForDownload(id, rel string) (*os.File, string, error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
+
+	root, err := s.openDataRoot(id)
+	if err != nil {
+		return nil, "", err
+	}
+	defer root.Close()
+	rel, err = safeRel(rel)
+	if err != nil {
+		return nil, "", err
+	}
+	info, err := root.Stat(rel)
+	if err != nil {
+		return nil, "", err
 	}
 	if info.IsDir() {
-		return os.RemoveAll(target)
+		return nil, "", ErrIsDirectory
 	}
-	return os.Remove(target)
+	f, err := storage.OpenRegular(root, rel)
+	return f, path.Base(rel), err
 }
 
-// Mkdir creates a directory inside the server data dir.
-func (s *Store) Mkdir(id, rel string) (FileEntry, error) {
-	target, err := s.resolvePath(id, rel)
-	if err != nil {
-		return FileEntry{}, err
-	}
-	if err := os.MkdirAll(target, 0o755); err != nil {
-		return FileEntry{}, err
-	}
-	return statEntry(target, filepath.Base(target))
-}
-
-// Rename moves a path to a new name within the server data dir.
-func (s *Store) Rename(id, rel, name string) (FileEntry, error) {
-	src, err := s.resolvePath(id, rel)
-	if err != nil {
-		return FileEntry{}, err
-	}
-	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
-		return FileEntry{}, ErrInvalidPath
-	}
-	_, statErr := os.Stat(src)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
-			return FileEntry{}, ErrPathNotFound
-		}
-		return FileEntry{}, statErr
-	}
-	parentRel := filepath.ToSlash(filepath.Dir(rel))
-	dst, err := s.resolvePath(id, path.Join(parentRel, name))
-	if err != nil {
-		return FileEntry{}, err
-	}
-	if err := os.Rename(src, dst); err != nil {
-		return FileEntry{}, err
-	}
-	return statEntry(dst, name)
-}
-
-// OpenFileForDownload returns an open handle to a file for streaming, plus the
-// basename for Content-Disposition. The caller is responsible for closing the
-// returned file.
-func (s *Store) OpenFileForDownload(id, rel string) (*os.File, string, error) {
-	f, err := s.resolveDownloadPath(id, rel)
-	if err != nil {
-		return nil, "", err
-	}
-	handle, err := os.Open(f)
-	if err != nil {
-		return nil, "", err
-	}
-	return handle, filepath.Base(f), nil
-}
-
-// maxEditBytes caps the size of a file that may be read into the web editor.
-// Larger files should be downloaded and edited locally instead.
-const maxEditBytes int64 = 5 << 20 // 5 MB
-
-// ReadFileContent reads a file inside the server data dir as text for editing.
-// It reports ErrIsDirectory for folders and a friendly size error for files
-// that are too large to safely load into the editor.
+const maxEditBytes int64 = 5 << 20
+const MaxEditRequestBytes int64 = 6*maxEditBytes + 4096 // JSON can escape each content byte as \uXXXX.
 func (s *Store) ReadFileContent(id, rel string) (string, error) {
-	f, err := s.resolveDownloadPath(id, rel)
+	f, _, err := s.OpenFileForDownload(id, rel)
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(f)
-	if err != nil {
-		return "", err
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxEditBytes+1))
+	if int64(len(data)) > maxEditBytes {
+		return "", ErrReadTooLarge
 	}
-	if info.Size() > maxEditBytes {
-		return "", fmt.Errorf("%w: file is too large to edit", ErrReadTooLarge)
-	}
-	data, err := os.ReadFile(f)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return string(data), err
 }
-
-// WriteFileContent writes text content to a file inside the server data dir,
-// creating any missing parent directories. When expectedRevision is supplied,
-// reject a changed/deleted file; an empty revision requires a new file.
-// Serializing editor saves prevents two MCM writers accepting the same revision.
 func (s *Store) WriteFileContent(id, rel, content string, expectedRevision ...string) (FileEntry, error) {
+	unlockWorld := s.lockWorld(id, false)
+	defer unlockWorld()
+
 	s.fileEditMu.Lock()
 	defer s.fileEditMu.Unlock()
-	if rel == "" || rel == "." || rel == ".." {
+	if int64(len(content)) > maxEditBytes {
+		return FileEntry{}, ErrReadTooLarge
+	}
+	rel, err := safeRel(rel)
+	if err != nil || rel == "." {
 		return FileEntry{}, ErrInvalidPath
 	}
-	clean := path.Clean(rel)
-	if clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) {
-		return FileEntry{}, ErrInvalidPath
-	}
-	target, err := s.resolvePath(id, clean)
+	root, err := s.openDataRoot(id)
 	if err != nil {
 		return FileEntry{}, err
 	}
-	if target == s.dataPath(id) {
-		return FileEntry{}, ErrInvalidPath
-	}
+	defer root.Close()
 	if len(expectedRevision) > 0 {
-		current, err := s.readFileSnapshot(id, clean)
+		current, err := s.readFileSnapshotLocked(root, rel)
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrPathNotFound) {
-			current = FileContent{Path: clean}
+			current = FileContent{Path: rel}
 		} else if err != nil {
 			return FileEntry{}, err
 		}
@@ -722,27 +594,27 @@ func (s *Store) WriteFileContent(id, rel, content string, expectedRevision ...st
 			return FileEntry{}, &FileConflictError{Current: current}
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if _, err = storage.Write(context.Background(), root, rel, strings.NewReader(content), maxEditBytes, 0644); err != nil {
 		return FileEntry{}, err
 	}
-	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
-		return FileEntry{}, err
-	}
-	entry, err := statEntry(target, filepath.Base(target))
+	entry, err := rootedEntry(root, rel)
 	entry.Revision = fileRevision(content)
 	return entry, err
 }
 
-// statEntry produces a FileEntry for a path on disk.
-func statEntry(p, name string) (FileEntry, error) {
-	info, err := os.Stat(p)
+func (s *Store) readFileSnapshotLocked(root *os.Root, rel string) (FileContent, error) {
+	f, err := storage.OpenRegular(root, rel)
 	if err != nil {
-		return FileEntry{}, err
+		return FileContent{}, err
 	}
-	return FileEntry{
-		Name:       name,
-		IsDir:      info.IsDir(),
-		SizeBytes:  info.Size(),
-		ModifiedAt: info.ModTime(),
-	}, nil
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxEditBytes+1))
+	if err != nil {
+		return FileContent{}, err
+	}
+	if int64(len(data)) > maxEditBytes {
+		return FileContent{}, ErrReadTooLarge
+	}
+	content := string(data)
+	return FileContent{Path: rel, Content: content, Revision: fileRevision(content), Exists: true}, nil
 }

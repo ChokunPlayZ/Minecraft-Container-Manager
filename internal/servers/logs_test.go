@@ -65,7 +65,7 @@ func tarLogs(t *testing.T) []byte {
 }
 
 func TestListServerLogs(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	ctx := context.Background()
 	files, err := s.ListServerLogs(ctx, "id")
 	if err != nil || files == nil || len(files) != 0 {
@@ -93,7 +93,7 @@ func TestListServerLogs(t *testing.T) {
 }
 
 func TestReadServerLogsWithoutExtraction(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	ctx := context.Background()
 	const content = "[Server thread/INFO]: Ready\n[Server thread/WARN]: Can't keep up!\n"
 	writeLogFixture(t, s, "logs/latest.log", []byte(content))
@@ -133,7 +133,7 @@ func TestReadServerLogsWithoutExtraction(t *testing.T) {
 }
 
 func TestServerLogPreviewsAreBounded(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	data := bytes.Repeat([]byte("x"), maxLogPreviewBytes+100)
 	for _, name := range []string{"logs/large.log", "logs/large.log.gz"} {
 		payload := data
@@ -149,7 +149,7 @@ func TestServerLogPreviewsAreBounded(t *testing.T) {
 }
 
 func TestServerLogsRejectUnsafePathsAndBadArchives(t *testing.T) {
-	s := minimalStore(t.TempDir())
+	s := minimalStore(t, t.TempDir())
 	ctx := context.Background()
 	writeLogFixture(t, s, "logs/latest.log", []byte("log"))
 	for _, name := range []string{"../outside.log", "/logs/latest.log", "server.properties", "logs/../latest.log", "logs/ignored.json"} {
