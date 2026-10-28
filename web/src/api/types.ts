@@ -976,3 +976,14 @@ export interface ScheduledTask extends ScheduleInput {
   updated_at: string;
 }
 
+export interface PanelUpdateStatus {
+  build: { commit: string; built_at?: string; dirty: boolean };
+  supported: boolean;
+  reason?: string;
+  latest_commit?: string;
+  checked_at?: string;
+  available: boolean;
+  job?: { state: 'queued' | 'running' | 'succeeded' | 'failed'; started_at: string; finished_at?: string; message: string };
+  log?: string;
+}
+

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -11,12 +12,14 @@ import (
 	"github.com/mcm-panel/mcm/internal/api"
 	"github.com/mcm-panel/mcm/internal/auth"
 	"github.com/mcm-panel/mcm/internal/backups"
+	"github.com/mcm-panel/mcm/internal/buildinfo"
 	"github.com/mcm-panel/mcm/internal/config"
 	"github.com/mcm-panel/mcm/internal/db"
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/notifications"
+	"github.com/mcm-panel/mcm/internal/panelupdate"
 	"github.com/mcm-panel/mcm/internal/schedules"
 	"github.com/mcm-panel/mcm/internal/servers"
 	"github.com/mcm-panel/mcm/internal/tlsconfig"
@@ -24,6 +27,21 @@ import (
 
 func main() {
 	logger := log.New(os.Stdout, "[mcm] ", log.LstdFlags)
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		_ = json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "--update-worker" {
+		if len(os.Args) != 4 {
+			logger.Fatal("invalid update worker arguments")
+		}
+		if err := panelupdate.RunWorker(os.Args[2], os.Args[3]); err != nil {
+			logger.Fatal(err)
+		}
+		return
+	}
+	build := buildinfo.Current()
+	logger.Printf("build commit: %s (modified: %t, built: %s)", build.Commit, build.Dirty, build.BuiltAt)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -103,6 +121,7 @@ func main() {
 		DNS:           dnsService,
 		Logger:        logger,
 		Notifications: notificationService,
+		PanelUpdates:  panelupdate.New(),
 	})
 
 	if !cfg.HTTPOnly {

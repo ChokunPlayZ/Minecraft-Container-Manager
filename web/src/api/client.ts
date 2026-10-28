@@ -1,5 +1,6 @@
 import { dnsProviders, isDNSProvider } from '../lib/dns-providers';
 import type {
+  PanelUpdateStatus,
   UpdateCheckerStatus,
   DiscordSettings,
   DiscordSettingsInput,
@@ -186,9 +187,24 @@ let mockDiscordSettings: DiscordSettings = {
 const mockSparkReports: Record<string, SparkReport> = {};
 const mockPerformanceModes: Record<string, PerformanceCollectionMode> = {};
 let mockUpdateChecker: UpdateCheckerStatus = { enabled: false, running: false, timezone: 'UTC', servers: {} };
+let mockPanelUpdate: PanelUpdateStatus = {
+  build: { commit: '75f02c91d63c92478986b325ac5ddfde48f2cb31', built_at: '2026-10-28T03:30:00Z', dirty: false },
+  supported: true, available: false,
+};
 
 function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
+
+  if (path === '/api/panel/update/check') {
+    mockPanelUpdate = { ...mockPanelUpdate, latest_commit: 'adb7819c46d63b13405b2fd259a90adf9480157c', checked_at: new Date().toISOString(), available: true };
+    return mockPanelUpdate as T;
+  }
+  if (path === '/api/panel/update') {
+    if (init.method === 'POST') {
+      mockPanelUpdate = { ...mockPanelUpdate, job: { state: 'succeeded', started_at: new Date().toISOString(), message: 'Demo update complete. No installation was changed.' }, log: 'Demo: build, backup, and readiness check completed.' };
+    }
+    return mockPanelUpdate as T;
+  }
 
   if (path === '/api/updates/settings' && init.method === 'PUT') {
     const { enabled } = JSON.parse(String(init.body)) as { enabled: boolean };
@@ -916,6 +932,9 @@ export const api = {
   getSettings: () => request<{ settings: Record<string, string> }>('/api/settings'),
 
   getUpdateChecker: () => request<UpdateCheckerStatus>('/api/updates'),
+  getPanelUpdate: () => request<PanelUpdateStatus>('/api/panel/update'),
+  checkPanelUpdate: () => request<PanelUpdateStatus>('/api/panel/update/check', { method: 'POST' }),
+  startPanelUpdate: (commit: string) => request<PanelUpdateStatus>('/api/panel/update', { method: 'POST', body: JSON.stringify({ commit }) }),
   saveUpdateChecker: (enabled: boolean) => request<UpdateCheckerStatus>('/api/updates/settings', { method: 'PUT', body: JSON.stringify({ enabled }) }),
   runUpdateCheck: () => request<{ accepted: boolean }>('/api/updates/check', { method: 'POST' }),
 

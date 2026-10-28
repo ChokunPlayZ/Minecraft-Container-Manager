@@ -40,8 +40,11 @@ COPY migrations/ ./migrations/
 # Overwrite the committed placeholder with the web worker's real build output.
 COPY --from=web /app/web/dist ./internal/web/dist
 
+ARG MCM_BUILD_COMMIT=unknown
+ARG MCM_BUILD_DIRTY=false
+ARG MCM_BUILD_TIME
 RUN go mod download && \
-    CGO_ENABLED=0 go build -o /out/mcm ./cmd/mcm
+    CGO_ENABLED=0 go build -ldflags "-X github.com/mcm-panel/mcm/internal/buildinfo.Commit=${MCM_BUILD_COMMIT} -X github.com/mcm-panel/mcm/internal/buildinfo.Dirty=${MCM_BUILD_DIRTY} -X github.com/mcm-panel/mcm/internal/buildinfo.BuiltAt=${MCM_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" -o /out/mcm ./cmd/mcm
 
 ###############################################################################
 # Runtime stage

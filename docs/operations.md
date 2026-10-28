@@ -255,6 +255,40 @@ For a containerized panel, use the
 
 ## Update
 
+Open **Settings → Updates → Panel software** to see the full commit used to
+build the running binary, the build time, and whether the build included local
+changes. On a managed Linux installation, **Check for panel updates** reads the
+checkout's tracked branch. **Install panel update** confirms the target commit
+and starts the existing installer in a separate `mcm-update.service` user unit.
+The page shows update progress and a log, reconnects through the panel restart,
+and offers a reload when the update completes. Update results and the last
+32 KiB of log output remain available after restarting the panel. The full log
+is in `~/.config/mcm/panel-update/update.log` (or under `XDG_CONFIG_HOME`).
+
+Web updates require `git`, `systemd-run`, and `systemctl`, a clean source checkout
+on a branch, and a reachable Git remote using non-interactive credentials. They
+follow the same fast-forward, backup, readiness, and rollback rules as the
+command below. An interrupted update is reported as failed; review its log
+before retrying. For older installations using a custom `XDG_CONFIG_HOME`, run
+`./mcmctl install` once to refresh the service's configuration-directory setting.
+
+Container deployments and unmanaged binaries show their build information and
+instructions to rebuild externally. For Compose, supply the source revision at
+build time, since `.git` is excluded from the build context:
+
+```sh
+MCM_BUILD_COMMIT=$(git rev-parse HEAD) \
+MCM_BUILD_DIRTY=$(test -z "$(git status --porcelain)" && echo false || echo true) \
+docker compose up -d --build
+```
+
+Use the same variables with `podman compose -f podman-compose.yml up -d --build`
+for Podman. A direct image build accepts `--build-arg MCM_BUILD_COMMIT=...` and
+`--build-arg MCM_BUILD_DIRTY=true|false`. `make build` and `mcmctl` stamp these
+automatically. Plain `go build` uses Go's embedded VCS metadata where available;
+otherwise the panel explicitly reports that the commit is unavailable.
+`mcm --version` prints the build metadata as JSON without starting the panel.
+
 ```sh
 ./mcmctl update
 ```

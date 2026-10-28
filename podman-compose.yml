@@ -4,6 +4,9 @@ services:
   mcm:
     build:
       context: .
+      args:
+        MCM_BUILD_COMMIT: ${MCM_BUILD_COMMIT:-unknown}
+        MCM_BUILD_DIRTY: ${MCM_BUILD_DIRTY:-false}
     container_name: mcm
     ports:
       - "8080:8080"

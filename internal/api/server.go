@@ -20,6 +20,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/dns"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/notifications"
+	"github.com/mcm-panel/mcm/internal/panelupdate"
 	"github.com/mcm-panel/mcm/internal/proxy"
 	"github.com/mcm-panel/mcm/internal/schedules"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -43,6 +44,7 @@ type Server struct {
 	proxy         *proxy.Service
 	logger        *log.Logger
 	notifications *notifications.Service
+	panelUpdates  *panelupdate.Manager
 	mux           *http.ServeMux
 	loginLimit    *loginLimiter
 }
@@ -62,6 +64,7 @@ type Options struct {
 	DNS           *dns.Service
 	Logger        *log.Logger
 	Notifications *notifications.Service
+	PanelUpdates  *panelupdate.Manager
 }
 
 type ctxKey string
@@ -101,6 +104,7 @@ func New(opts Options) http.Handler {
 		proxy:         px,
 		logger:        opts.Logger,
 		notifications: opts.Notifications,
+		panelUpdates:  opts.PanelUpdates,
 		mux:           http.NewServeMux(),
 		loginLimit:    newLoginLimiter(loginDefaults(opts.Cfg)),
 	}
@@ -109,6 +113,9 @@ func New(opts Options) http.Handler {
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /api/panel/update", s.requireAuth(s.wrapJSON(s.handlePanelUpdateStatus)))
+	s.mux.HandleFunc("POST /api/panel/update/check", s.requireAuth(s.wrapJSON(s.handlePanelUpdateCheck)))
+	s.mux.HandleFunc("POST /api/panel/update", s.requireAuth(s.wrapJSON(s.handlePanelUpdateStart)))
 	s.mux.HandleFunc("GET /api/notifications/discord", s.requireAuth(s.wrapJSON(s.handleGetDiscord)))
 	s.mux.HandleFunc("PUT /api/notifications/discord", s.requireAuth(s.wrapJSON(s.handlePutDiscord)))
 	s.mux.HandleFunc("POST /api/notifications/discord/test", s.requireAuth(s.wrapJSON(s.handleTestDiscord)))

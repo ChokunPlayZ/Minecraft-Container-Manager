@@ -15,6 +15,7 @@ import { DNSSettingsCard } from '../components/dns-settings';
 import { PortPoolSettingsCard } from '../components/port-pool-settings';
 import { DiscordNotificationSettings } from '../components/discord-notification-settings';
 import { UpdateCheckerSettings } from '../components/update-checker-settings';
+import { PanelUpdateSettings } from '../components/panel-update-settings';
 
 interface SettingsSearch {
   tab?: 'account' | 'dns' | 'ports' | 'notifications' | 'updates';
@@ -126,7 +127,7 @@ function SettingsRoute() {
             <DNSSettingsCard />
           </div>
         ) : activeTab === 'updates' ? (
-          <div className="max-w-3xl"><UpdateCheckerSettings /></div>
+          <div className="max-w-3xl space-y-6"><PanelUpdateSettings /><UpdateCheckerSettings /></div>
         ) : activeTab === 'notifications' ? (
           <div className="max-w-3xl"><DiscordNotificationSettings /></div>
         ) : (

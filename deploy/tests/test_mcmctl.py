@@ -466,11 +466,15 @@ class ManagerTests(unittest.TestCase):
         self.assertIn('MCM_CONTAINER_HOST=unix://' + self.socket_dir.name, config)
         self.assertIn('ExecStart="' + str(self.binary) + '"', self.unit.read_text())
         self.assertIn('EnvironmentFile=' + str(self.config) + '\n', self.unit.read_text())
+        self.assertIn('Environment="XDG_CONFIG_HOME=' + self.env['XDG_CONFIG_HOME'] + '"', self.unit.read_text())
         self.assertIn('WorkingDirectory=' + str(Path.home()) + '\n', self.unit.read_text())
         builds = [call for call in self.calls() if call[:2] == ['podman', 'build']]
         self.assertEqual(len(builds), 1)
         self.assertIn('--target', builds[0])
         self.assertIn('go', builds[0])
+        self.assertIn('MCM_BUILD_COMMIT=unknown', builds[0])
+        self.assertIn('MCM_BUILD_DIRTY=false', builds[0])
+        self.assertTrue(any(arg.startswith('MCM_BUILD_TIME=') for arg in builds[0]))
         self.assertTrue((self.root / 'active').exists())
 
     def test_unit_paths_with_spaces_and_literal_specifiers(self):
@@ -860,7 +864,10 @@ class ManagerTests(unittest.TestCase):
         self.run_manager('update', '--local')
         builds = [call for call in self.calls() if call[:2] == ['podman', 'build']]
         self.assertEqual(builds[0][-1], str(self.source))
-        self.assertFalse(any(call[0] == 'git' for call in self.calls()))
+        # Local builds may read the revision/dirty flag to stamp the binary,
+        # while still never pulling or changing the source checkout.
+        git_calls = [call for call in self.calls() if call[0] == 'git']
+        self.assertTrue(all(call[3] in ('rev-parse', 'status') for call in git_calls))
         self.assertEqual(state.read_text(), 'SOURCE_DIR=' + str(self.source) + '\n')
 
     def test_failed_update_does_not_save_replacement_source(self):

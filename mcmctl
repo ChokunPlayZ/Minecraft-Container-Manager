@@ -552,8 +552,16 @@ build_app() {
     [[ -f "$SOURCE_DIR/Dockerfile" && -f "$SOURCE_DIR/mcmctl" ]] || die "Source checkout is missing: $SOURCE_DIR"
     STAGING=$(mktemp -d "$BIN_DIR/.mcm-build.XXXXXX")
     say "Building MCM and its web interface with $ENGINE. The running panel stays up during the build."
-    local image="localhost/mcm-build:$(id -u)"
-    "$ENGINE" build --target go --tag "$image" --file "$SOURCE_DIR/Dockerfile" "$SOURCE_DIR"
+    local image="localhost/mcm-build:$(id -u)" build_commit=unknown build_dirty=false
+    if command -v git >/dev/null 2>&1; then
+        build_commit=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null) || build_commit=unknown
+        [[ -n "$build_commit" ]] || build_commit=unknown
+        [[ -z "$(git -C "$SOURCE_DIR" status --porcelain 2>/dev/null)" ]] || build_dirty=true
+    fi
+    "$ENGINE" build --target go --tag "$image" \
+        --build-arg "MCM_BUILD_COMMIT=$build_commit" --build-arg "MCM_BUILD_DIRTY=$build_dirty" \
+        --build-arg "MCM_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --file "$SOURCE_DIR/Dockerfile" "$SOURCE_DIR"
     BUILD_CONTAINER=$("$ENGINE" create --entrypoint /bin/true "$image")
     "$ENGINE" cp "$BUILD_CONTAINER:/out/mcm" "$STAGING/mcm"
     "$ENGINE" rm "$BUILD_CONTAINER" >/dev/null
@@ -586,6 +594,7 @@ write_unit() {
         say '[Service]'
         printf 'ExecStart=%s\n' "$(unit_exec_path "$BIN_DIR/mcm")"
         printf 'EnvironmentFile=%s\n' "$(unit_path "$CONFIG")"
+        printf 'Environment="XDG_CONFIG_HOME=%s"\n' "$(unit_path "$(dirname -- "$CONFIG_DIR")")"
         printf 'WorkingDirectory=%s\n' "$(unit_path "$HOME")"
         say 'Restart=on-failure'
         say 'RestartSec=5'

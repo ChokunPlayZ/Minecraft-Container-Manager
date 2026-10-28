@@ -1,5 +1,9 @@
 .PHONY: dev build test test-deploy lint tidy
 
+BUILD_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+BUILD_DIRTY := $(shell test -z "$$(git status --porcelain 2>/dev/null)" && echo false || echo true)
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
 # Build the backend, embedding the frontend build if it exists.
 build:
 	cd web && pnpm build
@@ -9,7 +13,7 @@ build:
 	else \
 		echo "web/dist not found; keeping embedded placeholder"; \
 	fi
-	go build -o mcm ./cmd/mcm
+	go build -ldflags "-X github.com/mcm-panel/mcm/internal/buildinfo.Commit=$(BUILD_COMMIT) -X github.com/mcm-panel/mcm/internal/buildinfo.Dirty=$(BUILD_DIRTY) -X github.com/mcm-panel/mcm/internal/buildinfo.BuiltAt=$(BUILD_TIME)" -o mcm ./cmd/mcm
 
 dev:
 	go run ./cmd/mcm

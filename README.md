@@ -781,6 +781,12 @@ Choose the provider under **Settings → DNS Providers** and use **Test Connecti
 
 ## Development
 
+The running binary's commit and build time appear under **Settings → Updates →
+Panel software** and in `mcm --version`. Managed Linux installations can check
+and install panel updates from that page, with a persistent log and automatic
+reconnection during restart. See [panel updates](docs/operations.md#update) for
+requirements and build metadata for container deployments.
+
 ### Backend (Go)
 
 Ensure Go 1.26+ is installed (see `go.mod`):
