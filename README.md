@@ -54,7 +54,7 @@ an account that can access its Docker daemon.
 Already have this checkout or a failed `mcm.service` from the earlier setup?
 Run `./mcmctl install --runtime podman` from the updated project directory.
 It creates the previously missing `~/.config/mcm/mcm.env` and replaces the user
-service with the managed installation. Existing settings and session secrets
+service with the managed installation. Existing settings and credentials
 are preserved. If your server data is elsewhere, include its actual path:
 
 ```sh
@@ -275,11 +275,11 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
 
 ## Alternative: Docker Compose
 
-1. **Copy the environment template and configure a session secret**:
+1. **Copy the environment template and configure storage and runtime settings**:
 
    ```sh
    cp .env.example .env
-   # Edit MCM_SESSION_SECRET in .env
+   # Review storage paths and runtime settings in .env
    ```
 
 2. **Ensure the Minecraft server runtime base image is available**:
@@ -304,7 +304,9 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
 The panel container mounts `/var/run/docker.sock` so it can manage Minecraft server containers on the host. Minecraft servers bind host ports within `MCM_PORT_RANGE` (default `25565-25665`).
 
 - `MCM_DATA_DIR_HOST`: Host directory (default `${PWD}/data` next to `docker-compose.yml`) mounted into the panel container at `/data` for the SQLite database and server data. This is also the host-side path MCM binds into each Minecraft server container.
-- `PUID` / `PGID`: Set to match your host user (e.g. `1000:1000` or `501:20` on macOS) so all files written to the data volume remain owned by your user. The image entrypoint adjusts data-directory permissions before the panel starts.
+- `PUID` / `PGID`: Set to match your host user (e.g. `1000:1000` or `501:20` on macOS). The image entrypoint prepares data ownership with these values. On Linux it uses the mounted runtime socket's group as the panel process group when dropping to `PUID`, so files retain your user ownership and the panel can access the socket. An explicit Compose `user:` override must grant socket access itself.
+
+Both Compose services forward the documented S3, login, request-limit and default resource settings from `.env`.
 
 New Minecraft containers inherit the panel process's UID/GID. Their startup step prepares required tools and repairs ownership of `/data` as root, then drops privileges before running server installers or Java. This keeps automatically generated mod configs editable in the panel. Set `PUID` to a nonzero UID to use this behavior. Custom server images must provide `su-exec` or `gosu`, or an Alpine/Debian package manager to install one.
 
@@ -346,6 +348,13 @@ restored, or pruned. To relocate them, stop the panel and copy their server-ID
 directories to the new backup root without changing filenames. The panel
 database remains in its original location.
 
+Backup uploads accept validated `.tar.gz` snapshots (up to 2 GiB compressed,
+8 GiB expanded, 100,000 entries). Backups briefly stop and then resume an
+originally running server to capture consistent files. Restores stop the server,
+stage and validate the archive, replace the complete data tree, and retain the
+previous tree under `servers/.mcm-recovery-*` for recovery. A restored server
+remains stopped until an administrator starts it.
+
 ### Port Exposure & Multi-Server Networking
 
 - **Direct Connections**: Each server container can publish its game port directly to the host network within `MCM_PORT_RANGE` (default `25565-25665`).
@@ -368,7 +377,7 @@ Enable the API socket as the user that will own the panel and server data:
 ```sh
 systemctl --user enable --now podman.socket
 cp .env.example .env
-# Set MCM_SESSION_SECRET in .env.
+# Review storage paths and runtime settings in .env.
 export MCM_PODMAN_SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
 podman compose -f podman-compose.yml up -d --build
 ```
@@ -490,7 +499,7 @@ service lifecycle and recovery commands.
 | `CONTAINER_HOST` | *(empty)* | Podman endpoint fallback when `MCM_CONTAINER_HOST` and `DOCKER_HOST` are unset. |
 | `MCM_PODMAN_SOCKET` | `/run/podman/podman.sock` | Absolute host socket path mounted by `podman-compose.yml`, without `unix://`; set explicitly for rootless or VM deployments. |
 | `PUID` / `PGID` | `1000` / `1000` | UID/GID the panel runs as and applies to the data directory. |
-| `MCM_SESSION_SECRET` | *(required)* | Secret key used to sign session cookies. |
+| `MCM_TRUSTED_PROXIES` | *(empty)* | Comma-separated trusted reverse proxy IPs/CIDRs for client IP forwarding. Sessions use random tokens whose hashes are persisted in SQLite. |
 | `MCM_HTTP_ONLY` | `false` | Serve plain HTTP instead of native HTTPS, for local development or a TLS-terminating reverse proxy. Cannot be combined with supplied certificate paths. |
 | `MCM_TLS` | `false` | Force Secure cookies when using HTTP behind an HTTPS reverse proxy. Native HTTPS always enables Secure cookies. |
 | `MCM_TLS_CERT` | *(empty)* | Path to TLS certificate (PEM). Without a supplied pair, MCM generates and reuses `$MCM_DATA_DIR/tls/cert.pem` and `key.pem`. |
@@ -788,6 +797,12 @@ Choose the provider under **App Settings → DNS Providers** and use **Test Conn
 ---
 
 ## Development
+
+Run `make verify` from the repository root for the complete quality gate:
+Go static and formatting checks, backend tests, race tests, deployment tests,
+and frontend type checks, lint, tests and production build. Install frontend
+dependencies with `pnpm --dir web install --frozen-lockfile` first. The committed
+GitHub Actions workflow runs the same gate.
 
 The running binary's commit and build time appear under **App Settings → Updates →
 Panel software** and in `mcm --version`. Managed Linux installations can check

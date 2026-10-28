@@ -8,6 +8,7 @@ BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 build:
 	cd web && pnpm build
 	@if [ -d web/dist ]; then \
+		mkdir -p internal/web/dist; \
 		cp -R web/dist/* internal/web/dist/; \
 		echo "embedded web/dist from frontend build"; \
 	else \
@@ -35,3 +36,14 @@ lint:
 
 tidy:
 	go mod tidy
+
+.PHONY: test-web verify test-race
+test-web:
+	cd web && pnpm typecheck && pnpm lint && pnpm test && pnpm build
+
+test-race:
+	go test -race ./internal/servers ./internal/api ./internal/backups ./internal/proxy ./internal/auth ./internal/storage
+
+# The release gate covers backend, browser contracts and deployment transactions.
+verify: build
+	$(MAKE) lint test test-race test-deploy test-web

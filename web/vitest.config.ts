@@ -6,6 +6,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   test: {
     environment: 'jsdom',
+    // Bound DOM-worker memory and CPU so interaction tests remain stable in CI.
+    maxWorkers: 4,
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: true,
