@@ -1,16 +1,19 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
 import { UpdateCheckerSettings } from '../src/components/update-checker-settings';
 import { UpdateAvailableBadge } from '../src/components/update-available-badge';
 import type { UpdateCheckerStatus } from '../src/api/types';
+import { useUpdateChecker } from '../src/lib/use-update-checker';
+import { announceUpdateDiscovery } from '../src/lib/update-discovery';
 
 const disabled: UpdateCheckerStatus = { enabled: false, running: false, timezone: 'Asia/Bangkok', servers: {} };
 const enabled: UpdateCheckerStatus = { ...disabled, enabled: true, next_check_at: '2026-10-28T17:00:00Z' };
 
 describe('Update checker', () => {
   beforeEach(() => { vi.restoreAllMocks(); vi.spyOn(api, 'getUpdateChecker').mockResolvedValue(disabled); });
+  afterEach(() => vi.unstubAllGlobals());
 
   it('starts opted out and saves opt-in before allowing a fleet scan', async () => {
     const user = userEvent.setup();
@@ -56,5 +59,30 @@ describe('Update checker', () => {
     expect(screen.getByText('Update Available')).toHaveAttribute('title', '1 plugin/mod updates');
     rerender(<UpdateAvailableBadge result={{ checked_at: '', software: { supported: true, available: false } }} />);
     expect(screen.queryByText('Update Available')).not.toBeInTheDocument();
+  });
+
+  it.each(['versions', 'builds'])('refreshes badges immediately after querying software %s with nightly checks off', async (catalog) => {
+    const discovered: UpdateCheckerStatus = { ...disabled, servers: { paper: { checked_at: '', software: { supported: true, available: true, latest_version: '1.21.4', latest_build: '227' } } } };
+    vi.mocked(api.getUpdateChecker).mockResolvedValueOnce(disabled).mockResolvedValue(discovered);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json([])));
+    const { result } = renderHook(() => useUpdateChecker());
+    await waitFor(() => expect(result.current.status).toEqual(disabled));
+    await act(async () => {
+      if (catalog === 'versions') await api.jarVersions('paper');
+      else await api.jarBuilds('paper', '1.21.4');
+    });
+    await waitFor(() => expect(result.current.status).toEqual(discovered));
+    expect(api.getUpdateChecker).toHaveBeenCalledTimes(2);
+  });
+
+  it('reloads discoveries that arrive while an older status request is still pending', async () => {
+    let resolveInitial!: (value: UpdateCheckerStatus) => void;
+    const initial = new Promise<UpdateCheckerStatus>((resolve) => { resolveInitial = resolve; });
+    vi.mocked(api.getUpdateChecker).mockReturnValueOnce(initial).mockResolvedValue(enabled);
+    const { result } = renderHook(() => useUpdateChecker());
+    act(() => { announceUpdateDiscovery([]); });
+    await act(async () => { resolveInitial(disabled); });
+    await waitFor(() => expect(result.current.status).toEqual(enabled));
+    expect(api.getUpdateChecker).toHaveBeenCalledTimes(2);
   });
 });

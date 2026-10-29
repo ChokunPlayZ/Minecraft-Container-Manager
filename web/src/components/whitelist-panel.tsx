@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
@@ -9,6 +10,8 @@ import { Label } from './ui/label';
 import { useModal } from './ui/modal';
 
 export function WhitelistPanel({ server }: { server: Server }) {
+  const can = usePermissions();
+  const canManage = can('whitelist.manage', server.id);
   const [entries, setEntries] = useState<WhitelistEntry[]>([]);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -78,7 +81,7 @@ export function WhitelistPanel({ server }: { server: Server }) {
               }}
             />
           </div>
-          <Button onClick={() => void add()} disabled={busy || !name.trim()}>
+          <Button onClick={() => void add()} disabled={!canManage || busy || !name.trim()}>
             <Plus className="h-4 w-4" /> {busy ? 'Adding...' : 'Add'}
           </Button>
         </div>
@@ -103,6 +106,7 @@ export function WhitelistPanel({ server }: { server: Server }) {
                 size="icon"
                 aria-label={`Remove ${e.name}`}
                 title="Remove from whitelist"
+                disabled={!canManage}
                 onClick={() => void remove(e.name)}
               >
                 <Trash2 className="h-4 w-4" />

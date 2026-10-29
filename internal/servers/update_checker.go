@@ -78,10 +78,9 @@ func (s *Store) UpdateCheckerStatus(ctx context.Context) (*UpdateCheckerStatus, 
 	running := s.updateCheckRunning
 	s.updateCheckMu.Unlock()
 	status := &UpdateCheckerStatus{Enabled: enabled, Running: running, Timezone: schedules.DefaultTimezone(), Servers: map[string]ServerUpdateCheck{}}
-	if !enabled {
-		return status, nil
+	if enabled {
+		status.NextCheckAt = nextUpdateCheck(time.Now()).UTC().Format(time.RFC3339)
 	}
-	status.NextCheckAt = nextUpdateCheck(time.Now()).UTC().Format(time.RFC3339)
 	err = s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'update_checker_last_checked'`).Scan(&status.LastChecked)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -105,7 +104,16 @@ func (s *Store) UpdateCheckerStatus(ctx context.Context) (*UpdateCheckerStatus, 
 		}
 		status.Servers[id] = result
 	}
-	return status, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.applySoftwareCatalog(ctx, status); err != nil {
+		return nil, err
+	}
+	return status, nil
 }
 
 func (s *Store) CachedModUpdates(ctx context.Context, id string) (*ServerModUpdatesResponse, error) {

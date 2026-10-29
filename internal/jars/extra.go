@@ -86,7 +86,7 @@ func (r *Resolver) ForgeGameVersions(ctx context.Context) ([]string, error) {
 	for v := range meta {
 		versions = append(versions, v)
 	}
-	return sortedStrings(versions), nil
+	return r.observeVersions(ctx, TypeForge, sortedStrings(versions)), nil
 }
 
 // ForgeBuilds returns the Forge builds for a Minecraft version.
@@ -105,7 +105,7 @@ func (r *Resolver) ForgeBuilds(ctx context.Context, version string) ([]string, e
 	sort.Slice(out, func(i, j int) bool {
 		return CompareVersionTokens(out[i], out[j]) > 0
 	})
-	return out, nil
+	return r.observeBuilds(ctx, TypeForge, version, out), nil
 }
 
 // NeoForgeGameVersions returns the Minecraft versions supported by NeoForge.
@@ -130,7 +130,7 @@ func (r *Resolver) NeoForgeGameVersions(ctx context.Context) ([]string, error) {
 				}
 			}
 			if len(out) > 0 {
-				return sortedStrings(out), nil
+				return r.observeVersions(ctx, TypeNeoForge, sortedStrings(out)), nil
 			}
 		}
 	}
@@ -148,6 +148,9 @@ func (r *Resolver) NeoForgeGameVersions(ctx context.Context) ([]string, error) {
 		return []string{"1.20.1", "1.20.2", "1.20.4", "1.20.6", "1.21", "1.21.1", "1.21.3", "1.21.4"}, nil
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return []string{"1.20.1", "1.20.2", "1.20.4", "1.20.6", "1.21", "1.21.1", "1.21.3", "1.21.4"}, nil
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -165,7 +168,7 @@ func (r *Resolver) NeoForgeGameVersions(ctx context.Context) ([]string, error) {
 				versions = append(versions, mc)
 			}
 		}
-		return sortedStrings(versions), nil
+		return r.observeVersions(ctx, TypeNeoForge, sortedStrings(versions)), nil
 	}
 
 	return []string{"1.20.1", "1.20.2", "1.20.4", "1.20.6", "1.21", "1.21.1", "1.21.3", "1.21.4"}, nil
@@ -205,7 +208,7 @@ func (r *Resolver) NeoForgeBuilds(ctx context.Context, version string) ([]string
 				}
 			}
 			if len(out) > 0 {
-				return out, nil
+				return r.observeBuilds(ctx, TypeNeoForge, version, out), nil
 			}
 		}
 	}
@@ -226,6 +229,9 @@ func (r *Resolver) NeoForgeBuilds(ctx context.Context, version string) ([]string
 		return []string{"latest"}, nil
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return []string{"latest"}, nil
+	}
 
 	var xmlMeta NeoForgeMavenMetadata
 	if err := xml.NewDecoder(resp.Body).Decode(&xmlMeta); err != nil {
@@ -248,7 +254,7 @@ func (r *Resolver) NeoForgeBuilds(ctx context.Context, version string) ([]string
 	sort.Slice(out, func(i, j int) bool {
 		return CompareVersionTokens(out[i], out[j]) > 0
 	})
-	return out, nil
+	return r.observeBuilds(ctx, TypeNeoForge, version, out), nil
 }
 
 var spigotVersionRegex = regexp.MustCompile(`href="([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[a-zA-Z0-9.]+)?)\.json"`)
@@ -270,6 +276,9 @@ func (r *Resolver) SpigotGameVersions(ctx context.Context) ([]string, error) {
 		return r.PaperVersions(ctx)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return r.PaperVersions(ctx)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -283,7 +292,7 @@ func (r *Resolver) SpigotGameVersions(ctx context.Context) ([]string, error) {
 		for v := range testVersions {
 			out = append(out, v)
 		}
-		return sortedStrings(out), nil
+		return r.observeVersions(ctx, TypeSpigot, sortedStrings(out)), nil
 	}
 
 	// Parse HTML directory listing
@@ -299,7 +308,7 @@ func (r *Resolver) SpigotGameVersions(ctx context.Context) ([]string, error) {
 	if len(versions) == 0 {
 		return r.PaperVersions(ctx)
 	}
-	return sortedStrings(versions), nil
+	return r.observeVersions(ctx, TypeSpigot, sortedStrings(versions)), nil
 }
 
 // SpigotBuilds returns available builds for a Spigot version.
@@ -315,7 +324,7 @@ func (r *Resolver) PurpurVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, "https://api.purpurmc.org/v2/purpur", &res); err != nil {
 		return nil, err
 	}
-	return res.Versions, nil
+	return r.observeVersions(ctx, TypePurpur, res.Versions), nil
 }
 
 // PurpurBuilds returns build numbers for a Purpur version.
@@ -338,12 +347,12 @@ func (r *Resolver) PurpurBuilds(ctx context.Context, version string) ([]string, 
 		if strings.HasSuffix(targetVer, ".0") {
 			trimmed := strings.TrimSuffix(targetVer, ".0")
 			if err2 := r.getJSON(ctx, fmt.Sprintf("https://api.purpurmc.org/v2/purpur/%s", trimmed), &res); err2 == nil {
-				return res.Builds.All, nil
+				return r.observeBuilds(ctx, TypePurpur, targetVer, res.Builds.All), nil
 			}
 		}
 		return nil, err
 	}
-	return res.Builds.All, nil
+	return r.observeBuilds(ctx, TypePurpur, targetVer, res.Builds.All), nil
 }
 
 // FoliaVersions returns supported Folia game versions.
@@ -352,7 +361,7 @@ func (r *Resolver) FoliaVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, r.PaperBase+"/projects/folia", &p); err != nil {
 		return nil, err
 	}
-	return flattenPaperVersions(p.Versions), nil
+	return r.observeVersions(ctx, TypeFolia, flattenPaperVersions(p.Versions)), nil
 }
 
 // FoliaBuilds returns builds for a Folia version.
@@ -368,7 +377,7 @@ func (r *Resolver) FoliaBuilds(ctx context.Context, version string) ([]string, e
 	sort.SliceStable(out, func(i, j int) bool {
 		return CompareVersionTokens(out[i], out[j]) > 0
 	})
-	return out, nil
+	return r.observeBuilds(ctx, TypeFolia, version, out), nil
 }
 
 // WaterfallVersions returns supported Waterfall versions.
@@ -377,7 +386,7 @@ func (r *Resolver) WaterfallVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, r.PaperBase+"/projects/waterfall", &p); err != nil {
 		return nil, err
 	}
-	return flattenPaperVersions(p.Versions), nil
+	return r.observeVersions(ctx, TypeWaterfall, flattenPaperVersions(p.Versions)), nil
 }
 
 // WaterfallBuilds returns builds for a Waterfall version.
@@ -390,7 +399,7 @@ func (r *Resolver) WaterfallBuilds(ctx context.Context, version string) ([]strin
 	for _, b := range raw {
 		out = append(out, strconv.Itoa(b.ID))
 	}
-	return out, nil
+	return r.observeBuilds(ctx, TypeWaterfall, version, out), nil
 }
 
 // VelocityVersions returns supported Velocity versions.
@@ -399,7 +408,7 @@ func (r *Resolver) VelocityVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, r.PaperBase+"/projects/velocity", &p); err != nil {
 		return nil, err
 	}
-	return flattenPaperVersions(p.Versions), nil
+	return r.observeVersions(ctx, TypeVelocity, flattenPaperVersions(p.Versions)), nil
 }
 
 // VelocityBuilds returns builds for a Velocity version.
@@ -412,7 +421,7 @@ func (r *Resolver) VelocityBuilds(ctx context.Context, version string) ([]string
 	for _, b := range raw {
 		out = append(out, strconv.Itoa(b.ID))
 	}
-	return out, nil
+	return r.observeBuilds(ctx, TypeVelocity, version, out), nil
 }
 
 // QuiltGameVersions returns Quilt game versions.
@@ -427,7 +436,7 @@ func (r *Resolver) QuiltGameVersions(ctx context.Context) ([]string, error) {
 	for _, g := range games {
 		out = append(out, g.Version)
 	}
-	return out, nil
+	return r.observeVersions(ctx, TypeQuilt, out), nil
 }
 
 // QuiltLoaders returns Quilt loader versions for a game version.
@@ -447,7 +456,7 @@ func (r *Resolver) QuiltLoaders(ctx context.Context, version string) ([]string, 
 	if len(out) == 0 {
 		return []string{"latest"}, nil
 	}
-	return out, nil
+	return r.observeBuilds(ctx, TypeQuilt, version, out), nil
 }
 
 // MohistVersions returns supported Mohist game versions that have available builds.
@@ -506,7 +515,7 @@ func (r *Resolver) MohistVersions(ctx context.Context) ([]string, error) {
 	sort.SliceStable(valid, func(i, j int) bool {
 		return CompareVersionTokens(valid[i], valid[j]) > 0
 	})
-	return valid, nil
+	return r.observeVersions(ctx, TypeMohist, valid), nil
 }
 
 // MohistBuilds returns builds for a Mohist version.
@@ -526,7 +535,7 @@ func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, 
 			sort.SliceStable(out, func(i, j int) bool {
 				return CompareVersionTokens(out[i], out[j]) > 0
 			})
-			return out, nil
+			return r.observeBuilds(ctx, TypeMohist, version, out), nil
 		}
 	}
 
@@ -555,7 +564,7 @@ func (r *Resolver) MohistBuilds(ctx context.Context, version string) ([]string, 
 						sort.SliceStable(out, func(i, j int) bool {
 							return CompareVersionTokens(out[i], out[j]) > 0
 						})
-						return out, nil
+						return r.observeBuilds(ctx, TypeMohist, version, out), nil
 					}
 				}
 			}
@@ -614,7 +623,7 @@ func (r *Resolver) YouerVersions(ctx context.Context) ([]string, error) {
 	sort.SliceStable(valid, func(i, j int) bool {
 		return CompareVersionTokens(valid[i], valid[j]) > 0
 	})
-	return valid, nil
+	return r.observeVersions(ctx, TypeYouer, valid), nil
 }
 
 // YouerBuilds returns builds for a Youer version.
@@ -633,7 +642,7 @@ func (r *Resolver) YouerBuilds(ctx context.Context, version string) ([]string, e
 			sort.SliceStable(out, func(i, j int) bool {
 				return CompareVersionTokens(out[i], out[j]) > 0
 			})
-			return out, nil
+			return r.observeBuilds(ctx, TypeYouer, version, out), nil
 		}
 	}
 	if ctx.Err() != nil {
@@ -663,7 +672,7 @@ func (r *Resolver) SpongeVersions(ctx context.Context) ([]string, error) {
 	if len(out) == 0 {
 		return []string{"1.21.1", "1.20.4", "1.19.4", "1.18.2", "1.16.5", "1.12.2"}, nil
 	}
-	return sortedStrings(out), nil
+	return r.observeVersions(ctx, TypeSponge, sortedStrings(out)), nil
 }
 
 // GeyserVersions returns supported Geyser versions.
@@ -674,7 +683,7 @@ func (r *Resolver) GeyserVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, "https://download.geysermc.org/v2/projects/geyser", &res); err != nil {
 		return []string{"2.11.3", "2.11.2", "2.11.1", "2.11.0"}, nil
 	}
-	return res.Versions, nil
+	return r.observeVersions(ctx, TypeGeyser, res.Versions), nil
 }
 
 // GeyserBuilds returns builds for a Geyser version.
@@ -694,7 +703,7 @@ func (r *Resolver) GeyserBuilds(ctx context.Context, version string) ([]string, 
 	if len(out) == 0 {
 		return []string{"latest"}, nil
 	}
-	return out, nil
+	return r.observeBuilds(ctx, TypeGeyser, version, out), nil
 }
 
 // BungeeCordBuilds returns available BungeeCord Jenkins builds.
@@ -711,7 +720,7 @@ func (r *Resolver) BungeeCordBuilds(ctx context.Context) ([]string, error) {
 	for _, b := range res.Builds {
 		out = append(out, strconv.Itoa(b.Number))
 	}
-	return out, nil
+	return r.observeBuilds(ctx, TypeBungeeCord, "latest", out), nil
 }
 
 func flattenPaperVersions(versions map[string][]string) []string {

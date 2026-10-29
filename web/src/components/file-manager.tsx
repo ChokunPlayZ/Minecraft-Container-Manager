@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Archive,
@@ -80,6 +81,9 @@ function isEditable(entry: FileEntry): boolean {
 }
 
 export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNBTDirtyChange?: (dirty: boolean) => void }) {
+  const can = usePermissions();
+  const canWrite = can('files.write', server.id);
+  const canDelete = can('files.delete', server.id);
   const [nbtPath, setNBTPath] = useState<string | null>(null);
   const [cwd, setCwd] = useState('');
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -488,23 +492,23 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
             e.target.value = '';
           }}
         />
-        <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={busy}>
+        <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={!canWrite || busy}>
           <Upload className="h-4 w-4" /> Upload
         </Button>
-        <Button variant="outline" size="sm" onClick={() => void handleMkdir()} disabled={busy}>
+        <Button variant="outline" size="sm" onClick={() => void handleMkdir()} disabled={!canWrite || busy}>
           <FolderPlus className="h-4 w-4" /> New folder
         </Button>
-        <Button variant="outline" size="sm" onClick={() => void newFile()} disabled={busy || editorBusy}>
+        <Button variant="outline" size="sm" onClick={() => void newFile()} disabled={!canWrite || busy || editorBusy}>
           <FilePlus2 className="h-4 w-4" /> New file
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setShowUrlInput((v) => !v)} disabled={busy}>
+        <Button variant="outline" size="sm" onClick={() => setShowUrlInput((v) => !v)} disabled={!canWrite || busy}>
           <Globe className="h-4 w-4" /> From URL
         </Button>
         <Button
           variant="outline"
           size="sm"
           onClick={() => void handleArchiveSelected()}
-          disabled={busy || selectedNames.size === 0}
+          disabled={!canDelete || busy || selectedNames.size === 0}
           title="Zip selected items"
         >
           <Archive className="h-4 w-4 mr-1 text-primary" /> Zip ({selectedNames.size})
@@ -529,7 +533,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
               value={urlName}
               onChange={(e) => setUrlName(e.target.value)}
             />
-            <Button size="sm" onClick={() => void handleDownloadFromUrl()} disabled={busy || !url.trim()}>
+            <Button size="sm" onClick={() => void handleDownloadFromUrl()} disabled={!canWrite || busy || !url.trim()}>
               Download
             </Button>
           </div>
@@ -710,6 +714,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                         size="icon"
                         title="Unzip archive"
                         aria-label="Unzip"
+                        disabled={!canWrite}
                         onClick={() => void handleUnzip(e)}
                       >
                         <Layers className="h-4 w-4 text-sky-600" />
@@ -720,12 +725,13 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                         size="icon"
                         title="Archive as zip"
                         aria-label="Archive"
+                        disabled={!canWrite}
                         onClick={() => void handleArchive(e)}
                       >
                         <Archive className="h-4 w-4" />
                       </Button>
                     )}
-                    <Button variant="ghost" size="icon" title="Rename" aria-label="Rename" onClick={() => void handleRename(e)}>
+                    <Button variant="ghost" size="icon" title="Rename" aria-label="Rename" disabled={!canWrite} onClick={() => void handleRename(e)}>
                       <TextCursorInput className="h-4 w-4" />
                     </Button>
                     <Button
@@ -733,6 +739,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                       size="icon"
                       title="Delete"
                       aria-label="Delete"
+                      disabled={!canDelete}
                       onClick={() => void handleDelete(e)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -767,7 +774,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                   <Button
                     size="sm"
                     onClick={() => void saveEditor()}
-                    disabled={editorBusy || !editorPath || editorRevision === null}
+                    disabled={!canWrite || editorBusy || !editorPath || editorRevision === null}
                   >
                     <Save className="h-4 w-4" /> {editorBusy ? 'Saving...' : 'Save'}
                   </Button>
@@ -779,7 +786,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
               {editorError && !editorConflict && <p role="alert" className="border-b px-3 py-2 text-sm text-destructive">{editorError}</p>}
               <Textarea
                 aria-label="File content"
-                disabled={editorBusy || editorRevision === null}
+                disabled={!canWrite || editorBusy || editorRevision === null}
                 className="min-h-[26rem] flex-1 resize-none rounded-none border-0 bg-transparent font-mono text-xs leading-relaxed whitespace-pre focus-visible:ring-0"
                 value={editorContent}
                 spellCheck={false}

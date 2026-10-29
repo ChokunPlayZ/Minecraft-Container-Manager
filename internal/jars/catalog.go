@@ -10,6 +10,20 @@ import (
 
 var ErrUpdateCheckUnsupported = errors.New("automatic software checks are unavailable for this server type")
 
+func (r *Resolver) observeVersions(ctx context.Context, kind JarType, versions []string) []string {
+	if r.ObserveCatalog != nil {
+		r.ObserveCatalog(ctx, string(kind), "", versions)
+	}
+	return versions
+}
+
+func (r *Resolver) observeBuilds(ctx context.Context, kind JarType, version string, builds []string) []string {
+	if r.ObserveCatalog != nil {
+		r.ObserveCatalog(ctx, string(kind), version, builds)
+	}
+	return builds
+}
+
 func (r *Resolver) ForUpdateCheck() *Resolver {
 	copy := *r
 	client := *r.Client

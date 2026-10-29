@@ -205,7 +205,7 @@ App settings remain at `/settings`; personal settings are at `/user-settings`. E
 
 Enable **App Settings → Updates → Enable nightly update checks** to check server software, plugins, and mods at **00:00 in the panel timezone** (`TZ`, UTC by default). This is off by default. **Check now** starts an immediate fleet scan after opting in; scans never install updates or restart servers.
 
-Saved results survive panel restarts. Servers with available updates display an **Update Available** badge on the dashboard and server page. The server page shows the software version/build and plugin/mod update count, with actions to review them. Opening the installed plugins/mods list reads saved results; use its re-check action for an explicit refresh. Changing software settings or installed artifacts invalidates corresponding results.
+Saved results survive panel restarts. Servers with available updates display an **Update Available** badge on the dashboard and server page. Successful software catalog lookups also remember published versions and builds, including lookups while browsing releases, creating a server, or changing its software. These discoveries immediately mark matching servers as outdated, even with nightly checks off. Previously known newer releases are retained if a later lookup fails or returns older data. Builds are compared only within the same software type and game version. The server page shows the software version/build and plugin/mod update count, with actions to review them. Opening the installed plugins/mods list reads saved results; use its re-check action for an explicit refresh. Changing software settings or installed artifacts invalidates corresponding scan results; saved catalog discoveries are compared against the new software settings.
 
 Each fleet scan starts with a fresh shared response cache. Repeated provider requests, including failures, are reused throughout that scan. Modrinth hash results are reused even when servers have overlapping but different mod lists; game version and loader filters stay separate. Software catalog responses are shared too. Failed checks retain previously known updates and show a warning.
 
@@ -603,10 +603,47 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | `POST` | `/api/passkey/login/begin` | Begin WebAuthn passkey authentication ceremony. |
 | `POST` | `/api/passkey/login/finish` | Finalize WebAuthn passkey login. |
 
+### Panel users and permissions
+
+Use **Users** to create accounts, select a role, assign servers, disable sign-in, or edit individual permissions. The four roles are:
+
+| Role | Access |
+| --- | --- |
+| Administrator | Every server and all panel administration. |
+| Operator | Operates assigned servers; edits configuration, files, mods and worlds; manages players, schedules and profiling; creates and downloads backups. Cannot delete servers, restore/delete backups, or administer the panel. |
+| Viewer | Reads assigned server status, console, logs, players, installed content, worlds, backup lists, schedules and monitoring. Cannot change server data or download files/backups. |
+| Custom | An explicit selection from 39 capabilities, grouped by feature. |
+
+Existing accounts retain administrator access when the database migrates. Onboarding creates an administrator. New API accounts default to Viewer with **no server access**. Select individual servers or enable **All current and future servers**. The same permissions apply to every assigned server; global panel capabilities are independent of server selection.
+
+The API checks capabilities and server scope on every authenticated request, including backup downloads/deletion and console/task/backup streams. Server lists and update-check results exclude inaccessible servers. Access changes revoke the target account’s sessions, preserving the acting session only when editing your own active account. Open event streams recheck access within five seconds. Disabled accounts cannot use passwords, passkeys, or existing sessions. The database prevents disabling, deleting, or demoting the last active administrator. Every active user can still edit their own email/password and manage their own MFA/passkeys.
+
+Permissions for creating servers require access to all servers. Copying also requires `servers.create` and `files.read`. Server capabilities require `servers.view`. Managing persistent schedules requires `servers.power`, `console.write`, and `backups.create`; saved schedules remain shared server automation until paused or removed. Player OP/de-OP actions additionally require `ops.manage`, and custom player commands require `console.write`.
+
+The permission descriptions identify sensitive capabilities: file access and archives can contain secrets; writing files, restoring backups, installing content, and console commands grant broad control over an assigned Minecraft server. `users.manage` includes creating administrators and resetting other users’ passwords. `settings.manage` includes shared credentials, while `panel.update` and `updates.manage` control application updates and global update checks respectively.
+
+`GET /api/auth/me`, login, and onboarding responses include `role`, effective `permissions`, `all_servers`, `server_ids`, and `disabled`. `GET /api/permissions` supplies the permission catalog, presets, and available server assignments to users with `users.manage`. Create or update accounts with an optional complete `access` object:
+
+```json
+{
+  "email": "operator@example.com",
+  "password": "choose-a-strong-password",
+  "access": {
+    "role": "custom",
+    "permissions": ["servers.view", "servers.power", "console.read"],
+    "all_servers": false,
+    "server_ids": ["server-uuid"],
+    "disabled": false
+  }
+}
+```
+
+On PATCH, omit `access` to preserve permissions. An included `access` object replaces the policy; unknown roles, unknown permissions, and nonexistent server assignments are rejected. Missing authentication returns `401`; insufficient capabilities or server scope return `403` with error code `forbidden`. Shared settings and user administration are protected independently from server operations.
+
 ### Server Lifecycle & Management
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/servers` | List all managed Minecraft servers with status and uptime. |
+| `GET` | `/api/servers` | List accessible Minecraft servers with status and uptime. |
 | `POST` | `/api/servers` | Create a new server (flavor, version, build, RAM, CPU, ports, java_version). |
 | `GET` | `/api/servers/:id` | Get server configuration, container state, and rebuild warning status. |
 | `PATCH` | `/api/servers/:id` | Update server configuration (RAM, CPU, ports, java_version). |
@@ -748,8 +785,9 @@ Choose the provider under **App Settings → DNS Providers** and use **Test Conn
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/users` | List all registered user accounts. |
-| `POST` | `/api/users` | Create a new user account. |
-| `PATCH` | `/api/users/:id` | Update user email or password. |
+| `GET` | `/api/permissions` | Read capability catalog, role presets and server assignments (`users.manage`). |
+| `POST` | `/api/users` | Create an account with optional access policy (`users.manage`). |
+| `PATCH` | `/api/users/:id` | Update your own email/password, or manage another account and its access with `users.manage`. |
 | `DELETE` | `/api/users/:id` | Delete user account and associated passkeys/sessions. |
 | `GET` | `/api/ports/available` | Check available host ports in allocation range. |
 | `GET` | `/api/settings` | Fetch global panel settings (DNS, port range). |

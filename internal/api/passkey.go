@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -166,6 +167,11 @@ func (s *Server) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal", "could not update passkey")
 		return
 	}
+	user, err := s.users.GetByID(r.Context(), wu.UserID())
+	if err != nil || user.Disabled {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "account is unavailable")
+		return
+	}
 	s.issueSession(w, r, wu.UserID())
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -181,6 +187,9 @@ func (s *Server) discoverableUserHandler(rawID, userHandle []byte) (webauthn.Use
 	user, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if user.Disabled {
+		return nil, errors.New("account is disabled")
 	}
 	creds, err := s.passkeys.ListByUser(ctx, userID)
 	if err != nil {

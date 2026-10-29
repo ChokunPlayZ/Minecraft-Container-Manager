@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/mcm-panel/mcm/internal/auth"
 	"github.com/mcm-panel/mcm/internal/servers"
 )
 
@@ -12,6 +13,14 @@ func (s *Server) handleGetUpdateChecker(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "could not read update checks")
 		return
+	}
+	if _, ok := r.Context().Value(ctxUser).(auth.User); ok {
+		user := s.currentUser(r)
+		for id := range status.Servers {
+			if !user.CanAccessServer(id) {
+				delete(status.Servers, id)
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, status)
 }

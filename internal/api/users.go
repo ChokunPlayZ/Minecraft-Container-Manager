@@ -11,18 +11,16 @@ import (
 
 const minPasswordLen = 8
 
-// Every authenticated user currently has the same privileges; user management
-// is treated as an admin capability for all authenticated session holders. A
-// dedicated RBAC system is intentionally out of scope.
-
 type createUserRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email    string       `json:"email"`
+	Password string       `json:"password"`
+	Access   *auth.Access `json:"access"`
 }
 
 type updateUserRequest struct {
-	Email    *string `json:"email"`
-	Password *string `json:"password"`
+	Email    *string      `json:"email"`
+	Password *string      `json:"password"`
+	Access   *auth.Access `json:"access"`
 }
 
 // handleListUsers returns all panel users.
@@ -40,6 +38,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req createUserRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if req.Access == nil {
+		req.Access = &auth.Access{Role: "viewer"}
+	}
+	if !s.validateAccess(w, r, req.Access) {
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
@@ -61,7 +65,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not hash password")
 		return
 	}
-	user, err := s.users.Create(r.Context(), req.Email, hash)
+	user, err := s.users.CreateWithAccess(r.Context(), req.Email, hash, *req.Access)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "could not create user")
 		return
@@ -80,11 +84,24 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
 	}
-	if req.Email == nil && req.Password == nil {
+	if req.Email == nil && req.Password == nil && req.Access == nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "nothing to update")
 		return
 	}
 
+	// Every account can update its own identity. Access changes and other
+	// accounts require the explicitly privileged user-management capability.
+	if !s.currentUser(r).Has("users.manage") && (id != s.currentUserID(r) || req.Access != nil) {
+		permissionDenied(w)
+		return
+	}
+	if req.Access != nil && !s.validateAccess(w, r, req.Access) {
+		return
+	}
+	if req.Access != nil && id == s.currentUserID(r) && req.Access.Disabled {
+		writeError(w, http.StatusBadRequest, "invalid_request", "You cannot disable your own account")
+		return
+	}
 	if _, err := s.users.GetByID(r.Context(), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "not_found", "user not found")
@@ -121,7 +138,11 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			keepToken = cookie.Value
 		}
 	}
-	if err := s.users.UpdateAccount(r.Context(), id, req.Email, hash, keepToken); err != nil {
+	if err := s.users.UpdateAccountAccess(r.Context(), id, req.Email, hash, keepToken, req.Access); err != nil {
+		if auth.IsLastAdministrator(err) {
+			writeError(w, http.StatusBadRequest, "last_administrator", "Keep at least one active administrator.")
+			return
+		}
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "email_taken", "a user with that email already exists")
 			return
@@ -157,6 +178,10 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.users.Delete(r.Context(), id); err != nil {
+		if auth.IsLastAdministrator(err) {
+			writeError(w, http.StatusBadRequest, "last_administrator", "Keep at least one active administrator.")
+			return
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "not_found", "user not found")
 			return

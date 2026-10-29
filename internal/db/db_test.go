@@ -70,3 +70,35 @@ func TestDNSMigrationPreservesExistingNames(t *testing.T) {
 		}
 	}
 }
+
+func TestPermissionsMigrationPreservesExistingAdministrators(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old-permissions.db")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.DB.Exec(`
+ INSERT INTO users (id,email,password_hash,created_at,updated_at) VALUES ('first','first@example.test','hash','now','now'),('second','second@example.test','hash','now','now');
+ DROP TRIGGER protect_last_administrator_update;
+ DROP TRIGGER protect_last_administrator_delete;
+ ALTER TABLE users DROP COLUMN role;
+ ALTER TABLE users DROP COLUMN permissions;
+ ALTER TABLE users DROP COLUMN all_servers;
+ ALTER TABLE users DROP COLUMN server_ids;
+ ALTER TABLE users DROP COLUMN disabled;
+ DELETE FROM schema_migrations WHERE name='0024_user_permissions.sql';`)
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	store.Close()
+	migrated, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var count int
+	if err := migrated.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE role='administrator' AND all_servers=1 AND disabled=0 AND permissions='[]' AND server_ids='[]'`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("legacy access changed: count=%d err=%v", count, err)
+	}
+}

@@ -1,3 +1,4 @@
+import { demoPermissionCatalog } from './demo-permissions';
 import { dnsProviders, isDNSProvider } from '../lib/dns-providers';
 import type { PanelUpdateStatus, UpdateCheckerStatus, DiscordSettings, DiscordSettingsInput, ScheduledTask, Server, PerformanceCollectionMode, PerformanceSettings, SparkReport, ServerType, Mod, ModProvider, DNSRecord } from './types';
 
@@ -284,10 +285,11 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
   if (path === '/api/passkey' && (!init.method || init.method === 'GET')) return [] as T;
 
   if (path === '/api/auth/me') {
-    return { id: 'admin-1', email: 'admin@mcm.panel' } as T;
+    return { id: 'admin-1', email: 'admin@mcm.panel', role: 'administrator', permissions: demoPermissionCatalog.roles[0].permissions, all_servers: true, server_ids: [], disabled: false } as T;
   }
+  if (path === '/api/permissions') return demoPermissionCatalog as T;
   if (path === '/api/users' && (!init.method || init.method === 'GET')) {
-    return { users: [{ id: 'admin-1', email: 'admin@mcm.panel', totp_enabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] } as T;
+    return { users: [{ id: 'admin-1', email: 'admin@mcm.panel', role: 'administrator', permissions: demoPermissionCatalog.roles[0].permissions, all_servers: true, server_ids: [], disabled: false, totp_enabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] } as T;
   }
   if (path === '/api/auth/csrf') {
     return { csrf_token: 'mock-csrf-token' } as T;

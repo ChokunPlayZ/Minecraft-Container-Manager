@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { renderWithAdmin as render } from '../src/test/auth';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
 import type { Server } from '../src/api/types';
@@ -179,6 +180,18 @@ describe('Container Rebuild Warnings', () => {
   });
 
   describe('DashboardRoute', () => {
+    it('shows discovered updates when nightly scans are disabled', async () => {
+      vi.spyOn(api, 'listServers').mockResolvedValue([serverClean]);
+      vi.spyOn(api, 'getUpdateChecker').mockResolvedValue({
+        enabled: false, running: false, timezone: 'Asia/Bangkok',
+        servers: { [serverClean.id]: { checked_at: '', software: { supported: true, available: true, latest_version: '1.21.4', latest_build: '227' } } },
+      });
+
+      render(<DashboardRoute />);
+
+      expect(await screen.findByText('Update Available')).toHaveAttribute('title', 'Software: 1.21.4 build 227');
+    });
+
     it('displays rebuild required badge only on servers that need rebuild', async () => {
       vi.spyOn(api, 'listServers').mockResolvedValue([serverNeedingRebuild, serverClean]);
 

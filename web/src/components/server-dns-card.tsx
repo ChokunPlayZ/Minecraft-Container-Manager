@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useState, useEffect, type FormEvent } from 'react';
 import { Globe, Check, Copy, ExternalLink, RefreshCw, Trash2, AlertCircle, ShieldCheck } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
@@ -19,6 +20,8 @@ export function ServerDNSCard({
   onDnsChanged?: (joinAddress: string) => void;
   bare?: boolean;
 }) {
+  const can = usePermissions();
+  const canManage = can('dns.manage', server.id);
   const [data, setData] = useState<ServerDNSResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [subdomain, setSubdomain] = useState('');
@@ -243,7 +246,7 @@ export function ServerDNSCard({
                   onChange={(e) => setSubdomain(e.target.value)}
                   placeholder="e.g. survival or @ for root"
                   className="font-mono"
-                  disabled={busy}
+                  disabled={!canManage || busy}
                 />
                 <span className="text-sm font-medium text-muted-foreground shrink-0">
                   .{effectiveDomain}
@@ -294,7 +297,7 @@ export function ServerDNSCard({
                     onChange={(e) => setTargetHost(e.target.value)}
                     placeholder="e.g. mc-node1.example.com"
                     className="text-xs font-mono"
-                    disabled={busy}
+                    disabled={!canManage || busy}
                   />
                   <p className="text-[11px] text-muted-foreground">
                     Defaults to the global Panel Target Host ({data?.record?.target || effectiveDomain}).
@@ -310,7 +313,7 @@ export function ServerDNSCard({
                       value={priority}
                       onChange={(e) => setPriority(Number(e.target.value))}
                       className="text-xs"
-                      disabled={busy}
+                      disabled={!canManage || busy}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -322,7 +325,7 @@ export function ServerDNSCard({
                       value={weight}
                       onChange={(e) => setWeight(Number(e.target.value))}
                       className="text-xs"
-                      disabled={busy}
+                      disabled={!canManage || busy}
                     />
                   </div>
                 </div>
@@ -330,7 +333,7 @@ export function ServerDNSCard({
             )}
 
             <div className="flex flex-wrap items-center gap-2 pt-2">
-              <Button type="submit" disabled={busy || !isConfigured}>
+              <Button type="submit" disabled={!canManage || busy || !isConfigured}>
                 {busy ? (
                   <>
                     <RefreshCw className="h-4 w-4 mr-1.5 animate-spin" />
@@ -348,7 +351,7 @@ export function ServerDNSCard({
                   type="button"
                   variant="outline"
                   className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  disabled={busy}
+                  disabled={!canManage || busy}
                   onClick={() => void handleRemove()}
                 >
                   <Trash2 className="h-4 w-4 mr-1.5" />

@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
@@ -35,6 +36,7 @@ import type { ModUpdateInfo } from '../api/mod-updates';
 import { ModJarPickerDialog } from './mod-jar-picker-dialog';
 
 export function ModsPanel({ server }: { server: Server }) {
+  const can = usePermissions();
   const [activeTab, setActiveTab] = useState<'installed' | 'modpacks' | 'updates' | 'version-helper' | 'browse'>('installed');
   const [items, setItems] = useState<Mod[]>([]);
   const [type, setType] = useState<'mods' | 'plugins'>('mods');
@@ -344,6 +346,15 @@ export function ModsPanel({ server }: { server: Server }) {
       m.name.toLowerCase().includes(installedSearch.toLowerCase()) ||
       m.file.toLowerCase().includes(installedSearch.toLowerCase()),
   );
+
+  if (!can('mods.manage', server.id)) return <div className="space-y-4">
+    <div><h2 className="text-lg font-semibold">Installed mods & plugins</h2><p className="mt-1 text-sm text-muted-foreground">You have read-only access to installed content.</p></div>
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {installedModpack && <p className="text-sm">Modpack: {installedModpack.name} · {installedModpack.version}</p>}
+    <Input aria-label="Search installed mods" placeholder="Search installed content…" value={installedSearch} onChange={(event) => setInstalledSearch(event.target.value)} />
+    <ul className="divide-y rounded-lg border bg-card">{items.filter((item) => item.name.toLowerCase().includes(installedSearch.toLowerCase())).map((item) => <li key={item.name} className="break-words p-4 text-sm">{item.name}</li>)}</ul>
+    {items.length === 0 && <p className="text-sm text-muted-foreground">No installed mods or plugins.</p>}
+  </div>;
 
   return (
     <>

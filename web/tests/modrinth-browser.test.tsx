@@ -1,6 +1,7 @@
+import { renderWithAdmin as render } from '../src/test/auth';
 import { catalogTarget } from './catalog-fixtures';
 import { clearRateLimitCache } from '../src/api/rate-limited-fetch';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';

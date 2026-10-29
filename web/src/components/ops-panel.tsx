@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, UserCog } from 'lucide-react';
 import { api, ApiError } from '../api/client';
@@ -9,6 +10,8 @@ import { Label } from './ui/label';
 import { useModal } from './ui/modal';
 
 export function OpsPanel({ server, refreshKey }: { server: Server; refreshKey: string }) {
+  const can = usePermissions();
+  const canManage = can('ops.manage', server.id);
   const [ops, setOps] = useState<Op[]>([]);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -78,7 +81,7 @@ export function OpsPanel({ server, refreshKey }: { server: Server; refreshKey: s
               }}
             />
           </div>
-          <Button onClick={() => void add()} disabled={busy || !name.trim()}>
+          <Button onClick={() => void add()} disabled={!canManage || busy || !name.trim()}>
             <Plus className="h-4 w-4" /> {busy ? 'Adding...' : 'Add'}
           </Button>
         </div>
@@ -107,6 +110,7 @@ export function OpsPanel({ server, refreshKey }: { server: Server; refreshKey: s
                 size="icon"
                 aria-label={`Remove ${o.name}`}
                 title="Remove operator"
+                disabled={!canManage}
                 onClick={() => void remove(o.name)}
               >
                 <Trash2 className="h-4 w-4" />

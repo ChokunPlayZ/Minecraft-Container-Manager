@@ -114,7 +114,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not look up user")
 		return
 	}
-	if err := auth.VerifyPassword(req.Password, user.PasswordHash); err != nil {
+	if err := auth.VerifyPassword(req.Password, user.PasswordHash); err != nil || user.Disabled {
 		s.loginLimit.record(ipKey, true, now)
 		s.loginLimit.record(accountKey, true, now)
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid email or password")

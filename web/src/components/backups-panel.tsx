@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, CheckCircle2, Download, Loader2, Plus, RefreshCw, RotateCcw, Search, Trash2, UploadCloud } from 'lucide-react';
 import { api, ApiError } from '../api/client';
@@ -19,6 +20,8 @@ function formatBytes(bytes: number): string {
 }
 
 export function BackupsPanel({ server }: { server: Server }) {
+  const can = usePermissions();
+  const canManage = can('backups.create', server.id);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
   const [name, setName] = useState('');
   const [storage, setStorage] = useState<'local' | 's3'>('local');
@@ -237,7 +240,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                 placeholder="pre-update"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                disabled={disabled}
+                disabled={disabled || !canManage}
               />
             </div>
             <div className="space-y-1.5">
@@ -246,14 +249,14 @@ export function BackupsPanel({ server }: { server: Server }) {
                 id="backup-storage"
                 value={storage}
                 onValueChange={(selectedValue) => setStorage(selectedValue as 'local' | 's3')}
-                disabled={disabled}
+                disabled={disabled || !canManage}
               >
                 <option value="local">Local Disk</option>
                 <option value="s3">S3 Cloud</option>
               </Select>
             </div>
             <div className="flex flex-wrap items-end gap-2 sm:col-span-2 xl:col-span-1">
-              <Button type="submit" disabled={disabled} className="flex-1 font-semibold">
+              <Button type="submit" disabled={disabled || !canManage} className="flex-1 font-semibold">
                 <Plus className="h-4 w-4 mr-1" /> {busy ? 'Processing…' : 'Create backup'}
               </Button>
               <input
@@ -261,7 +264,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                 type="file"
                 accept=".tar.gz"
                 aria-label="Upload backup archive"
-                disabled={disabled}
+                disabled={disabled || !canManage}
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
@@ -271,7 +274,7 @@ export function BackupsPanel({ server }: { server: Server }) {
               />
               <Button
                 variant="outline"
-                disabled={disabled}
+                disabled={disabled || !canManage}
                 onClick={() => fileInputRef.current?.click()}
                 title="Upload external backup archive"
                 className="font-medium"
@@ -374,7 +377,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                       aria-label="Download backup"
                       title="Download backup archive"
                       onClick={() => api.downloadBackupFile(b.id, `${b.name || 'backup'}.tar.gz`)}
-                      disabled={disabled || b.status !== 'completed'}
+                      disabled={disabled || !can('backups.download', server.id) || b.status !== 'completed'}
                     >
                       <Download className="h-4 w-4" />
                     </Button>
@@ -384,7 +387,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                       aria-label="Restore"
                       title="Restore this backup"
                       onClick={() => void restore(b.id)}
-                      disabled={disabled || b.status !== 'completed'}
+                      disabled={disabled || !can('backups.restore', server.id) || b.status !== 'completed'}
                     >
                       <RotateCcw className="h-4 w-4" />
                     </Button>
@@ -394,7 +397,7 @@ export function BackupsPanel({ server }: { server: Server }) {
                       aria-label="Delete"
                       title="Delete this backup"
                       onClick={() => void remove(b.id)}
-                      disabled={disabled}
+                      disabled={disabled || !can('backups.delete', server.id)}
                     >
                       {deleting === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-destructive" />}
                     </Button>

@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"github.com/mcm-panel/mcm/internal/auth"
 	"net/http"
+	"strings"
 
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -32,6 +34,18 @@ func (s *Server) handleRunPlayerCommand(w http.ResponseWriter, r *http.Request) 
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
+	}
+	if _, ok := r.Context().Value(ctxUser).(auth.User); ok {
+		action := strings.ToLower(strings.TrimSpace(in.Action))
+		user := s.currentUser(r)
+		if (action == "op" || action == "deop") && !user.Can("ops.manage", id) {
+			permissionDenied(w)
+			return
+		}
+		if action == "custom" && !user.Can("console.write", id) {
+			permissionDenied(w)
+			return
+		}
 	}
 	command, err := servers.BuildPlayerCommand(name, in.Action, in.Args)
 	if err != nil {

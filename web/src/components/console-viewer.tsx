@@ -18,7 +18,7 @@ const AUTO_SCROLL_THRESHOLD_PX = 24;
 
 const QUICK_COMMANDS = ['list', 'tps', 'status', 'help', 'save-all'];
 
-export function ConsoleViewer({ serverId, running }: { serverId: string; running?: boolean }) {
+export function ConsoleViewer({ serverId, running, canSend = true }: { serverId: string; running?: boolean; canSend?: boolean }) {
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [command, setCommand] = useState('');
@@ -106,7 +106,7 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
   async function sendCommand(cmdToSend?: string, e?: FormEvent) {
     e?.preventDefault();
     const text = (cmdToSend ?? command).trim();
-    if (!text || sending) return;
+    if (!text || sending || !canSend) return;
     setSending(true);
     try {
       await api.consoleCommand(serverId, text);
@@ -240,7 +240,7 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
                 variant="outline"
                 size="sm"
                 className="h-7 px-2 font-mono text-xs text-muted-foreground hover:text-foreground"
-                disabled={!running || sending}
+                disabled={!canSend || !running || sending}
                 onClick={() => void sendCommand(qc)}
               >
                 /{qc}
@@ -261,11 +261,11 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
             onChange={(e) => setCommand(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
-              running
+              !canSend ? 'You have read-only console access' : running
                 ? 'Enter command (e.g. say Hello, gamemode survival @a) — Press ↑/↓ for history'
                 : 'Start the server to send commands'
             }
-            disabled={!running || sending}
+            disabled={!canSend || !running || sending}
             aria-label="Console command"
             className="font-mono text-xs sm:text-sm"
           />
@@ -273,7 +273,7 @@ export function ConsoleViewer({ serverId, running }: { serverId: string; running
             type="submit"
             size="default"
             className="shrink-0 gap-1.5"
-            disabled={!running || sending || command.trim() === ''}
+            disabled={!canSend || !running || sending || command.trim() === ''}
             aria-label="Send command"
           >
             <Send className="h-4 w-4" />

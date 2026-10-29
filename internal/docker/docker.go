@@ -99,7 +99,10 @@ if [ ! -f "/data/run.sh" ] && [ ! -f "/data/server.jar" ]; then
       BUILD_REV="${SERVER_VERSION:-latest}"
       mkdir -p /tmp/buildtools
       cd /tmp/buildtools
-      java -Xmx${RAM_MB:-2048}M -Djava.awt.headless=true -jar "$INSTALLER" --rev "$BUILD_REV" --output-dir /data
+      # Numeric container UIDs may have no Java home directory. These options
+      # also reach Maven's child JVMs, keeping its repository writable.
+      JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Duser.home=/tmp/buildtools -Dmaven.repo.local=/tmp/buildtools/.m2/repository" \
+        java -Xmx${RAM_MB:-2048}M -Djava.awt.headless=true -jar "$INSTALLER" --rev "$BUILD_REV" --output-dir /data
       BUILD_EXIT=$?
       cd /data
       rm -rf /tmp/buildtools

@@ -238,7 +238,7 @@ func currentContainerConfig(srv *Server) ContainerConfig {
 		HostPort:          srv.HostPort,
 		JavaVersion:       srv.JavaVersion,
 		ExtraPorts:        ports,
-		EntrypointVersion: 2,
+		EntrypointVersion: 3,
 	}
 }
 
@@ -304,6 +304,12 @@ func checkRebuildNeeded(srv *Server, rawConfig string) (bool, []string) {
 	}
 	if applied.EntrypointVersion < 2 {
 		reasons = append(reasons, "Container runtime script updated to support clean process exit on crash")
+	}
+	if applied.EntrypointVersion < 3 {
+		switch srv.ServerType {
+		case "spigot", "bukkit", "craftbukkit":
+			reasons = append(reasons, "Container runtime script updated to fix the BuildTools Maven cache location")
+		}
 	}
 	return len(reasons) > 0, reasons
 }
@@ -398,7 +404,7 @@ func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, en
 	if dm != nil {
 		rt = dm
 	}
-	return &Store{
+	s := &Store{
 		db:                    handle.DB,
 		docker:                rt,
 		jars:                  jr,
@@ -412,6 +418,14 @@ func NewStore(handle *db.Store, dm *docker.Manager, jr *jars.Resolver, start, en
 		taskSubs:              make(map[string][]chan TaskProgress),
 		diskCache:             make(map[string]diskCacheEntry),
 	}
+	if jr != nil {
+		jr.ObserveCatalog = func(ctx context.Context, kind, version string, values []string) {
+			if err := s.rememberSoftwareCatalog(ctx, kind, version, values); err != nil {
+				log.Printf("remember software catalog: %v", err)
+			}
+		}
+	}
+	return s
 }
 
 func (s *Store) lockServer(id string) func() {

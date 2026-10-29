@@ -195,6 +195,9 @@ type Resolver struct {
 	NeoForgeBase   string
 	SpigotBase     string
 	BuildToolsURL  string
+	// ObserveCatalog receives successfully fetched versions (version is empty)
+	// or builds for a version. Configure it before using the resolver.
+	ObserveCatalog func(ctx context.Context, kind, version string, values []string)
 }
 
 // NewResolver returns a Resolver using production endpoints.
@@ -278,7 +281,7 @@ func (r *Resolver) PaperVersions(ctx context.Context) ([]string, error) {
 	if err := r.getJSON(ctx, r.PaperBase+"/projects/paper", &p); err != nil {
 		return nil, err
 	}
-	return flattenPaperVersions(p.Versions), nil
+	return r.observeVersions(ctx, TypePaper, flattenPaperVersions(p.Versions)), nil
 }
 
 // PaperBuilds returns the build numbers for a Paper version.
@@ -292,6 +295,11 @@ func (r *Resolver) PaperBuilds(ctx context.Context, version string) ([]Build, er
 		builds = append(builds, Build{Number: b.ID})
 	}
 	sort.Slice(builds, func(i, j int) bool { return builds[i].Number < builds[j].Number })
+	numbers := make([]string, 0, len(builds))
+	for _, b := range builds {
+		numbers = append(numbers, strconv.Itoa(b.Number))
+	}
+	r.observeBuilds(ctx, TypePaper, version, numbers)
 	return builds, nil
 }
 
@@ -308,7 +316,7 @@ func (r *Resolver) FabricGameVersions(ctx context.Context) ([]string, error) {
 	for _, g := range games {
 		out = append(out, g.Version)
 	}
-	return out, nil
+	return r.observeVersions(ctx, TypeFabric, out), nil
 }
 
 // FabricLoaders returns the loader versions for a game version.
@@ -325,13 +333,22 @@ func (r *Resolver) FabricLoaders(ctx context.Context, version string) ([]string,
 	for _, l := range loaders {
 		out = append(out, l.Loader.Version)
 	}
-	return out, nil
+	return r.observeBuilds(ctx, TypeFabric, version, out), nil
 }
 
 // MojangVersions returns the full version manifest from Mojang.
 func (r *Resolver) MojangVersions(ctx context.Context) (VersionManifest, error) {
 	var m VersionManifest
 	err := r.getJSON(ctx, r.MojangManifest, &m)
+	if err == nil {
+		var releases []string
+		for _, v := range m.Versions {
+			if v.Type == "release" {
+				releases = append(releases, v.ID)
+			}
+		}
+		r.observeVersions(ctx, TypeVanilla, releases)
+	}
 	return m, err
 }
 

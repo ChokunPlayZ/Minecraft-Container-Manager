@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { CalendarClock, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
@@ -54,6 +55,8 @@ function localTime(value: string, timezone: string): string {
 const errorMessage = (err: unknown, fallback: string) => err instanceof ApiError ? err.detail : fallback;
 
 export function SchedulesPanel({ serverId }: { serverId: string }) {
+  const can = usePermissions();
+  const canManage = can('schedules.manage', serverId);
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [defaultTimezone, setDefaultTimezone] = useState('UTC');
   const [loading, setLoading] = useState(true);
@@ -136,7 +139,7 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
           <h2 id="schedules-title" className="text-lg font-semibold tracking-tight">Schedules</h2>
           <p className="mt-1 text-sm text-muted-foreground">Schedule backups, console commands, and server actions.</p>
         </div>
-        {!editing && <Button onClick={() => open('new')} disabled={loading || !!loadError || busy}><Plus className="h-4 w-4" />Add schedule</Button>}
+        {!editing && <Button onClick={() => open('new')} disabled={!canManage || loading || !!loadError || busy}><Plus className="h-4 w-4" />Add schedule</Button>}
       </div>
 
       {loadError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-4 text-sm"><p className="text-destructive">{loadError}</p><Button variant="outline" size="sm" onClick={() => setReload((value) => value + 1)}><RefreshCw className="h-4 w-4" />Retry</Button></div>}
@@ -145,7 +148,7 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
       {editing && (
         <form onSubmit={(event) => void save(event)} className="space-y-5 rounded-lg border bg-card p-4 sm:p-6" aria-label={editing === 'new' ? 'New schedule' : 'Edit schedule'}>
           <h3 className="font-semibold">{editing === 'new' ? 'New schedule' : 'Edit schedule'}</h3>
-          <fieldset disabled={busy} className="grid min-w-0 gap-4 sm:grid-cols-2">
+          <fieldset disabled={!canManage || busy} className="grid min-w-0 gap-4 sm:grid-cols-2">
             <div className="min-w-0 space-y-1.5"><Label htmlFor="schedule-name">Task name</Label><Input id="schedule-name" autoFocus required maxLength={100} placeholder="Nightly restart" value={input.name} onChange={(event) => setInput({ ...input, name: event.target.value })} /></div>
             <div className="min-w-0 space-y-1.5"><Label htmlFor="schedule-action">Action</Label><Select id="schedule-action" value={input.action} onValueChange={(value) => setInput({ ...input, action: value as ScheduledAction, command: value === 'command' ? input.command : '', backup_target: value === 'backup' ? input.backup_target : '' })}>{Object.entries(actions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div>
             {input.action === 'backup' && <div className="min-w-0 space-y-1.5 sm:col-span-2"><Label htmlFor="schedule-backup-target">Backup target</Label><Select id="schedule-backup-target" value={input.backup_target || 'default'} onValueChange={(value) => setInput({ ...input, backup_target: value === 'default' ? '' : value as BackupTarget })}>{Object.entries(backupTargets).map(([value, label]) => <option key={value} value={value || 'default'}>{label}</option>)}</Select><p className="text-xs text-muted-foreground">Remote backups use the panel’s configured S3-compatible storage.</p></div>}
@@ -158,8 +161,8 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
           {input.action === 'restart' && <p className="text-sm text-muted-foreground">Restart gracefully stops the server, then starts it. A stopped server will also start.</p>}
           {input.action === 'backup' && <p className="text-sm text-muted-foreground">Uses the selected backup target and the panel’s retention settings. A running server is stopped for the backup, then started again.</p>}
           <div className="flex flex-wrap items-center justify-between gap-4 border-t pt-4">
-            <div className="flex items-center gap-2"><Switch id="schedule-enabled" checked={input.enabled} disabled={busy} onCheckedChange={(enabled) => setInput({ ...input, enabled })} /><Label htmlFor="schedule-enabled">Enable schedule</Label></div>
-            <div className="flex gap-2"><Button type="button" variant="outline" disabled={busy} onClick={() => { setEditing(null); setError(null); }}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? 'Saving…' : editing === 'new' ? 'Create schedule' : 'Save changes'}</Button></div>
+            <div className="flex items-center gap-2"><Switch id="schedule-enabled" checked={input.enabled} disabled={!canManage || busy} onCheckedChange={(enabled) => setInput({ ...input, enabled })} /><Label htmlFor="schedule-enabled">Enable schedule</Label></div>
+            <div className="flex gap-2"><Button type="button" variant="outline" disabled={!canManage || busy} onClick={() => { setEditing(null); setError(null); }}>Cancel</Button><Button type="submit" disabled={!canManage || busy}>{busy ? 'Saving…' : editing === 'new' ? 'Create schedule' : 'Save changes'}</Button></div>
           </div>
         </form>
       )}
@@ -172,7 +175,7 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
             <li key={task.id} className="space-y-3 p-4 sm:p-5">
               <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
                 <div className="min-w-0 flex-1 space-y-1"><h3 className="break-words font-semibold">{task.name}</h3><p className="text-sm text-muted-foreground">{actions[task.action]} · {frequencyLabel(task.cron)}{task.action === 'backup' && ` · ${backupTargets[task.backup_target]}`}</p>{task.action === 'command' && <code className="block break-all text-sm">{task.command}</code>}</div>
-                <div className="flex shrink-0 items-center gap-2"><span className="text-xs text-muted-foreground">{task.enabled ? 'Enabled' : 'Paused'}</span><Switch checked={task.enabled} disabled={busy || !!editing} aria-label={`Enable ${task.name}`} onCheckedChange={() => void toggle(task)} /><Button variant="ghost" size="icon" disabled={busy || !!editing} aria-label={`Edit ${task.name}`} onClick={() => open(task)}><Pencil className="h-4 w-4" /></Button><Button variant="ghost" size="icon" disabled={busy || !!editing} aria-label={`Delete ${task.name}`} onClick={() => void remove(task)}><Trash2 className="h-4 w-4" /></Button></div>
+                <div className="flex shrink-0 items-center gap-2"><span className="text-xs text-muted-foreground">{task.enabled ? 'Enabled' : 'Paused'}</span><Switch checked={task.enabled} disabled={!canManage || busy || !!editing} aria-label={`Enable ${task.name}`} onCheckedChange={() => void toggle(task)} /><Button variant="ghost" size="icon" disabled={!canManage || busy || !!editing} aria-label={`Edit ${task.name}`} onClick={() => open(task)}><Pencil className="h-4 w-4" /></Button><Button variant="ghost" size="icon" disabled={!canManage || busy || !!editing} aria-label={`Delete ${task.name}`} onClick={() => void remove(task)}><Trash2 className="h-4 w-4" /></Button></div>
               </div>
               <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground"><span className="break-all"><code>{task.cron}</code> · {task.timezone}</span><span>Next run: <span className="font-medium text-foreground">{task.enabled ? localTime(task.next_run_at, task.timezone) : 'Paused'}</span></span><span>Last result: <span className={task.last_status === 'failed' ? 'font-medium text-destructive' : 'font-medium text-foreground'}>{({ success: 'Succeeded', failed: 'Failed', running: 'Running', skipped: 'Skipped', '': 'Not run yet' })[task.last_status]}</span>{task.last_run_at && ` · ${localTime(task.last_run_at, task.timezone)}`}</span></div>
               {task.last_error && <p className={`break-words text-sm ${task.last_status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>{task.last_error}</p>}

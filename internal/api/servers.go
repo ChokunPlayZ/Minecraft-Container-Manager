@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mcm-panel/mcm/internal/auth"
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/ports"
@@ -20,6 +21,16 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "could not list servers")
 		return
+	}
+	if _, ok := r.Context().Value(ctxUser).(auth.User); ok {
+		user := s.currentUser(r)
+		filtered := make([]servers.Server, 0, len(list))
+		for _, srv := range list {
+			if user.CanAccessServer(srv.ID) {
+				filtered = append(filtered, srv)
+			}
+		}
+		list = filtered
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": list})
 }
@@ -156,6 +167,16 @@ func (s *Server) handleAvailablePorts(w http.ResponseWriter, r *http.Request) {
 		configured = free
 	}
 	used, _ := s.servers.Pool().UsedDetails(r.Context())
+	if _, ok := r.Context().Value(ctxUser).(auth.User); ok {
+		user := s.currentUser(r)
+		for i := range used {
+			if !user.CanAccessServer(used[i].ServerID) {
+				used[i].ServerID = ""
+				used[i].ServerName = "Reserved port"
+				used[i].Description = ""
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"available": free, "pool": configured, "used": used})
 }
 
@@ -169,6 +190,9 @@ func (s *Server) handleCheckPort(w http.ResponseWriter, r *http.Request) {
 	serverID := r.URL.Query().Get("server_id")
 	if checkErr := s.servers.CheckPortFree(r.Context(), serverID, port); checkErr != nil {
 		msg := checkErr.Error()
+		if user, ok := r.Context().Value(ctxUser).(auth.User); ok && user.Role != "administrator" && !user.AllServers {
+			msg = "Port is already in use"
+		}
 		if idx := strings.Index(msg, "port already in use: "); idx >= 0 {
 			msg = msg[idx+len("port already in use: "):]
 		}

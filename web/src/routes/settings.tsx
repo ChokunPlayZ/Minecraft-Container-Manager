@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Bell, Globe, Network, RefreshCw } from 'lucide-react';
 import { AppShell } from '../components/app-shell';
@@ -32,9 +33,11 @@ export const Route = createFileRoute('/settings')({
 });
 
 function AppSettingsRoute() {
+  const can = usePermissions();
+  const availableTabs = tabs.filter((tab) => tab.id === 'updates' ? can('panel.update') || can('updates.manage') : can('settings.manage'));
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const activeTab = search.tab === 'account' ? 'updates' : search.tab;
+  const activeTab = availableTabs.find((tab) => tab.id === search.tab)?.id ?? availableTabs[0]?.id;
 
   return (
     <RequireAuth>
@@ -45,10 +48,11 @@ function AppSettingsRoute() {
             <p className="page-description">Manage shared settings for this installation. Changes apply to all users.</p>
           </div>
         </div>
-        <SettingsTabs
+        {!activeTab && <p role="status" className="text-sm text-muted-foreground">An administrator can grant access to shared settings.</p>}
+        {activeTab && <><SettingsTabs
           id="app-settings"
           label="App settings sections"
-          tabs={tabs}
+          tabs={availableTabs}
           activeTab={activeTab}
           onTabChange={(tab) => void navigate({ search: (previous) => ({ ...previous, tab }) })}
         />
@@ -56,13 +60,13 @@ function AppSettingsRoute() {
           {activeTab === 'dns' ? (
             <div className="max-w-3xl"><DNSSettingsCard /></div>
           ) : activeTab === 'updates' ? (
-            <div className="max-w-3xl space-y-6"><PanelUpdateSettings /><UpdateCheckerSettings /></div>
+            <div className="max-w-3xl space-y-6">{can('panel.update') && <PanelUpdateSettings />}{can('updates.manage') && <UpdateCheckerSettings />}</div>
           ) : activeTab === 'notifications' ? (
             <div className="max-w-3xl"><DiscordNotificationSettings /></div>
           ) : (
             <div className="max-w-3xl"><PortPoolSettingsCard /></div>
           )}
-        </div>
+        </div></>}
       </AppShell>
     </RequireAuth>
   );

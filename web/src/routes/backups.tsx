@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useState } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Archive, ArrowRight, CalendarClock, RefreshCw } from 'lucide-react';
@@ -26,15 +27,16 @@ function BackupsRoute() {
 }
 
 export function BackupManager({ serverId, onSelect }: { serverId?: string; onSelect: (id: string) => void }) {
+  const can = usePermissions();
   const [servers, setServers] = useState<Server[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
-    try { setServers(await api.listServers()); setError(null); }
+    try { setServers((await api.listServers()).filter((server) => can('backups.read', server.id))); setError(null); }
     catch (err) { setError(err instanceof ApiError ? err.detail : 'Could not load servers. Try again.'); }
     finally { setLoading(false); }
-  }, []);
+  }, [can]);
   useEffect(() => { void load(); }, [load]);
   const selected = serverId ? servers?.find((server) => server.id === serverId) : servers?.[0];
 
@@ -58,7 +60,7 @@ export function BackupManager({ serverId, onSelect }: { serverId?: string; onSel
           <BackupsPanel key={selected.id} server={selected} />
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-5 sm:p-6">
             <div><h2 className="font-semibold">Automatic backups</h2><p className="mt-1 text-sm text-muted-foreground">Manage recurring backups in this server’s Schedules tab.</p></div>
-            <Button variant="outline" asChild><Link to="/servers/$id" params={{ id: selected.id }} search={{ tab: 'schedules' }}><CalendarClock />Manage schedules</Link></Button>
+            <Button variant="outline" disabled={!can('schedules.read', selected.id)} asChild><Link to="/servers/$id" params={{ id: selected.id }} search={{ tab: 'schedules' }}><CalendarClock />Manage schedules</Link></Button>
           </div>
         </>}
       </div>}

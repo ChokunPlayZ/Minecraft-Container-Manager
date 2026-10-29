@@ -61,7 +61,29 @@ export interface Server {
   updated_at: string;
 }
 
-export interface Me {
+export interface UserAccess {
+  role: 'administrator' | 'operator' | 'viewer' | 'custom';
+  permissions: string[];
+  all_servers: boolean;
+  server_ids: string[];
+  disabled: boolean;
+}
+
+export interface PermissionDefinition {
+  id: string;
+  group: string;
+  label: string;
+  description: string;
+  server_scoped: boolean;
+}
+
+export interface PermissionCatalog {
+  permissions: PermissionDefinition[];
+  roles: { id: UserAccess['role']; label: string; description: string; permissions: string[] }[];
+  servers: { id: string; name: string }[];
+}
+
+export interface Me extends Partial<UserAccess> {
   id: string;
   email: string;
   totp_enabled?: boolean;
@@ -73,7 +95,7 @@ export interface PasskeyMeta {
   name: string;
 }
 
-export interface User {
+export interface User extends Partial<UserAccess> {
   id: string;
   email: string;
   totp_enabled: boolean;

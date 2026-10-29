@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ var ErrNoUsers = errors.New("no users exist")
 
 // User is a row in the users table.
 type User struct {
+	Access
 	ID           string `json:"id"`
 	Email        string `json:"email"`
 	PasswordHash string `json:"-"`
@@ -61,7 +63,7 @@ func (u *Users) Count(ctx context.Context) (int, error) {
 // struct's json tags.
 func (u *Users) List(ctx context.Context) ([]User, error) {
 	rows, err := u.db.QueryContext(ctx,
-		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users ORDER BY created_at`)
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at, role, permissions, all_servers, server_ids, disabled FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -69,12 +71,10 @@ func (u *Users) List(ctx context.Context) ([]User, error) {
 
 	var users []User
 	for rows.Next() {
-		var usr User
-		var totpEnabled int
-		if err := rows.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &totpEnabled, &usr.WebAuthnID, &usr.CreatedAt, &usr.UpdatedAt); err != nil {
+		usr, err := scanUser(rows)
+		if err != nil {
 			return nil, err
 		}
-		usr.TOTPEnabled = totpEnabled == 1
 		users = append(users, usr)
 	}
 	return users, rows.Err()
@@ -151,13 +151,13 @@ func (u *Users) Delete(ctx context.Context, id string) error {
 // GetByEmail returns a user by email address.
 func (u *Users) GetByEmail(ctx context.Context, email string) (User, error) {
 	return u.scan(u.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users WHERE LOWER(email) = ?`, strings.ToLower(strings.TrimSpace(email))))
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at, role, permissions, all_servers, server_ids, disabled FROM users WHERE LOWER(email) = ?`, strings.ToLower(strings.TrimSpace(email))))
 }
 
 // GetByID returns a user by id.
 func (u *Users) GetByID(ctx context.Context, id string) (User, error) {
 	return u.scan(u.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at FROM users WHERE id = ?`, id))
+		`SELECT id, email, password_hash, COALESCE(totp_secret,''), COALESCE(totp_enabled,0), COALESCE(webauthn_id,''), created_at, updated_at, role, permissions, all_servers, server_ids, disabled FROM users WHERE id = ?`, id))
 }
 
 // SetTOTPSecret stores the base32 TOTP secret for a user without marking it
@@ -185,17 +185,28 @@ func (u *Users) DisableTOTP(ctx context.Context, userID string) error {
 	return err
 }
 
-func (u *Users) scan(row *sql.Row) (User, error) {
+func (u *Users) scan(row *sql.Row) (User, error) { return scanUser(row) }
+
+func scanUser(row interface{ Scan(...any) error }) (User, error) {
 	var usr User
-	var totpEnabled int
-	err := row.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &totpEnabled, &usr.WebAuthnID, &usr.CreatedAt, &usr.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, sql.ErrNoRows
-	}
+	var permissions, serverIDs string
+	err := row.Scan(&usr.ID, &usr.Email, &usr.PasswordHash, &usr.TOTPSecret, &usr.TOTPEnabled, &usr.WebAuthnID, &usr.CreatedAt, &usr.UpdatedAt, &usr.Role, &permissions, &usr.AllServers, &serverIDs, &usr.Disabled)
 	if err != nil {
 		return User{}, err
 	}
-	usr.TOTPEnabled = totpEnabled == 1
+	if err := json.Unmarshal([]byte(permissions), &usr.Permissions); err != nil {
+		return User{}, err
+	}
+	if err := json.Unmarshal([]byte(serverIDs), &usr.ServerIDs); err != nil {
+		return User{}, err
+	}
+	usr.Permissions = usr.EffectivePermissions()
+	if usr.Permissions == nil {
+		usr.Permissions = []string{}
+	}
+	if usr.ServerIDs == nil {
+		usr.ServerIDs = []string{}
+	}
 	return usr, nil
 }
 
@@ -222,6 +233,16 @@ var ErrOnboardingComplete = errors.New("onboarding already complete")
 
 // UpdateAccount commits identity, password and session revocation together.
 func (u *Users) UpdateAccount(ctx context.Context, id string, email, passwordHash *string, keepToken string) error {
+	return u.UpdateAccountAccess(ctx, id, email, passwordHash, keepToken, nil)
+}
+
+// UpdateAccountAccess atomically commits identity, access and session revocation.
+func (u *Users) UpdateAccountAccess(ctx context.Context, id string, email, passwordHash *string, keepToken string, access *Access) error {
+	if access != nil {
+		if err := access.Normalize(); err != nil {
+			return err
+		}
+	}
 	tx, err := u.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -238,10 +259,40 @@ func (u *Users) UpdateAccount(ctx context.Context, id string, email, passwordHas
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	if passwordHash != nil {
+	if access != nil {
+		permissions, _ := json.Marshal(access.Permissions)
+		ids, _ := json.Marshal(access.ServerIDs)
+		if _, err = tx.ExecContext(ctx, `UPDATE users SET role=?, permissions=?, all_servers=?, server_ids=?, disabled=? WHERE id=?`, access.Role, string(permissions), access.AllServers, string(ids), access.Disabled, id); err != nil {
+			return err
+		}
+	}
+	if access != nil && access.Disabled {
+		keepToken = ""
+	}
+	if passwordHash != nil || access != nil {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=? AND token_hash<>?`, id, HashToken(keepToken)); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// CreateWithAccess inserts a new account and its access in a single write.
+func (u *Users) CreateWithAccess(ctx context.Context, email, passwordHash string, access Access) (User, error) {
+	if err := access.Normalize(); err != nil {
+		return User{}, err
+	}
+	permissions, _ := json.Marshal(access.Permissions)
+	ids, _ := json.Marshal(access.ServerIDs)
+	id := uuid.NewString()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := u.db.ExecContext(ctx, `INSERT INTO users (id,email,password_hash,created_at,updated_at,role,permissions,all_servers,server_ids,disabled) VALUES (?,?,?,?,?,?,?,?,?,?)`, id, strings.ToLower(strings.TrimSpace(email)), passwordHash, now, now, access.Role, string(permissions), access.AllServers, string(ids), access.Disabled)
+	if err != nil {
+		return User{}, err
+	}
+	return u.GetByID(ctx, id)
+}
+
+func IsLastAdministrator(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "last active administrator")
 }

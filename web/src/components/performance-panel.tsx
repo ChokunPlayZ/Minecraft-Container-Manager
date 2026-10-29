@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ExternalLink, Loader2, RefreshCw, Zap } from 'lucide-react';
 import { api, ApiError } from '../api/client';
@@ -99,6 +100,8 @@ function MetricChart({ history, metric, title, description, format, minimumScale
 const errorMessage = (err: unknown, fallback: string) => err instanceof ApiError ? err.detail : fallback;
 
 export function PerformancePanel({ serverId, isRunning }: { serverId: string; isRunning: boolean }) {
+  const can = usePermissions();
+  const canManage = can('performance.manage', serverId);
   const [range, setRange] = useState<PerformanceRange>('1h');
   const [history, setHistory] = useState<PerformanceHistory | null>(null);
   const [loading, setLoading] = useState(true);
@@ -183,7 +186,7 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
       <div className="rounded-xl border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <label htmlFor="performance-collection-mode" className="text-sm font-semibold">Player and tick metrics</label>
-          <Select id="performance-collection-mode" aria-describedby="performance-collection-description" value={collectionMode} onValueChange={(value) => void changeCollection(value)} disabled={!history || loading || savingSettings} className="w-full sm:w-52">
+          <Select id="performance-collection-mode" aria-describedby="performance-collection-description" value={collectionMode} onValueChange={(value) => void changeCollection(value)} disabled={!canManage || !history || loading || savingSettings} className="w-full sm:w-52">
             <option value="off">Off (default)</option><option value="rcon">RCON polling</option><option value="console">Console commands</option>
           </Select>
         </div>
@@ -216,7 +219,7 @@ export function PerformancePanel({ serverId, isRunning }: { serverId: string; is
       <div className="rounded-xl border bg-card p-5 sm:p-6" aria-labelledby="spark-title">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-prose"><h3 id="spark-title" className="font-semibold">Spark report</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">Capture a 60-second profile and upload it to spark. If a profiler is already running, open its current report. Manual report captures write to the console.</p></div>
-          <Button variant="outline" disabled={!isRunning || !support?.available || busy || capturing} onClick={() => void capture()} className="gap-2">
+          <Button variant="outline" disabled={!canManage || !isRunning || !support?.available || busy || capturing} onClick={() => void capture()} className="gap-2">
             {busy || capturing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}{busy || capturing ? 'Capturing report…' : 'Capture spark report'}
           </Button>
         </div>

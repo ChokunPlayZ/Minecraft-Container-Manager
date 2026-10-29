@@ -126,7 +126,7 @@ func TestDeleteRevokesSessionsAndPasskeys(t *testing.T) {
 	sessions := NewManager(store.DB)
 	passkeys := NewPasskeys(store.DB)
 
-	user, err := users.Create(ctx, "del@example.test", "hash")
+	user, err := users.CreateWithAccess(ctx, "del@example.test", "hash", Access{Role: "viewer"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

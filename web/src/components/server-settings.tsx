@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../api/client';
 import type { ExtraPort, JavaRelease, Server } from '../api/types';
@@ -31,6 +32,7 @@ export function ServerSettings({
   onRebuild?: () => void;
   onDnsChanged?: (joinAddress: string) => void;
 }) {
+  const can = usePermissions();
   const [name, setName] = useState(server.name);
   const [ramMb, setRamMb] = useState(server.ram_mb);
   const [hostPort, setHostPort] = useState(server.host_port);
@@ -71,7 +73,7 @@ export function ServerSettings({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.listServers(), api.availablePorts()])
+    Promise.all([api.listServers(), api.availablePorts(server.id)])
       .then(([allServers, portsRes]) => {
         if (cancelled) return;
         const detailsMap: Record<number, { serverName: string; description: string }> = {};
@@ -246,7 +248,7 @@ export function ServerSettings({
           </div>
 
           {tab === 'dns' ? (
-            <ServerDNSCard server={server} onDnsChanged={onDnsChanged} bare={true} />
+            can('dns.read', server.id) && <ServerDNSCard server={server} onDnsChanged={onDnsChanged} bare={true} />
           ) : (
             <form onSubmit={onSubmit} className="space-y-4">
               {server.needs_rebuild && (
@@ -275,7 +277,7 @@ export function ServerSettings({
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={onRebuild}
+                      disabled={!can('servers.rebuild', server.id)} onClick={onRebuild}
                       className="shrink-0 gap-1.5 border-amber-500/40 bg-amber-500/20 text-amber-900 hover:bg-amber-500/30 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-100"
                     >
                       <RotateCcw className="h-3 w-3" />

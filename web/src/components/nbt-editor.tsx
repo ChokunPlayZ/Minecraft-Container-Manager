@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -57,7 +58,8 @@ export function NBTEditor({ serverId, path, state, onClose, onDirtyChange }: Pro
   const selectedPanel = useRef<HTMLDivElement>(null);
   const { confirm, dialog } = useModal();
   const dirty = !!file && file.root !== savedRoot;
-  const editable = !!file?.editable && ['stopped', 'error'].includes(state);
+  const can = usePermissions();
+  const editable = can('files.write', serverId) && !!file?.editable && ['stopped', 'error'].includes(state);
   const validation = useMemo(() => (file ? documentError(file.root) : null), [file]);
 
   useEffect(() => {

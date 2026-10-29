@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
@@ -97,6 +98,7 @@ interface ActiveCommand {
 }
 
 export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onNBTDirtyChange?: (dirty: boolean) => void }) {
+  const can = usePermissions();
   const [subTab, setSubTab] = useState<'online' | 'ops' | 'whitelist' | 'data'>('online');
   const [nbtDirty, setNBTDirty] = useState(false);
   const { confirm: confirmNBT, dialog: nbtDialog } = useModal();
@@ -299,7 +301,7 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
             <ShieldCheck className="h-4 w-4" />
             <span>Whitelist</span>
           </button>
-          <button type="button" aria-pressed={subTab === 'data'} onClick={() => void switchSubTab('data')}
+          <button type="button" disabled={!can('files.read', server.id)} aria-pressed={subTab === 'data'} onClick={() => void switchSubTab('data')}
             className={`inline-flex items-center gap-2 rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${subTab === 'data' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'}`}>
             <Database className="h-4 w-4" /><span>Player data</span>
           </button>
@@ -356,7 +358,7 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
       )}
 
       {/* Sub-tab content: Ops */}
-      {subTab === 'data' && <PlayerDataPanel serverId={server.id} state={server.state} onDirtyChange={onDirtyChange} />}
+      {subTab === 'data' && can('files.read', server.id) && <PlayerDataPanel serverId={server.id} state={server.state} onDirtyChange={onDirtyChange} />}
       {subTab === 'ops' && <OpsPanel server={server} refreshKey={server.state} />}
 
       {/* Sub-tab content: Whitelist */}
@@ -539,6 +541,9 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
 
                         {/* Commands dropdown */}
                         <PlayerActionsMenu
+                          canAct={can('players.manage', server.id)}
+                          canOp={can('ops.manage', server.id)}
+                          canCommand={can('console.write', server.id)}
                           player={p.name}
                           isOp={isOp}
                           onSelectAction={(action) => openAction(p.name, action)}
@@ -551,6 +556,7 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
                           variant="ghost"
                           size="sm"
                           className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                          disabled={!can('players.manage', server.id)}
                           onClick={() => openAction(p.name, 'gamemode')}
                         >
                           Mode
@@ -559,6 +565,7 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
                           variant="ghost"
                           size="sm"
                           className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                          disabled={!can('players.manage', server.id)}
                           onClick={() => openAction(p.name, 'tp')}
                         >
                           TP
@@ -567,6 +574,7 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
                           variant="ghost"
                           size="sm"
                           className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+                          disabled={!can('players.manage', server.id)}
                           onClick={() => openAction(p.name, 'kick')}
                         >
                           Kick
@@ -623,6 +631,7 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
                           variant="outline"
                           size="sm"
                           className="hidden sm:inline-flex h-8 px-2.5 text-xs"
+                          disabled={!can('players.manage', server.id)}
                           onClick={() => openAction(p.name, 'gamemode')}
                         >
                           Gamemode
@@ -631,11 +640,15 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
                           variant="outline"
                           size="sm"
                           className="hidden sm:inline-flex h-8 px-2.5 text-xs text-destructive hover:bg-destructive/10"
+                          disabled={!can('players.manage', server.id)}
                           onClick={() => openAction(p.name, 'kick')}
                         >
                           Kick
                         </Button>
                         <PlayerActionsMenu
+                          canAct={can('players.manage', server.id)}
+                          canOp={can('ops.manage', server.id)}
+                          canCommand={can('console.write', server.id)}
                           player={p.name}
                           isOp={isOp}
                           onSelectAction={(action) => openAction(p.name, action)}
@@ -887,10 +900,16 @@ export function PlayersPanel({ server, onNBTDirtyChange }: { server: Server; onN
 function PlayerActionsMenu({
   player,
   isOp,
+  canAct,
+  canOp,
+  canCommand,
   onSelectAction,
 }: {
   player: string;
   isOp: boolean;
+  canAct: boolean;
+  canOp: boolean;
+  canCommand: boolean;
   onSelectAction: (action: PlayerCommandAction) => void;
 }) {
   return (
@@ -900,6 +919,7 @@ function PlayerActionsMenu({
           variant="outline"
           size="sm"
           className="h-8 gap-1 px-2.5 text-xs"
+          disabled={!canAct}
           aria-label={`Commands for ${player}`}
         >
           <span>Actions</span>
@@ -917,6 +937,7 @@ function PlayerActionsMenu({
           return (
             <DropdownMenuItem
               key={a.action}
+              disabled={!canAct || ((a.action === 'op' || a.action === 'deop') && !canOp) || (a.action === 'custom' && !canCommand)}
               onSelect={() => onSelectAction(a.action)}
               className={a.destructive ? 'text-destructive focus:text-destructive' : ''}
             >

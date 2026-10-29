@@ -1,3 +1,5 @@
+import { ServerDNSCard } from '../components/server-dns-card';
+import { usePermissions } from '../lib/auth';
 import { createFileRoute, Link, useBlocker, useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -72,10 +74,11 @@ export const Route = createFileRoute('/servers/$id')({
 type ServerTab = 'console' | 'performance' | 'logs' | 'players' | 'files' | 'worlds' | 'mods' | 'backups' | 'schedules' | 'settings' | 'overview';
 
 export function ServerDetailRoute() {
+  const can = usePermissions();
   const { status: updateStatus } = useUpdateChecker();
   const { id } = Route.useParams();
   const search = Route.useSearch();
-  const updateResult = updateStatus?.enabled ? updateStatus.servers[id] : undefined;
+  const updateResult = updateStatus?.servers[id];
   const navigate = useNavigate();
   const [tab, setTab] = useState<ServerTab>(search.tab ?? 'console');
   useEffect(() => { setTab(search.tab ?? 'console'); }, [id, search.tab]);
@@ -110,7 +113,12 @@ export function ServerDetailRoute() {
   const effectiveStartedAt = statusStartedAt !== undefined ? statusStartedAt : server?.started_at;
   const effectiveUptimeSec = statusUptimeSeconds !== undefined ? statusUptimeSeconds : server?.uptime_seconds;
   const liveUptime = useLiveUptime(effectiveStartedAt, effectiveUptimeSec, isRunning);
-  const effectiveTab = tab === 'overview' ? 'console' : tab;
+  const tabPermissions: Record<ServerTab, string> = {
+    overview: 'servers.view', console: 'console.read', performance: 'performance.read', logs: 'logs.read', players: 'players.read', files: 'files.read', worlds: 'worlds.read', mods: 'mods.read', backups: 'backups.read', schedules: 'schedules.read', settings: 'servers.edit',
+  };
+  const canSeeTab = (candidate: ServerTab) => candidate === 'settings' ? can('servers.edit', id) || can('servers.rebuild', id) || can('dns.manage', id) : can(tabPermissions[candidate], id);
+  const effectiveTab = canSeeTab(tab) && tab !== 'overview' ? tab
+    : (Object.keys(tabPermissions) as ServerTab[]).find((candidate) => candidate !== 'overview' && canSeeTab(candidate)) ?? 'overview';
 
   const loadDns = useCallback(async (sid: string) => {
     try {
@@ -133,11 +141,11 @@ export function ServerDetailRoute() {
       setStatusState(s.state);
       setStatusStartedAt(s.started_at);
       setStatusUptimeSeconds(s.uptime_seconds);
-      void loadDns(id);
+      if (can('dns.read', id)) void loadDns(id);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to load server');
     }
-  }, [id, loadDns]);
+  }, [id, loadDns, can]);
 
   const pollStatus = useCallback(async () => {
     if (!server) return;
@@ -311,7 +319,7 @@ export function ServerDetailRoute() {
     { id: 'backups', label: 'Backups', icon: Archive },
     { id: 'schedules', label: 'Schedules', icon: CalendarClock },
     { id: 'settings', label: 'Settings', icon: Settings2 },
-  ];
+  ].filter((entry) => canSeeTab(entry.id as ServerTab)) as { id: ServerTab; label: string; icon: typeof Terminal }[];
 
   return (
     <>
@@ -442,7 +450,7 @@ export function ServerDetailRoute() {
                     variant="default"
                     size="sm"
                     className="gap-1.5"
-                    disabled={busy}
+                    disabled={busy || !can('servers.power', id)}
                     onClick={() => void run(() => api.startServer(server.id))}
                   >
                     <Play className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
@@ -454,7 +462,7 @@ export function ServerDetailRoute() {
                       variant="outline"
                       size="sm"
                       className="gap-1.5"
-                      disabled={busy}
+                      disabled={busy || !can('servers.power', id)}
                       onClick={() => void run(() => api.stopServer(server.id))}
                     >
                       <Square className="h-3.5 w-3.5 text-amber-500" />
@@ -464,7 +472,7 @@ export function ServerDetailRoute() {
                       variant="outline"
                       size="sm"
                       className="gap-1.5"
-                      disabled={busy || isInstalling}
+                      disabled={busy || !can('servers.power', id) || isInstalling}
                       onClick={() => void run(() => api.restartServer(server.id))}
                     >
                       <RefreshCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} />
@@ -482,20 +490,20 @@ export function ServerDetailRoute() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">
-                    <DropdownMenuItem onSelect={handleExport}>
+                    <DropdownMenuItem disabled={!can('servers.export', id)} onSelect={handleExport}>
                       <Download className="h-4 w-4 mr-2" />
                       <span>Export server (.zip)</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem disabled={busy} onSelect={() => setCopyDialogOpen(true)}>
+                    <DropdownMenuItem disabled={busy || !can('servers.copy', id)} onSelect={() => setCopyDialogOpen(true)}>
                       <Copy className="h-4 w-4 mr-2" />
                       <span>Copy server</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem disabled={busy} onSelect={() => void handleRecreate()}>
+                    <DropdownMenuItem disabled={busy || !can('servers.rebuild', id)} onSelect={() => void handleRecreate()}>
                       <RotateCcw className="h-4 w-4 mr-2" />
                       <span>Rebuild container</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      disabled={busy || state === 'stopped' || state === 'stopping'}
+                      disabled={busy || !can('servers.power', id) || state === 'stopped' || state === 'stopping'}
                       onSelect={() => void handleKill()}
                       className="text-destructive focus:text-destructive"
                     >
@@ -504,7 +512,7 @@ export function ServerDetailRoute() {
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      disabled={busy}
+                      disabled={busy || !can('servers.delete', id)}
                       onSelect={() => void handleDelete()}
                       className="text-destructive focus:text-destructive"
                     >
@@ -570,7 +578,7 @@ export function ServerDetailRoute() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={busy}
+                disabled={busy || !can('servers.rebuild', id)}
                 onClick={() => void handleRecreate()}
                 className="shrink-0 gap-1.5 border-amber-500/40 bg-amber-500/20 text-amber-900 hover:bg-amber-500/30 hover:text-amber-950 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-100 dark:hover:bg-amber-500/30 font-medium"
               >
@@ -581,7 +589,7 @@ export function ServerDetailRoute() {
           )}
 
           {/* Server Stats Grid (CPU, MEM, Disk, Network) */}
-          <ServerStatsGrid serverId={server.id} isRunning={isRunning} />
+          {can('performance.read', id) && <ServerStatsGrid serverId={server.id} isRunning={isRunning} />}
 
           {/* Tab Navigation */}
           <div
@@ -625,11 +633,12 @@ export function ServerDetailRoute() {
 
           {/* Tab Panes */}
           <div id="server-workspace-panel" role="tabpanel" aria-labelledby={`server-tab-${effectiveTab}`} tabIndex={0} className="outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg">
+          {effectiveTab === 'overview' && <p className="py-6 text-sm text-muted-foreground">You can view this server’s status. An administrator can grant access to additional server tools.</p>}
           {effectiveTab === 'worlds' && <WorldsPanel key={server.id} serverId={server.id} state={state} serverType={server.server_type} />}
           {effectiveTab === 'schedules' && <SchedulesPanel key={server.id} serverId={server.id} />}
           {effectiveTab === 'performance' && <PerformancePanel key={server.id} serverId={server.id} isRunning={isRunning} />}
           {effectiveTab === 'console' && (
-            <ConsoleViewer serverId={server.id} running={isRunning} />
+            <ConsoleViewer serverId={server.id} running={isRunning} canSend={can('console.write', id)} />
           )}
 
           {effectiveTab === 'logs' && (
@@ -662,22 +671,23 @@ export function ServerDetailRoute() {
               </div>
 
               <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(340px,1fr)]">
-                <ServerSettings
+                {can('servers.edit', id) && <ServerSettings
                   key={`${server.name}-${server.ram_mb}-${server.host_port}-${server.needs_rebuild}`}
                   server={server}
                   onSaved={(s) => setServer(s)}
                   onRebuild={() => void handleRecreate()}
                   onDnsChanged={(addr) => setDnsAddress(addr)}
-                />
-                <InstallPanel
+                />}
+                {!can('servers.edit', id) && can('dns.read', id) && <ServerDNSCard server={server} onDnsChanged={setDnsAddress} />}
+                {can('servers.rebuild', id) && <InstallPanel
                   serverId={server.id}
                   serverType={server.server_type}
                   onInstalled={loadServer}
-                />
+                />}
               </div>
 
               <div className="pt-2">
-                <PropertiesEditor server={server} />
+                {can('files.read', id) && <PropertiesEditor server={server} />}
               </div>
             </div>
           )}

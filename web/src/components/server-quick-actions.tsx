@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Archive, ArrowRight, Copy, Loader2, MoreHorizontal, Play, RotateCw, Square, Zap } from 'lucide-react';
@@ -14,6 +15,7 @@ export function ServerQuickActions({ server, onUpdated, onCopy }: {
   onUpdated: (server: Server) => void;
   onCopy: () => void;
 }) {
+  const can = usePermissions();
   const [pending, setPending] = useState<PowerAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -45,7 +47,7 @@ export function ServerQuickActions({ server, onUpdated, onCopy }: {
   return <div className="fleet-actions min-w-0">
     {dialog}
     <div className="flex flex-wrap items-center justify-end gap-2" aria-label={`Actions for ${server.name}`} aria-busy={pending !== null}>
-      <Button variant={canStart ? 'default' : 'outline'} size="sm" disabled={pending !== null || (!canStart && !canStop)}
+      <Button variant={canStart ? 'default' : 'outline'} size="sm" disabled={!can('servers.power', server.id) || pending !== null || (!canStart && !canStop)}
         aria-label={`${canStart ? 'Start' : 'Stop'} ${server.name}`} onClick={() => void run(canStart ? 'start' : 'stop')}>
         {pending ? <Loader2 className="animate-spin" /> : canStart ? <Play /> : <Square />}
         {pending ? ({ start: 'Starting…', stop: 'Stopping…', restart: 'Restarting…', kill: 'Killing…' }[pending]) : canStart ? 'Start' : 'Stop'}
@@ -54,11 +56,11 @@ export function ServerQuickActions({ server, onUpdated, onCopy }: {
       <DropdownMenu>
         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`More actions for ${server.name}`} disabled={pending !== null}><MoreHorizontal /></Button></DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled={server.state !== 'running'} onSelect={() => void run('restart')}><RotateCw className="h-4 w-4" />Restart</DropdownMenuItem>
-          <DropdownMenuItem asChild><Link to="/backups" search={{ server: server.id }}><Archive className="h-4 w-4" />Backups</Link></DropdownMenuItem>
-          <DropdownMenuItem onSelect={onCopy}><Copy className="h-4 w-4" />Copy server</DropdownMenuItem>
+          <DropdownMenuItem disabled={!can('servers.power', server.id) || server.state !== 'running'} onSelect={() => void run('restart')}><RotateCw className="h-4 w-4" />Restart</DropdownMenuItem>
+          <DropdownMenuItem disabled={!can('backups.read', server.id)} asChild><Link to="/backups" search={{ server: server.id }}><Archive className="h-4 w-4" />Backups</Link></DropdownMenuItem>
+          <DropdownMenuItem disabled={!can('servers.copy', server.id)} onSelect={onCopy}><Copy className="h-4 w-4" />Copy server</DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={!canKill} onSelect={() => void run('kill')}><Zap className="h-4 w-4" />Force kill</DropdownMenuItem>
+          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={!can('servers.power', server.id) || !canKill} onSelect={() => void run('kill')}><Zap className="h-4 w-4" />Force kill</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

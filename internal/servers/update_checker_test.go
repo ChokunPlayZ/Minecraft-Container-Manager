@@ -133,8 +133,8 @@ func TestNightlyUpdateChecksOptInPersistenceAndSharedResponses(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, _ = s.UpdateCheckerStatus(ctx)
-	if len(status.Servers) != 0 || status.NextCheckAt != "" {
-		t.Fatal("opt-out left nightly badges visible")
+	if !status.Servers[first].Software.Available || status.NextCheckAt != "" {
+		t.Fatal("opt-out discarded known updates or left a scheduled scan")
 	}
 }
 

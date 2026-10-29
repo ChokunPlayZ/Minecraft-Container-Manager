@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { renderWithAdmin as render } from '../src/test/auth';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError, FileConflictError } from '../src/api/client';

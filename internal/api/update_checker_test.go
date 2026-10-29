@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/mcm-panel/mcm/internal/auth"
 	"github.com/mcm-panel/mcm/internal/db"
+	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/servers"
 )
 
@@ -64,5 +67,54 @@ func TestUpdateCheckerAPIOptInAndAuthentication(t *testing.T) {
 	}
 	if rr := request("PUT", "/api/updates/settings", `{"enabled":false}`, true); rr.Code != 200 {
 		t.Fatalf("disable: %d", rr.Code)
+	}
+}
+
+func TestBuildQueriesImmediatelyMarkMatchingServersOutdated(t *testing.T) {
+	h, err := db.Open(filepath.Join(t.TempDir(), "mcm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { h.Close() })
+	requests := 0
+	resolver := jars.NewResolverWithBases(&http.Client{Transport: roundTripFunc(func(req *http.Request) *http.Response {
+		requests++
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`[{"id":226},{"id":227}]`))}
+	})}, "https://catalog.test", "", "")
+	store := servers.NewStore(h, nil, resolver, 25565, 25575, t.TempDir(), "")
+	if _, err := h.DB.Exec(`INSERT INTO servers (id,name,server_type,version,build,ram_mb,host_port,state,created_at,updated_at)
+		VALUES ('older','older','paper','1.21.4','226',1024,25565,'stopped','',''),
+		('current','current','paper','1.21.4','227',1024,25566,'stopped','',''),
+		('other','other','folia','1.21.4','226',1024,25567,'stopped','','')`); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{jars: resolver, servers: store}
+	status := func() servers.UpdateCheckerStatus {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		s.handleGetUpdateChecker(rr, httptest.NewRequest(http.MethodGet, "/api/updates", nil))
+		var result servers.UpdateCheckerStatus
+		if rr.Code != 200 {
+			t.Fatalf("update status: %d %s", rr.Code, rr.Body.String())
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	if before := status(); before.Enabled || len(before.Servers) != 0 || requests != 0 {
+		t.Fatalf("status started a scan: %+v, %d requests", before, requests)
+	}
+	if code, body := getJar(t, s, false, map[string]string{"kind": "paper", "v": "1.21.4"}); code != http.StatusOK {
+		t.Fatalf("build query: %d %s", code, body)
+	}
+	after := status()
+	if requests != 1 || after.Enabled || after.LastChecked != "" || after.Servers["older"].Software == nil || !after.Servers["older"].Software.Available || after.Servers["older"].Software.LatestBuild != "227" {
+		t.Fatalf("build query did not update badges: %+v, %d requests", after, requests)
+	}
+	for _, id := range []string{"current", "other"} {
+		if result := after.Servers[id].Software; result != nil && result.Available {
+			t.Errorf("%s marked outdated: %+v", id, result)
+		}
 	}
 }

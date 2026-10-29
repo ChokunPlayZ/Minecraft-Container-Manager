@@ -171,6 +171,7 @@ func TestRejectedUserUpdateLeavesIdentityUnchanged(t *testing.T) {
 	server := &Server{users: users}
 	req := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"email":"after@example.test","password":"short"}`))
 	req.SetPathValue("id", user.ID)
+	req = req.WithContext(context.WithValue(context.WithValue(req.Context(), ctxUserID, user.ID), ctxUser, user))
 	result := httptest.NewRecorder()
 	server.handleUpdateUser(result, req)
 	if result.Code != http.StatusBadRequest {

@@ -1,3 +1,4 @@
+import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowRightLeft, Check, ChevronLeft, ChevronRight, Download, Globe2, Grid2X2, Loader2, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { ApiError } from '../api/client';
@@ -17,6 +18,8 @@ const message = (error: unknown, fallback: string) => error instanceof ApiError 
 const generatorName = (value: string) => ({ 'minecraft:normal': 'Default', 'minecraft:flat': 'Superflat', 'minecraft:large_biomes': 'Large biomes', 'minecraft:amplified': 'Amplified' }[value] ?? value);
 
 export function WorldsPanel({ serverId, state, serverType }: { serverId: string; state: ServerState; serverType: string }) {
+  const can = usePermissions();
+  const canManage = can('worlds.manage', serverId);
   const unsupported = ['velocity', 'waterfall', 'bungeecord', 'geysermc', 'limbo', 'nanolimbo'].includes(serverType);
   const [data, setData] = useState<WorldList | null>(null);
   const [selected, setSelected] = useState('');
@@ -31,7 +34,7 @@ export function WorldsPanel({ serverId, state, serverType }: { serverId: string;
   const [chunksOpen, setChunksOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const { confirm, dialog } = useModal();
-  const editable = !!data?.editable && (state === 'stopped' || state === 'error') && !loadError;
+  const editable = canManage && !!data?.editable && (state === 'stopped' || state === 'error') && !loadError;
   const world = data?.worlds.find((item) => item.name === selected);
 
   useEffect(() => {
@@ -82,7 +85,8 @@ export function WorldsPanel({ serverId, state, serverType }: { serverId: string;
         <div><h2 id="worlds-title" className="text-lg font-semibold tracking-tight">Worlds</h2><p className="mt-1 text-sm text-muted-foreground">Import saves, choose the active world, and maintain generated chunks.</p></div>
         <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!editable || busy} onClick={() => open('import')}><Upload className="h-4 w-4" />Import ZIP</Button><Button disabled={!editable || busy} onClick={() => open('create')}><Plus className="h-4 w-4" />Create world</Button></div>
       </div>
-      {!editable && data && !loadError && <p className="rounded-md border bg-muted/40 px-4 py-3 text-sm">Stop the server to import, export, switch worlds, change generation settings, or reset chunks. You can inspect saved worlds while it runs.</p>}
+      {!canManage && <p className="text-sm text-muted-foreground">You have read-only world access.</p>}
+      {canManage && !editable && data && !loadError && <p className="rounded-md border bg-muted/40 px-4 py-3 text-sm">Stop the server to import, export, switch worlds, change generation settings, or reset chunks. You can inspect saved worlds while it runs.</p>}
       {loadError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-4 text-sm"><p className="text-destructive">{loadError}</p><Button variant="outline" size="sm" onClick={() => setRevision((value) => value + 1)}><RefreshCw className="h-4 w-4" />Retry</Button></div>}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {notice && <p role="status" className="break-words rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">{notice}</p>}
@@ -108,7 +112,7 @@ export function WorldsPanel({ serverId, state, serverType }: { serverId: string;
             <dl className="mt-6 grid gap-x-6 gap-y-4 sm:grid-cols-2"><div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">{world.generated ? 'Saved world seed' : 'Generation seed'}</dt><dd className="mt-1 break-all font-mono text-sm select-all">{world.seed ?? (world.generated ? 'Unavailable in world metadata' : 'Random on first start')}{world.seed === '' && 'Random on first start'}</dd></div><div><dt className="text-xs text-muted-foreground">{world.generated ? 'Last saved version' : 'Generator'}</dt><dd className="mt-1 text-sm">{world.generated ? world.version || 'Unknown' : generatorName(world.level_type)}</dd></div><div><dt className="text-xs text-muted-foreground">Disk usage</dt><dd className="mt-1 text-sm tabular-nums">{formatBytes(world.size_bytes)}</dd></div><div><dt className="text-xs text-muted-foreground">Last modified</dt><dd className="mt-1 text-sm">{new Date(world.modified_at).toLocaleString()}</dd></div><div><dt className="text-xs text-muted-foreground">Dimensions</dt><dd className="mt-1 text-sm">{world.dimensions.map((dimension) => dimension.name).join(', ')}</dd></div></dl>
             {world.metadata_error && <p className="mt-4 text-sm text-destructive">World metadata could not be read. Export a copy and inspect level.dat before using this save.</p>}
             {!world.generated && <p className="mt-4 text-sm text-muted-foreground">Make this world active, then start the server to generate terrain. Seed and generator settings can be changed until then.</p>}
-            <div className="mt-6 flex flex-wrap gap-2 border-t pt-4"><Button variant="outline" disabled={!world.generated || busy} onClick={() => setChunksOpen((value) => !value)} aria-expanded={chunksOpen}><Grid2X2 className="h-4 w-4" />{chunksOpen ? 'Hide chunks' : 'Manage chunks'}</Button>{!world.generated && <Button variant="outline" disabled={!editable || busy} onClick={() => open('edit')}>Generation settings</Button>}<Button variant="outline" disabled={!editable || busy || !world.generated} onClick={() => void run(async () => { await worldApi.export(serverId, world.name); setNotice('World ZIP downloaded.'); })}><Download className="h-4 w-4" />Export ZIP</Button><Button variant="ghost" disabled={!editable || busy || world.active} onClick={() => void remove()}><Trash2 className="h-4 w-4" />Delete world</Button></div>
+            <div className="mt-6 flex flex-wrap gap-2 border-t pt-4"><Button variant="outline" disabled={!world.generated || busy} onClick={() => setChunksOpen((value) => !value)} aria-expanded={chunksOpen}><Grid2X2 className="h-4 w-4" />{chunksOpen ? 'Hide chunks' : 'Manage chunks'}</Button>{!world.generated && <Button variant="outline" disabled={!editable || busy} onClick={() => open('edit')}>Generation settings</Button>}<Button variant="outline" disabled={!can('worlds.export', serverId) || !data?.editable || busy || !world.generated} onClick={() => void run(async () => { await worldApi.export(serverId, world.name); setNotice('World ZIP downloaded.'); })}><Download className="h-4 w-4" />Export ZIP</Button><Button variant="ghost" disabled={!editable || busy || world.active} onClick={() => void remove()}><Trash2 className="h-4 w-4" />Delete world</Button></div>
           </div>
           {chunksOpen && <WorldChunks key={world.name} serverId={serverId} world={world} editable={editable && !busy} onChanged={() => setRevision((value) => value + 1)} />}
         </div>}

@@ -29,7 +29,7 @@ export function UpdateCheckerSettings() {
   }
 
   return <Card>
-    <CardHeader><CardTitle>Update checks</CardTitle><CardDescription>Check server software, plugins, and mods every midnight. Available updates appear on your servers.</CardDescription></CardHeader>
+    <CardHeader><CardTitle>Update checks</CardTitle><CardDescription>Check server software, plugins, and mods every midnight. Browsing software versions and builds also updates your server badges, even with nightly checks off.</CardDescription></CardHeader>
     <CardContent className="space-y-5">
       {(error || loadError) && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 text-sm text-destructive"><p>{error || loadError}</p>{loadError && <Button variant="outline" size="sm" onClick={() => void reload()}>Retry</Button>}</div>}
       {!status ? (!loadError && <p className="text-sm text-muted-foreground" role="status">Loading update settings…</p>) : <>

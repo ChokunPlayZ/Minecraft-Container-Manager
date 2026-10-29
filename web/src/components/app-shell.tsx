@@ -1,21 +1,22 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { Archive, Box, ChevronRight, LogOut, Menu, Server, Settings2, Users, X } from 'lucide-react';
-import { useAuth } from '../lib/auth';
+import { useAuth, usePermissions } from '../lib/auth';
 import { ThemeToggle } from './theme-toggle';
 import { Button } from './ui/button';
 
 const destinations = [
-  { to: '/dashboard', label: 'Servers', icon: Server },
-  { to: '/backups', label: 'Backups', icon: Archive },
-  { to: '/settings', label: 'App Settings', icon: Settings2 },
-  { to: '/users', label: 'Users', icon: Users },
+  { to: '/dashboard', label: 'Servers', icon: Server, permission: 'servers.view' },
+  { to: '/backups', label: 'Backups', icon: Archive, permission: 'backups.read' },
+  { to: '/settings', label: 'App Settings', icon: Settings2, permission: 'settings.manage' },
+  { to: '/users', label: 'Users', icon: Users, permission: 'users.manage' },
 ] as const;
 
 const userSettings = { to: '/user-settings', label: 'User Settings' } as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  const can = usePermissions();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
   const isServer = pathname.startsWith('/servers/');
@@ -26,7 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   function navigation(mobile = false) {
     return (
       <nav aria-label={mobile ? 'Mobile navigation' : 'Main navigation'} className="space-y-1.5">
-        {destinations.map(({ to, label, icon: Icon }) => {
+        {destinations.filter((item) => item.to === '/settings' ? ['settings.manage', 'updates.manage', 'panel.update'].some((permission) => can(permission)) : can(item.permission)).map(({ to, label, icon: Icon }) => {
           const active = to === current.to;
           return (
             <Link key={to} to={to} onClick={() => setMenuOpen(false)}

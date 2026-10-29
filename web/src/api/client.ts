@@ -1,6 +1,8 @@
+import type { UserAccess, PermissionCatalog } from './types';
 import { getArtifactHashes } from './artifact-hashes';
 import { handleMockRequest, isMock } from './demo-transport';
 import { ensureCsrf, safeMethods } from './csrf';
+import { announceUpdateDiscovery } from '../lib/update-discovery';
 import type {
   PanelUpdateStatus,
   UpdateCheckerStatus,
@@ -278,14 +280,14 @@ export const api = {
   installServer: (id: string, input: InstallInput) =>
     request<InstallInfo>(`/api/servers/${id}/install`, { method: 'POST', body: JSON.stringify(input) }),
 
-  jarVersions: (type: ServerType) => request<VersionMeta[]>(`/api/jars/${type}/versions`),
+  jarVersions: (type: ServerType) => request<VersionMeta[]>(`/api/jars/${type}/versions`).then(announceUpdateDiscovery),
 
   jarBuilds: (type: ServerType, version: string) =>
-    request<VersionInfo[]>(`/api/jars/${type}/versions/${encodeURIComponent(version)}/builds`),
+    request<VersionInfo[]>(`/api/jars/${type}/versions/${encodeURIComponent(version)}/builds`).then(announceUpdateDiscovery),
 
   javaVersions: () => request<JavaRelease[]>('/api/system/java-versions'),
 
-  availablePorts: () => request<AvailablePortsResponse>('/api/ports/available'),
+  availablePorts: (serverId?: string) => request<AvailablePortsResponse>(serverId ? `/api/ports/available?server_id=${encodeURIComponent(serverId)}` : '/api/ports/available'),
 
   checkPort: (port: number, serverId?: string, protocol?: string) => {
     const params = new URLSearchParams({ port: String(port) });
@@ -345,10 +347,12 @@ export const api = {
   listUsers: () =>
     request<{ users: User[] }>('/api/users').then((res) => res.users ?? []),
 
-  createUser: (email: string, password: string) =>
-    request<User>('/api/users', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  permissionCatalog: () => request<PermissionCatalog>('/api/permissions'),
 
-  updateUser: (id: string, input: { email?: string; password?: string }) =>
+  createUser: (email: string, password: string, access?: UserAccess) =>
+    request<User>('/api/users', { method: 'POST', body: JSON.stringify({ email, password, access }) }),
+
+  updateUser: (id: string, input: { email?: string; password?: string; access?: UserAccess }) =>
     request<User>(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
 
   deleteUser: (id: string) =>
