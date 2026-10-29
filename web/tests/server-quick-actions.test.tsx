@@ -1,4 +1,4 @@
-import { renderWithAdmin as render } from '../src/test/auth';
+import { adminUser, renderWithAdmin as render, renderWithUser } from '../src/test/auth';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,7 @@ import type { Server } from '../src/api/types';
 import { ServerQuickActions } from '../src/components/server-quick-actions';
 
 vi.mock('@tanstack/react-router', () => ({
-  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  Link: ({ children, role, 'aria-disabled': disabled }: React.ComponentProps<'a'>) => <a role={role} aria-disabled={disabled}>{children}</a>,
 }));
 
 const server: Server = {
@@ -19,6 +19,42 @@ const server: Server = {
 afterEach(() => vi.restoreAllMocks());
 
 describe('dashboard server actions', () => {
+  it('right-clicks anywhere on a server row and runs the state-aware action', async () => {
+    const start = vi.spyOn(api, 'startServer').mockResolvedValue(server);
+    const onUpdated = vi.fn();
+    const user = userEvent.setup();
+    render(<ServerQuickActions server={{ ...server, state: 'stopped' }} onUpdated={onUpdated} onCopy={vi.fn()}>
+      {(actions) => <div><span>Server details</span>{actions}</div>}
+    </ServerQuickActions>);
+    await user.pointer({ target: screen.getByText('Server details'), keys: '[MouseRight]' });
+    const menu = await screen.findByRole('menu', { name: 'Actions for Survival' });
+    expect(within(menu).getByRole('menuitem', { name: 'Restart' })).toHaveAttribute('aria-disabled', 'true');
+    await user.click(within(menu).getByRole('menuitem', { name: 'Start' }));
+    await waitFor(() => expect(onUpdated).toHaveBeenCalledWith(server));
+    expect(start).toHaveBeenCalledWith(server.id);
+  });
+
+  it('respects permissions in the context menu', async () => {
+    const user = userEvent.setup();
+    renderWithUser(<ServerQuickActions server={server} onUpdated={vi.fn()} onCopy={vi.fn()} />, { ...adminUser, role: 'viewer', permissions: ['servers.read'] });
+    await user.pointer({ target: screen.getByLabelText('Server Survival'), keys: '[MouseRight]' });
+    for (const name of ['Stop', 'Restart', 'Backups', 'Copy server', 'Force kill']) {
+      expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'true');
+    }
+  });
+
+  it('requires confirmation when force kill is selected from the context menu', async () => {
+    const kill = vi.spyOn(api, 'killServer').mockResolvedValue({ ...server, state: 'stopped' });
+    const user = userEvent.setup();
+    render(<ServerQuickActions server={server} onUpdated={vi.fn()} onCopy={vi.fn()} />);
+    await user.pointer({ target: screen.getByLabelText('Server Survival'), keys: '[MouseRight]' });
+    await user.click(screen.getByRole('menuitem', { name: 'Force kill' }));
+    expect(kill).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog', { name: 'Force kill server' });
+    await user.click(within(dialog).getByRole('button', { name: 'Force kill' }));
+    await waitFor(() => expect(kill).toHaveBeenCalledWith(server.id));
+  });
+
   it('starts a stopped server and applies the API response to the dashboard', async () => {
     const start = vi.spyOn(api, 'startServer').mockResolvedValue(server);
     const onUpdated = vi.fn();

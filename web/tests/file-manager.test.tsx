@@ -1,4 +1,4 @@
-import { renderWithAdmin as render } from '../src/test/auth';
+import { adminUser, renderWithAdmin as render, renderWithUser } from '../src/test/auth';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,92 @@ beforeEach(() => {
   vi.spyOn(api, 'readFileContent').mockResolvedValue(snapshot('pvp: true\nplayers: 20'));
 });
 afterEach(() => vi.restoreAllMocks());
+
+describe('FileManager context menus', () => {
+  it('opens only the targeted file menu and edits the file', async () => {
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    const file = await screen.findByRole('button', { name: 'config.yml' });
+    await user.pointer({ target: file, keys: '[MouseRight]' });
+    const menu = await screen.findByRole('menu', { name: 'Actions for config.yml' });
+    expect(screen.getAllByRole('menu')).toHaveLength(1);
+    expect(api.readFileContent).not.toHaveBeenCalled();
+    await user.click(within(menu).getByRole('menuitem', { name: 'Edit' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'File content' })).toHaveValue('pvp: true\nplayers: 20'));
+    expect(api.readFileContent).toHaveBeenCalledWith(server.id, 'config.yml');
+  });
+
+  it('opens with Shift+F10 and restores focus when dismissed with Escape', async () => {
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    const file = await screen.findByRole('button', { name: 'config.yml' });
+    file.focus();
+    await user.keyboard('{Shift>}{F10}{/Shift}');
+    expect(await screen.findByRole('menu', { name: 'Actions for config.yml' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    expect(file).toHaveFocus();
+  });
+
+  it('opens only the file menu after a touch long press', async () => {
+    render(<FileManager server={server} />);
+    const file = await screen.findByRole('button', { name: 'config.yml' });
+    fireEvent.pointerDown(file, { pointerType: 'touch', pointerId: 1 });
+    expect(await screen.findByRole('menu', { name: 'Actions for config.yml' })).toBeInTheDocument();
+    expect(screen.getAllByRole('menu')).toHaveLength(1);
+    fireEvent.pointerUp(file, { pointerType: 'touch', pointerId: 1 });
+  });
+
+  it('keeps deletion behind its existing confirmation', async () => {
+    const remove = vi.spyOn(api, 'deleteFile').mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    await user.pointer({ target: await screen.findByRole('button', { name: 'config.yml' }), keys: '[MouseRight]' });
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete file' });
+    expect(remove).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('disables write and delete operations for read-only users', async () => {
+    const user = userEvent.setup();
+    renderWithUser(<FileManager server={server} />, { ...adminUser, role: 'viewer', permissions: ['files.read'] });
+    await user.pointer({ target: await screen.findByRole('button', { name: 'config.yml' }), keys: '[MouseRight]' });
+    for (const name of ['Archive as zip', 'Rename', 'Delete']) {
+      expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'true');
+    }
+    expect(screen.getByRole('menuitem', { name: 'Download' })).not.toHaveAttribute('aria-disabled');
+  });
+
+  it('provides creation and refresh actions in the folder background', async () => {
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    await screen.findByRole('button', { name: 'config.yml' });
+    await user.pointer({ target: screen.getByLabelText('File browser'), keys: '[MouseRight]' });
+    const menu = await screen.findByRole('menu', { name: 'Folder actions' });
+    expect(within(menu).getByRole('menuitem', { name: 'New file' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Upload files' })).toBeInTheDocument();
+    await user.click(within(menu).getByRole('menuitem', { name: 'New folder' }));
+    expect(await screen.findByRole('dialog', { name: 'New folder' })).toBeInTheDocument();
+  });
+
+  it('opens folders and uses the current folder when renaming a file', async () => {
+    vi.mocked(api.listFiles).mockImplementation(async (_id, path) => ({ path: path ?? '', entries: path ? [entry] : [{ ...entry, name: 'plugins', is_directory: true }] }));
+    const rename = vi.spyOn(api, 'renameFile').mockResolvedValue({ ...entry, name: 'settings.yml' });
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    await user.pointer({ target: await screen.findByRole('button', { name: 'plugins' }), keys: '[MouseRight]' });
+    await user.click(screen.getByRole('menuitem', { name: 'Open folder' }));
+    await user.pointer({ target: await screen.findByRole('button', { name: 'config.yml' }), keys: '[MouseRight]' });
+    await user.click(screen.getByRole('menuitem', { name: 'Rename' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rename item' });
+    const name = within(dialog).getByRole('textbox');
+    await user.clear(name);
+    await user.type(name, 'settings.yml{Enter}');
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(server.id, 'plugins/config.yml', 'settings.yml'));
+  });
+});
 
 async function openAndEdit() {
   const user = userEvent.setup();

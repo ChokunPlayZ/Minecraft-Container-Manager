@@ -32,6 +32,7 @@ import { Textarea } from './ui/textarea';
 import { useModal } from './ui/modal';
 import { NBTEditor } from './nbt-editor';
 import { isNBTFile } from '../lib/nbt';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from './ui/context-menu';
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -635,7 +636,9 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
           )}
 
           {/* Entry list */}
-          <div className="max-h-[65vh] divide-y overflow-y-auto">
+          <ContextMenu>
+          <ContextMenuTrigger asChild>
+          <div tabIndex={0} aria-label="File browser" className="max-h-[65vh] min-h-40 divide-y overflow-y-auto rounded-b-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
             {entries.length === 0 && (
               <div className="empty-state"><Folder /><h3 className="section-heading">Empty folder</h3><p>Upload a file or create a folder using the controls above.</p></div>
             )}
@@ -643,11 +646,14 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
               const editable = isEditable(e);
               const isSelected = selectedNames.has(e.name);
               return (
+                <ContextMenu key={e.name}>
+                <ContextMenuTrigger asChild>
                 <div
-                  key={e.name}
+                  tabIndex={0}
+                  aria-label={e.name}
                   className={`flex flex-col items-stretch gap-3 px-4 py-3 text-sm transition-colors sm:flex-row sm:items-center sm:justify-between ${
                     isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/40'
-                  }`}
+                  } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring`}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     <input
@@ -746,9 +752,40 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                     </Button>
                   </div>
                 </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent aria-label={`Actions for ${e.name}`}>
+                  <ContextMenuLabel>{e.name}</ContextMenuLabel>
+                  {(e.is_directory || editable || isNBTFile(e.name)) && <ContextMenuItem disabled={busy || editorBusy} onSelect={() => handleEntryClick(e)}>
+                    {e.is_directory ? <Folder /> : isNBTFile(e.name) ? <Database /> : <Pencil />}
+                    {e.is_directory ? 'Open folder' : isNBTFile(e.name) ? 'Open as NBT' : 'Edit'}
+                  </ContextMenuItem>}
+                  {!e.is_directory && <ContextMenuItem disabled={busy} onSelect={() => void handleDownload(e)}><Download />Download</ContextMenuItem>}
+                  {!e.is_directory && !isNBTFile(e.name) && <ContextMenuItem disabled={busy || editorBusy} onSelect={() => void openNBT(joinPath(cwd, e.name))}><Database />Open as NBT</ContextMenuItem>}
+                  <ContextMenuSeparator />
+                  {!e.is_directory && e.name.toLowerCase().endsWith('.zip') ?
+                    <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleUnzip(e)}><Layers />Unzip archive</ContextMenuItem> :
+                    <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleArchive(e)}><Archive />Archive as zip</ContextMenuItem>}
+                  {isSelected && selectedNames.size > 1 && <ContextMenuItem disabled={!canDelete || busy} onSelect={() => void handleArchiveSelected()}><Archive />Zip selected ({selectedNames.size})</ContextMenuItem>}
+                  <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleRename(e)}><TextCursorInput />Rename</ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem className="text-destructive focus:text-destructive" disabled={!canDelete || busy} onSelect={() => void handleDelete(e)}><Trash2 />Delete</ContextMenuItem>
+                </ContextMenuContent>
+                </ContextMenu>
               );
             })}
           </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent aria-label="Folder actions">
+            <ContextMenuLabel>{cwd || 'server root'}</ContextMenuLabel>
+            <ContextMenuItem disabled={!canWrite || busy || editorBusy} onSelect={() => void newFile()}><FilePlus2 />New file</ContextMenuItem>
+            <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleMkdir()}><FolderPlus />New folder</ContextMenuItem>
+            <ContextMenuItem disabled={!canWrite || busy} onSelect={() => fileInputRef.current?.click()}><Upload />Upload files</ContextMenuItem>
+            <ContextMenuItem disabled={!canWrite || busy} onSelect={() => setShowUrlInput(true)}><Globe />Download from URL</ContextMenuItem>
+            {selectedNames.size > 0 && <ContextMenuItem disabled={!canDelete || busy} onSelect={() => void handleArchiveSelected()}><Archive />Zip selected ({selectedNames.size})</ContextMenuItem>}
+            <ContextMenuSeparator />
+            <ContextMenuItem disabled={busy} onSelect={() => void load()}><RefreshCw />Refresh</ContextMenuItem>
+          </ContextMenuContent>
+          </ContextMenu>
         </div>
 
         {/* Right: editor */}
