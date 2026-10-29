@@ -63,6 +63,9 @@ import {
 import { useModal } from '../components/ui/modal';
 
 export const Route = createFileRoute('/servers/$id')({
+  validateSearch: (search: Record<string, unknown>): { tab?: 'schedules' } => ({
+    tab: search.tab === 'schedules' ? 'schedules' : undefined,
+  }),
   component: ServerDetailRoute,
 });
 
@@ -71,9 +74,11 @@ type ServerTab = 'console' | 'performance' | 'logs' | 'players' | 'files' | 'wor
 export function ServerDetailRoute() {
   const { status: updateStatus } = useUpdateChecker();
   const { id } = Route.useParams();
+  const search = Route.useSearch();
   const updateResult = updateStatus?.enabled ? updateStatus.servers[id] : undefined;
   const navigate = useNavigate();
-  const [tab, setTab] = useState<ServerTab>('console');
+  const [tab, setTab] = useState<ServerTab>(search.tab ?? 'console');
+  useEffect(() => { setTab(search.tab ?? 'console'); }, [id, search.tab]);
   const [server, setServer] = useState<Server | null>(null);
   const [statusState, setStatusState] = useState<ServerState | null>(null);
   const [statusStartedAt, setStatusStartedAt] = useState<string | null | undefined>(undefined);

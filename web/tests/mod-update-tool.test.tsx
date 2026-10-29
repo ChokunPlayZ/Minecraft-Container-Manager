@@ -21,8 +21,6 @@ const mockServer: Server = {
   extra_ports: [],
   container_id: 'c-123',
   state: 'running',
-  backup_enabled: false,
-  backup_interval_minutes: 60,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };

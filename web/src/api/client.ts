@@ -880,8 +880,6 @@ export interface UpdateServerInput {
   java_version?: number;
   cpu_limit?: number;
   memory_limit_mb?: number;
-  backup_enabled?: boolean;
-  backup_interval_minutes?: number;
   extra_ports?: ExtraPort[];
 }
 

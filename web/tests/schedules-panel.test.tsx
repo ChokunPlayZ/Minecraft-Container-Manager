@@ -6,12 +6,89 @@ import type { ScheduledTask } from '../src/api/types';
 import { SchedulesPanel } from '../src/components/schedules-panel';
 
 function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
-  return { id: 'task-1', server_id: 'one', name: 'Nightly restart', action: 'restart', command: '', cron: 'midnight', timezone: 'Asia/Bangkok', enabled: true, next_run_at: '2026-10-28T17:00:00Z', last_run_at: '', last_status: '', last_error: '', created_at: '', updated_at: '', ...overrides };
+  return { id: 'task-1', server_id: 'one', name: 'Nightly restart', action: 'restart', command: '', backup_target: '', cron: 'midnight', timezone: 'Asia/Bangkok', enabled: true, next_run_at: '2026-10-28T17:00:00Z', last_run_at: '', last_status: '', last_error: '', created_at: '', updated_at: '', ...overrides };
 }
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('SchedulesPanel', () => {
+  it('creates a remote backup and preserves its target when editing', async () => {
+    vi.spyOn(api, 'listSchedules').mockResolvedValue({ schedules: [], default_timezone: 'UTC' });
+    const create = vi.spyOn(api, 'createSchedule').mockImplementation(async (_id, input) => task(input));
+    const update = vi.spyOn(api, 'updateSchedule').mockImplementation(async (_id, _taskId, input) => task(input));
+    const user = userEvent.setup();
+    render(<SchedulesPanel serverId="one" />);
+    await user.click(await screen.findByRole('button', { name: 'Add schedule' }));
+    await user.type(screen.getByLabelText('Task name'), 'Offsite snapshot');
+    await user.click(screen.getByLabelText('Action'));
+    await user.click(screen.getByRole('option', { name: 'Create backup' }));
+    await user.click(screen.getByLabelText('Backup target'));
+    await user.click(screen.getByRole('option', { name: 'Remote (S3)' }));
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith('one', expect.objectContaining({ action: 'backup', backup_target: 's3' })));
+    expect(await screen.findByText('Create backup · Every day at midnight · Remote (S3)')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Edit Offsite snapshot' }));
+    expect(screen.getByLabelText('Backup target')).toHaveTextContent('Remote (S3)');
+    await user.click(screen.getByLabelText('Backup target'));
+    await user.click(screen.getByRole('option', { name: 'Local disk' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('one', 'task-1', expect.objectContaining({ backup_target: 'local' })));
+    expect(await screen.findByText('Create backup · Every day at midnight · Local disk')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Edit Offsite snapshot' }));
+    await user.click(screen.getByLabelText('Backup target'));
+    await user.click(screen.getByRole('option', { name: 'Panel default' }));
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith('one', 'task-1', expect.objectContaining({ action: 'backup', backup_target: '' })));
+    await user.click(screen.getByRole('button', { name: 'Edit Offsite snapshot' }));
+    await user.click(screen.getByLabelText('Backup target'));
+    await user.click(screen.getByRole('option', { name: 'Remote (S3)' }));
+    await user.click(screen.getByLabelText('Action'));
+    await user.click(screen.getByRole('option', { name: 'Restart server' }));
+    expect(screen.queryByLabelText('Backup target')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith('one', 'task-1', expect.objectContaining({ action: 'restart', backup_target: '' })));
+  });
+
+  it('creates a backup at a fixed interval without a console command', async () => {
+    vi.spyOn(api, 'listSchedules').mockResolvedValue({ schedules: [], default_timezone: 'Asia/Bangkok' });
+    const create = vi.spyOn(api, 'createSchedule').mockImplementation(async (_id, input) => task(input));
+    const user = userEvent.setup();
+    render(<SchedulesPanel serverId="one" />);
+    await user.click(await screen.findByRole('button', { name: 'Add schedule' }));
+    await user.type(screen.getByLabelText('Task name'), 'World snapshot');
+    await user.type(screen.getByLabelText('Console command'), 'save-all');
+    await user.click(screen.getByLabelText('Action'));
+    await user.click(screen.getByRole('option', { name: 'Create backup' }));
+    expect(screen.queryByLabelText('Console command')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Backup target')).toHaveTextContent('Panel default');
+    await user.click(screen.getByLabelText('Frequency'));
+    await user.click(screen.getByRole('option', { name: 'Fixed interval' }));
+    await user.clear(screen.getByLabelText('Interval (minutes)'));
+    await user.type(screen.getByLabelText('Interval (minutes)'), '95');
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith('one', { name: 'World snapshot', action: 'backup', command: '', backup_target: '', cron: '@every 95m', timezone: 'Asia/Bangkok', enabled: true }));
+    expect(await screen.findByText('Create backup · Every 95 minutes · Panel default')).toBeInTheDocument();
+  });
+
+  it('edits and resumes a migrated paused backup through schedules', async () => {
+    const original = task({ name: 'Automatic backup', action: 'backup', cron: '@every 720m', enabled: false, next_run_at: '' });
+    vi.spyOn(api, 'listSchedules').mockResolvedValue({ schedules: [original], default_timezone: 'UTC' });
+    const update = vi.spyOn(api, 'updateSchedule').mockImplementation(async (_id, _taskId, input) => task(input));
+    const toggle = vi.spyOn(api, 'setScheduleEnabled').mockResolvedValue({ ...original, cron: '@every 37m', enabled: true });
+    const user = userEvent.setup();
+    render(<SchedulesPanel serverId="one" />);
+    expect(await screen.findByText('Create backup · Every 12 hours · Panel default')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Edit Automatic backup' }));
+    expect(screen.getByLabelText('Frequency')).toHaveTextContent('Fixed interval');
+    expect(screen.getByLabelText('Interval (minutes)')).toHaveValue(720);
+    await user.clear(screen.getByLabelText('Interval (minutes)'));
+    await user.type(screen.getByLabelText('Interval (minutes)'), '37');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('one', 'task-1', expect.objectContaining({ action: 'backup', cron: '@every 37m', enabled: false })));
+    await user.click(await screen.findByRole('switch', { name: 'Enable Automatic backup' }));
+    expect(toggle).toHaveBeenCalledWith('one', 'task-1', true);
+  });
+
   it('creates a midnight restart in the chosen timezone', async () => {
     vi.spyOn(api, 'listSchedules').mockResolvedValue({ schedules: [], default_timezone: 'Asia/Bangkok' });
     const create = vi.spyOn(api, 'createSchedule').mockImplementation(async (_id, input) => task(input));
@@ -26,7 +103,7 @@ describe('SchedulesPanel', () => {
     await user.clear(screen.getByLabelText('Timezone'));
     await user.type(screen.getByLabelText('Timezone'), 'Asia/Bangkok');
     await user.click(screen.getByRole('button', { name: 'Create schedule' }));
-    await waitFor(() => expect(create).toHaveBeenCalledWith('one', { name: 'Nightly restart', action: 'restart', command: '', cron: 'midnight', timezone: 'Asia/Bangkok', enabled: true }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith('one', { name: 'Nightly restart', action: 'restart', command: '', backup_target: '', cron: 'midnight', timezone: 'Asia/Bangkok', enabled: true }));
     expect(await screen.findByText('Nightly restart')).toBeInTheDocument();
     expect(screen.getByText('Not run yet')).toBeInTheDocument();
     expect(screen.queryByRole('form')).not.toBeInTheDocument();

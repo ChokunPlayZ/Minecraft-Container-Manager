@@ -183,12 +183,14 @@ a container.
 - GZIP, zlib and uncompressed documents retain their compression and tag types. Signed 64-bit integers keep their full precision. Limits: 16 MiB on disk and after decompression, 64 nesting levels, 100,000 tags and 1,000,000 collection elements. Bedrock little-endian data and region containers (`.mca`/`.mcr`) are not standalone Java NBT documents.
 - Browsing is available while running. Saving requires a stopped server, an inactive container and no active background task. Each save checks the opened file's content revision, writes an exact copy to `<filename>.mcm-nbt-<id>.bak`, then replaces the original atomically. Conflicts retain local edits and require reload before another save. Backups remain beside the file until removed; use **Download previous version** or Files to retrieve them. To restore, stop the server and upload the backup under the original filename.
 
-### Scheduled Commands & Server Actions
+### Scheduled Backups, Commands & Server Actions
 
-- Open a server's **Schedules** tab to schedule a console command, start, stop, or graceful restart.
+- Open a server's **Schedules** tab to schedule a backup, console command, start, stop, or graceful restart.
 - Choose midnight, hourly, every 30 minutes, weekly, or monthly presets, or enter a standard five-field cron expression (`minute hour day month weekday`). For example, `0 0 * * *` runs at midnight and `*/15 * * * *` runs every 15 minutes. Names such as `midnight`, `daily`, and `@hourly` are also accepted by the API.
+- Choose **Fixed interval** to repeat every whole number of minutes, independent of the time of day. The API accepts expressions such as `@every 720m` (12 hours) or `@every 95m`.
 - New tasks default to the existing `TZ` environment setting (`UTC` when unset or invalid). Each task saves its timezone and allows an override. Midnight follows the selected zone, including daylight saving changes.
 - Edit, pause/resume, and delete tasks; inspect the next run, last result, and error details. Console commands require a running server. Restart follows the manual restart behavior and also starts a stopped server.
+- Backup tasks let you choose **Panel default**, **Local disk**, or **Remote (S3)** storage and use the panel’s retention settings, with the same progress, notifications, and stop/resume behavior as manual backups. Remote backups use the panel’s configured S3-compatible endpoint and bucket. Existing automatic backup settings migrate to schedule entries, preserving enabled or paused state, minute intervals, and the panel’s default storage. New servers start with an enabled 12-hour backup schedule. Manage all automatic backups in **Schedules**; the old server backup settings are replaced by schedule tasks.
 - Schedules persist in SQLite and run while the panel is online, within the five-second polling cadence. Missed runs are skipped after panel downtime. A task cannot overlap its own previous execution within the panel process, and pausing or deleting a task leaves an already running execution to finish. Failed runs are recorded and wait for the next scheduled occurrence.
 
 ### App and user settings
@@ -255,10 +257,10 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
 - **Automatic Lifecycle Cleanup**: Removing a server automatically deregisters its DNS record with the original provider. Custom SRV names persist across stop/start cycles, record removal, and server renames.
 
 ### 📦 S3-Compatible Backups & Scheduling
-- **Dedicated Backup Manager**: Open Backups to select a server, manage archives, search by name, filter by local or S3 storage, and save its automatic backup interval. The server's Backups tab remains available.
+- **Dedicated Backup Manager**: Open Backups to select a server, manage archives, search by name, filter by local or S3 storage, and open its Schedules tab to manage automatic backups. The server's Backups tab remains available.
 - **Separate Backup Media**: Store local archives and temporary backup files on another disk or mounted share with `MCM_BACKUP_DIR`. Existing local archives remain accessible.
 - **Object Store Integration**: Archive server data directories to compressed `.tar.gz` archives stored in any S3-compatible object store (AWS S3, MinIO, Cloudflare R2, DigitalOcean Spaces).
-- **Automated Scheduling & Retention**: Configure automated backup intervals per server with automatic pruning of older snapshots.
+- **Automated Scheduling & Retention**: Configure backups with other server tasks in Schedules, using cron presets or fixed intervals, with automatic pruning of older snapshots.
 - **Instant Restore**: One-click in-place snapshot restoration.
 - **Live Backup Progress**: Real-time SSE progress events and progress bars during backup creation.
 - **Backup Downloads & Uploads**: Download backup snapshots directly from storage or upload external archives for restoration.
@@ -659,7 +661,7 @@ MCM exposes a clean JSON REST API along with Server-Sent Events (SSE) for consol
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/servers/:id/schedules` | List recurring tasks, next run, and last result. |
-| `POST` | `/api/servers/:id/schedules` | Create a task with `name`, `action` (`command`, `start`, `stop`, `restart`), `command` (for command tasks), `cron`, optional `timezone` (defaults to `TZ`), and optional `enabled` (defaults to true). |
+| `POST` | `/api/servers/:id/schedules` | Create a task with `name`, `action` (`backup`, `command`, `start`, `stop`, `restart`), `command` (for command tasks), optional `backup_target` (`""` for panel default, `local`, or `s3`; backup tasks only), `cron`, optional `timezone` (defaults to `TZ`), and optional `enabled` (defaults to true). |
 | `PUT` | `/api/servers/:id/schedules/:scheduleId` | Replace task configuration; include `enabled`. |
 | `PATCH` | `/api/servers/:id/schedules/:scheduleId` | Pause or resume with `{"enabled": false}` or `{"enabled": true}`. |
 | `DELETE` | `/api/servers/:id/schedules/:scheduleId` | Delete a task and cancel its future runs. |
@@ -769,7 +771,7 @@ Choose the provider under **App Settings → DNS Providers** and use **Test Conn
 ├── internal/
 │   ├── api/                # HTTP routes, middlewares, SSE console/task streams, and handlers
 │   ├── auth/               # Password hashing, sessions, TOTP, and WebAuthn passkeys
-│   ├── backups/            # S3 client, archive engine, and background backup scheduler
+│   ├── backups/            # S3 client and backup/restore archive engine
 │   ├── config/             # Environment variable parsing and defaults
 │   ├── db/                 # SQLite connection and migration runner
 │   ├── dns/                # Cloudflare, Porkbun, DigitalOcean, and Route 53 SRV records

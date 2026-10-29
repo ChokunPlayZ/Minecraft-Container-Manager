@@ -27,8 +27,6 @@ const server: Server = {
   extra_ports: [],
   container_id: null,
   state: 'stopped',
-  backup_enabled: false,
-  backup_interval_minutes: 0,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };

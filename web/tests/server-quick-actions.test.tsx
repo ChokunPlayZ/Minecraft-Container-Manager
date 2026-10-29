@@ -12,7 +12,7 @@ vi.mock('@tanstack/react-router', () => ({
 const server: Server = {
   id: 'survival', name: 'Survival', server_type: 'paper', version: '1.21.4', build: '145',
   ram_mb: 4096, cpu_limit: 2, memory_limit_mb: 4096, host_port: 25565, extra_ports: [],
-  container_id: 'container', state: 'running', backup_enabled: true, backup_interval_minutes: 60,
+  container_id: 'container', state: 'running',
   created_at: '2026-10-27T00:00:00Z', updated_at: '2026-10-27T00:00:00Z',
 };
 afterEach(() => vi.restoreAllMocks());

@@ -53,8 +53,6 @@ export interface Server {
   extra_ports: ExtraPort[];
   container_id: string | null;
   state: ServerState;
-  backup_enabled: boolean;
-  backup_interval_minutes: number;
   started_at?: string | null;
   uptime_seconds?: number;
   needs_rebuild?: boolean;
@@ -955,12 +953,14 @@ export interface CopyServerInput {
 
 
 
-export type ScheduledAction = 'command' | 'start' | 'stop' | 'restart';
+export type ScheduledAction = 'command' | 'start' | 'stop' | 'restart' | 'backup';
+export type BackupTarget = '' | 'local' | 's3';
 
 export interface ScheduleInput {
   name: string;
   action: ScheduledAction;
   command: string;
+  backup_target: BackupTarget;
   cron: string;
   timezone: string;
   enabled: boolean;

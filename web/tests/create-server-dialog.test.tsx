@@ -18,8 +18,6 @@ const mockCreatedServer: Server = {
   extra_ports: [],
   container_id: null,
   state: 'installing',
-  backup_enabled: false,
-  backup_interval_minutes: 0,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };

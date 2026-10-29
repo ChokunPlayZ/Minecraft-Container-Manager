@@ -95,4 +95,11 @@ func TestScheduleEndpoints(t *testing.T) {
 	if !strings.Contains(empty.Body.String(), `"schedules":[]`) {
 		t.Fatal(empty.Body.String())
 	}
+	backup := request("POST", base, `{"name":"Automatic backup","action":"backup","backup_target":"s3","cron":"@every 95m","enabled":false}`, true, true, 201)
+	if err := json.Unmarshal(backup.Body.Bytes(), &task); err != nil || task.Action != "backup" || task.Cron != "@every 95m" || task.Enabled || task.NextRunAt != "" || task.BackupTarget != "s3" {
+		t.Fatalf("backup schedule: %s %v", backup.Body.String(), err)
+	}
+	request("PATCH", base+"/"+task.ID, `{"enabled":true}`, true, true, 200)
+	request("POST", base, `{"name":"Too frequent","action":"backup","cron":"@every 1s"}`, true, true, 400)
+	request("POST", base, `{"name":"Bad target","action":"backup","backup_target":"unknown","cron":"midnight"}`, true, true, 400)
 }

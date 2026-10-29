@@ -20,6 +20,7 @@ import (
 	"github.com/mcm-panel/mcm/internal/docker"
 	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/ports"
+	"github.com/mcm-panel/mcm/internal/schedules"
 )
 
 func TestCreateWithHostPortAndConflict(t *testing.T) {
@@ -49,6 +50,10 @@ func TestCreateWithHostPortAndConflict(t *testing.T) {
 	}
 	if srv1.HostPort != 25580 {
 		t.Errorf("expected port 25580, got %d", srv1.HostPort)
+	}
+	tasks, err := schedules.NewStore(dbHandle.DB).List(context.Background(), srv1.ID)
+	if err != nil || len(tasks) != 1 || tasks[0].Action != "backup" || tasks[0].Cron != "@every 720m" || !tasks[0].Enabled || tasks[0].NextRunAt == "" {
+		t.Fatalf("new server lost default backup: %+v %v", tasks, err)
 	}
 
 	// Try creating second server with identical port 25580 -> should fail with ErrPortInUse.
@@ -290,6 +295,18 @@ func TestCopyServer(t *testing.T) {
 
 	srcID := uuid.NewString()
 	insertServer(t, dbHandle, srcID, 25565, "", StateStopped)
+	scheduleStore := schedules.NewStore(dbHandle.DB)
+	backupTask, err := scheduleStore.Create(context.Background(), srcID, schedules.Input{
+		Name: "Paused backup", Action: "backup", Cron: "@every 95m", Timezone: "Asia/Bangkok", Enabled: false, BackupTarget: "s3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scheduleStore.Create(context.Background(), srcID, schedules.Input{
+		Name: "Restart", Action: "restart", Cron: "midnight", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Populate files in source server directory:
 	// - World: world/level.dat, world/region/r.0.0.mca
@@ -348,6 +365,10 @@ func TestCopyServer(t *testing.T) {
 		}
 		if copied.HostPort == 25565 {
 			t.Errorf("expected new port != 25565, got %d", copied.HostPort)
+		}
+		tasks, err := scheduleStore.List(context.Background(), copied.ID)
+		if err != nil || len(tasks) != 1 || tasks[0].ID == backupTask.ID || tasks[0].Action != "backup" || tasks[0].Cron != "@every 95m" || tasks[0].Timezone != "Asia/Bangkok" || tasks[0].Enabled || tasks[0].LastRunAt != "" || tasks[0].BackupTarget != "s3" {
+			t.Fatalf("copied backup configuration: %+v %v", tasks, err)
 		}
 
 		copyDir := s.dataPath(copied.ID)

@@ -18,8 +18,6 @@ const mockServer: Server = {
   extra_ports: [],
   container_id: 'mcm-srv-test-server',
   state: 'running',
-  backup_enabled: true,
-  backup_interval_minutes: 1440,
   created_at: '2026-09-15T00:00:00Z',
   updated_at: '2026-09-15T00:00:00Z',
 };

@@ -3,11 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
 import type { Server } from '../src/api/types';
-import { BackupManager, BackupSchedule } from '../src/routes/backups';
+import { BackupManager } from '../src/routes/backups';
 
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({}),
-  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  Link: ({ children, to, params, search }: { children: React.ReactNode; to: string; params?: { id: string }; search?: { tab: string } }) => <a href={to.replace('$id', params?.id ?? '') + (search?.tab ? `?tab=${search.tab}` : '')}>{children}</a>,
 }));
 vi.mock('../src/components/require-auth', () => ({ RequireAuth: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('../src/components/app-shell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
@@ -15,7 +15,7 @@ vi.mock('../src/components/app-shell', () => ({ AppShell: ({ children }: { child
 const server: Server = {
   id: 'survival', name: 'Survival', server_type: 'paper', version: '1.21.4', build: '145',
   ram_mb: 4096, cpu_limit: 2, memory_limit_mb: 4096, host_port: 25565, extra_ports: [],
-  container_id: 'container', state: 'running', backup_enabled: true, backup_interval_minutes: 60,
+  container_id: 'container', state: 'running',
   created_at: '2026-10-27T00:00:00Z', updated_at: '2026-10-27T00:00:00Z',
 };
 afterEach(() => vi.restoreAllMocks());
@@ -50,25 +50,16 @@ describe('dedicated backup manager', () => {
     expect(screen.queryByRole('button', { name: 'Create backup' })).not.toBeInTheDocument();
   });
 
-  it('saves only backup scheduling fields and reports success', async () => {
-    const update = vi.spyOn(api, 'updateServer').mockResolvedValue({ ...server, backup_interval_minutes: 120 });
-    const onSaved = vi.fn();
-    render(<BackupSchedule server={server} onSaved={onSaved} />);
-    const input = screen.getByLabelText('Interval (minutes)');
-    await userEvent.clear(input);
-    await userEvent.type(input, '120');
-    await userEvent.click(screen.getByRole('button', { name: 'Save schedule' }));
-    expect(update).toHaveBeenCalledWith(server.id, { backup_enabled: true, backup_interval_minutes: 120 });
-    expect(await screen.findByRole('status')).toHaveTextContent('Backup schedule saved.');
-    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ backup_interval_minutes: 120 }));
-  });
-
-  it('lets administrators disable a schedule without submitting an invalid disabled interval', async () => {
-    const update = vi.spyOn(api, 'updateServer').mockResolvedValue({ ...server, backup_enabled: false });
-    render(<BackupSchedule server={server} onSaved={vi.fn()} />);
-    await userEvent.clear(screen.getByLabelText('Interval (minutes)'));
-    await userEvent.click(screen.getByRole('switch', { name: 'Enable automatic backups' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save schedule' }));
-    expect(update).toHaveBeenCalledWith(server.id, { backup_enabled: false, backup_interval_minutes: 60 });
+  it('points automatic backups to the server schedule system', async () => {
+    vi.spyOn(api, 'listServers').mockResolvedValue([server]);
+    vi.spyOn(api, 'listBackups').mockResolvedValue({ backups: [] });
+    vi.spyOn(api, 'getBackupProgress').mockResolvedValue({ active: false });
+    vi.spyOn(api, 'subscribeBackupEvents').mockReturnValue(vi.fn());
+    const update = vi.spyOn(api, 'updateServer');
+    render(<BackupManager serverId="survival" onSelect={vi.fn()} />);
+    expect(await screen.findByText('Manage recurring backups in this server’s Schedules tab.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Manage schedules' })).toHaveAttribute('href', '/servers/survival?tab=schedules');
+    expect(screen.queryByLabelText('Interval (minutes)')).not.toBeInTheDocument();
+    expect(update).not.toHaveBeenCalled();
   });
 });

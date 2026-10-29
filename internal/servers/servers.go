@@ -88,23 +88,19 @@ type Server struct {
 	RAMMB      int    `json:"ram_mb"`
 	// CPULimit is the CPU quota in cores (0 = no limit). MemoryLimitMB is an
 	// explicit memory cap in MB; 0 falls back to the RAM-derived default.
-	CPULimit      float64     `json:"cpu_limit"`
-	MemoryLimitMB int         `json:"memory_limit_mb"`
-	HostPort      int         `json:"host_port"`
-	JavaVersion   int         `json:"java_version"`
-	ExtraPorts    []ExtraPort `json:"extra_ports"`
-	ContainerID   string      `json:"container_id,omitempty"`
-	State         string      `json:"state"`
-	// Backup settings. BackupEnabled defaults to true; BackupIntervalMinutes
-	// is the minutes between automatic backups (default 720).
-	BackupEnabled         bool     `json:"backup_enabled"`
-	BackupIntervalMinutes int      `json:"backup_interval_minutes"`
-	StartedAt             string   `json:"started_at,omitempty"`
-	UptimeSeconds         int64    `json:"uptime_seconds,omitempty"`
-	NeedsRebuild          bool     `json:"needs_rebuild"`
-	RebuildReasons        []string `json:"rebuild_reasons,omitempty"`
-	CreatedAt             string   `json:"created_at"`
-	UpdatedAt             string   `json:"updated_at"`
+	CPULimit       float64     `json:"cpu_limit"`
+	MemoryLimitMB  int         `json:"memory_limit_mb"`
+	HostPort       int         `json:"host_port"`
+	JavaVersion    int         `json:"java_version"`
+	ExtraPorts     []ExtraPort `json:"extra_ports"`
+	ContainerID    string      `json:"container_id,omitempty"`
+	State          string      `json:"state"`
+	StartedAt      string      `json:"started_at,omitempty"`
+	UptimeSeconds  int64       `json:"uptime_seconds,omitempty"`
+	NeedsRebuild   bool        `json:"needs_rebuild"`
+	RebuildReasons []string    `json:"rebuild_reasons,omitempty"`
+	CreatedAt      string      `json:"created_at"`
+	UpdatedAt      string      `json:"updated_at"`
 }
 
 // ServerStats represents consolidated resource consumption metrics for a server.
@@ -151,18 +147,16 @@ type CreateInput struct {
 
 // UpdateInput is the payload for updating a server.
 type UpdateInput struct {
-	Name                  *string       `json:"name"`
-	ServerType            *jars.JarType `json:"server_type"`
-	Version               *string       `json:"version"`
-	Build                 *string       `json:"build"`
-	RAMMB                 *int          `json:"ram_mb"`
-	HostPort              *int          `json:"host_port"`
-	CPULimit              *float64      `json:"cpu_limit"`
-	MemoryLimitMB         *int          `json:"memory_limit_mb"`
-	BackupEnabled         *bool         `json:"backup_enabled"`
-	BackupIntervalMinutes *int          `json:"backup_interval_minutes"`
-	JavaVersion           *int          `json:"java_version"`
-	ExtraPorts            *[]ExtraPort  `json:"extra_ports"`
+	Name          *string       `json:"name"`
+	ServerType    *jars.JarType `json:"server_type"`
+	Version       *string       `json:"version"`
+	Build         *string       `json:"build"`
+	RAMMB         *int          `json:"ram_mb"`
+	HostPort      *int          `json:"host_port"`
+	CPULimit      *float64      `json:"cpu_limit"`
+	MemoryLimitMB *int          `json:"memory_limit_mb"`
+	JavaVersion   *int          `json:"java_version"`
+	ExtraPorts    *[]ExtraPort  `json:"extra_ports"`
 }
 
 // CopyInput is the payload for duplicating an existing server.
@@ -489,7 +483,7 @@ func calcUptime(srv *Server) {
 // List returns all servers ordered by creation time.
 func (s *Store) List(ctx context.Context) ([]Server, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,''), COALESCE(java_version, 21) FROM servers ORDER BY created_at`)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,''), COALESCE(java_version, 21) FROM servers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +496,7 @@ func (s *Store) List(ctx context.Context) ([]Server, error) {
 		var srv Server
 		var extra string
 		var rawConfig string
-		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig, &srv.JavaVersion); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig, &srv.JavaVersion); err != nil {
 			return nil, err
 		}
 		srv.ExtraPorts = decodeExtraPorts(extra)
@@ -522,8 +516,8 @@ func (s *Store) Get(ctx context.Context, id string) (Server, error) {
 	var extra string
 	var rawConfig string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, backup_enabled, backup_interval_minutes, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,''), COALESCE(java_version, 21) FROM servers WHERE id = ?`, id).
-		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.BackupEnabled, &srv.BackupIntervalMinutes, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig, &srv.JavaVersion)
+		`SELECT id, name, server_type, version, COALESCE(build,''), ram_mb, cpu_limit, memory_limit_mb, host_port, COALESCE(extra_ports,'[]'), COALESCE(container_id,''), state, created_at, updated_at, COALESCE(started_at,''), COALESCE(container_config,''), COALESCE(java_version, 21) FROM servers WHERE id = ?`, id).
+		Scan(&srv.ID, &srv.Name, &srv.ServerType, &srv.Version, &srv.Build, &srv.RAMMB, &srv.CPULimit, &srv.MemoryLimitMB, &srv.HostPort, &extra, &srv.ContainerID, &srv.State, &srv.CreatedAt, &srv.UpdatedAt, &srv.StartedAt, &rawConfig, &srv.JavaVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Server{}, ErrNotFound
 	}
@@ -631,6 +625,10 @@ func (s *Store) Create(ctx context.Context, in CreateInput) (Server, error) {
 	if err != nil {
 		return Server{}, fmt.Errorf("%w: port reservation conflicts", ErrPortInUse)
 	}
+	if err := s.createBackupSchedule(ctx, id); err != nil {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM servers WHERE id=?`, id)
+		return Server{}, fmt.Errorf("create backup schedule: %w", err)
+	}
 	created, err := s.Get(ctx, id)
 	if err != nil {
 		return Server{}, err
@@ -727,12 +725,6 @@ func (s *Store) updateLocked(ctx context.Context, id string, in UpdateInput) (Se
 		}
 		srv.MemoryLimitMB = *in.MemoryLimitMB
 	}
-	if in.BackupEnabled != nil {
-		srv.BackupEnabled = *in.BackupEnabled
-	}
-	if in.BackupIntervalMinutes != nil {
-		srv.BackupIntervalMinutes = *in.BackupIntervalMinutes
-	}
 	if in.ExtraPorts != nil {
 		seenPorts := make(map[int]bool)
 		if srv.HostPort > 0 {
@@ -785,8 +777,8 @@ func (s *Store) updateLocked(ctx context.Context, id string, in UpdateInput) (Se
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, backup_enabled=?, backup_interval_minutes=?, extra_ports=?, container_id=?, state=?, updated_at=?, java_version=? WHERE id=?`,
-		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, srv.BackupEnabled, srv.BackupIntervalMinutes, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, srv.JavaVersion, id)
+		`UPDATE servers SET name=?, server_type=?, version=?, build=?, ram_mb=?, host_port=?, cpu_limit=?, memory_limit_mb=?, extra_ports=?, container_id=?, state=?, updated_at=?, java_version=? WHERE id=?`,
+		srv.Name, srv.ServerType, srv.Version, srv.Build, srv.RAMMB, srv.HostPort, srv.CPULimit, srv.MemoryLimitMB, encodeExtraPorts(srv.ExtraPorts), srv.ContainerID, srv.State, now, srv.JavaVersion, id)
 	if err != nil {
 		if isPortReservationError(err) {
 			return Server{}, fmt.Errorf("%w: port reserved concurrently", ErrPortInUse)
@@ -1927,10 +1919,15 @@ func (s *Store) Copy(ctx context.Context, id string, in CopyInput) (Server, erro
 	// Persist server record in stopped state.
 	// ExtraPorts are not automatically copied to avoid port conflicts with the source container.
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, backup_enabled, backup_interval_minutes, created_at, updated_at, java_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '', ?, ?, ?, ?, ?, ?)`,
-		newID, in.Name, src.ServerType, src.Version, src.Build, ramMB, cpuLimit, memLimit, port, StateStopped, src.BackupEnabled, src.BackupIntervalMinutes, now, now, javaVer)
+		`INSERT INTO servers (id, name, server_type, version, build, ram_mb, cpu_limit, memory_limit_mb, host_port, extra_ports, container_id, state, created_at, updated_at, java_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '', ?, ?, ?, ?)`,
+		newID, in.Name, src.ServerType, src.Version, src.Build, ramMB, cpuLimit, memLimit, port, StateStopped, now, now, javaVer)
 	if err != nil {
 		return Server{}, fmt.Errorf("insert server: %w", err)
+	}
+
+	if err := s.copyBackupSchedules(ctx, src.ID, newID); err != nil {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM servers WHERE id=?`, newID)
+		return Server{}, fmt.Errorf("copy backup schedules: %w", err)
 	}
 
 	srcDir := s.dataPath(src.ID)

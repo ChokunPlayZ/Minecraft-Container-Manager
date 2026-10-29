@@ -100,10 +100,8 @@ func main() {
 	}, cfg.DataDir, cfg.BackupDir)
 	backupStore.SetNotifier(notificationService)
 	backupStore.SetDataCoordinator(serverStore.WithStoppedData)
-	backupScheduler := backups.NewScheduler(backupStore, handle.DB, logger, 1*time.Minute)
-	backupScheduler.Start()
 	scheduleStore := schedules.NewStore(handle.DB)
-	taskScheduler := schedules.NewScheduler(scheduleStore, serverStore.ExecuteScheduledTask, logger)
+	taskScheduler := schedules.NewScheduler(scheduleStore, scheduledTaskExecutor(serverStore, backupStore), logger)
 	taskScheduler.Start()
 
 	handler := api.New(api.Options{
@@ -152,7 +150,6 @@ func main() {
 		defer cancel()
 		workersDone := make(chan struct{})
 		go func() {
-			backupScheduler.Stop()
 			taskScheduler.Stop()
 			_ = serverStore.WaitProvisioning(drainCtx)
 			close(workersDone)
@@ -168,5 +165,15 @@ func main() {
 			logger.Println("worker shutdown deadline reached")
 		}
 
+	}
+}
+
+func scheduledTaskExecutor(serverStore *servers.Store, backupStore *backups.Store) schedules.Execute {
+	return func(ctx context.Context, task schedules.Task) error {
+		if task.Action == "backup" {
+			_, err := backupStore.Backup(ctx, task.ServerID, "", task.BackupTarget)
+			return err
+		}
+		return serverStore.ExecuteScheduledTask(ctx, task)
 	}
 }

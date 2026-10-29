@@ -9,6 +9,7 @@ vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({
     component: () => null,
     useParams: () => ({ id: 'srv-running' }),
+    useSearch: () => ({}),
   }),
   Link: ({ children, ...props }: any) => <a {...props}>{children}</a>,
   useNavigate: () => vi.fn(),
@@ -44,8 +45,6 @@ const runningServer: Server = {
   extra_ports: [],
   container_id: 'container-1',
   state: 'running',
-  backup_enabled: true,
-  backup_interval_minutes: 60,
   started_at: new Date(Date.now() - 3665 * 1000).toISOString(),
   uptime_seconds: 3665,
   created_at: '2026-01-01T00:00:00Z',
@@ -65,8 +64,6 @@ const stoppedServer: Server = {
   extra_ports: [],
   container_id: null,
   state: 'stopped',
-  backup_enabled: false,
-  backup_interval_minutes: 720,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };

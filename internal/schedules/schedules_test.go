@@ -19,6 +19,8 @@ func TestCronAndTimezones(t *testing.T) {
 		{"0 0 * * *", "UTC", "2026-10-27T00:00:00Z", "2026-10-28T00:00:00Z"},
 		{"*/15 9-17 * * MON-FRI", "UTC", "2026-10-27T09:01:00Z", "2026-10-27T09:15:00Z"},
 		{"@weekly", "UTC", "2026-10-27T09:00:00Z", "2026-11-01T00:00:00Z"},
+		{"@every 95m", "Asia/Bangkok", "2026-10-27T09:00:00Z", "2026-10-27T10:35:00Z"},
+		{"@every 720m", "UTC", "2026-10-27T09:00:00Z", "2026-10-27T21:00:00Z"},
 		{"0 0 * * *", "America/New_York", "2026-03-08T05:00:00Z", "2026-03-09T04:00:00Z"},
 		{"0 0 * * *", "America/New_York", "2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z"},
 	} {
@@ -33,7 +35,7 @@ func TestCronAndTimezones(t *testing.T) {
 			}
 		})
 	}
-	for _, expression := range []string{"", "0 0 * *", "0 0 0 * * *", "60 * * * *", "*/0 * * * *", "@every 1s", "CRON_TZ=UTC 0 0 * * *"} {
+	for _, expression := range []string{"", "0 0 * *", "0 0 0 * * *", "60 * * * *", "*/0 * * * *", "@every 1s", "@every 90s", "@every 0m", "@every -1m", "@every 153722868m", "CRON_TZ=UTC 0 0 * * *"} {
 		if _, err := Parse(expression, "UTC"); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%q accepted: %v", expression, err)
 		}
@@ -42,6 +44,89 @@ func TestCronAndTimezones(t *testing.T) {
 		if _, err := Parse("midnight", zone); !errors.Is(err, ErrInvalid) {
 			t.Errorf("zone %q accepted", zone)
 		}
+	}
+}
+
+func TestBackupSchedulePersistsAndResumes(t *testing.T) {
+	store, database := testStore(t)
+	ctx := context.Background()
+	task, err := store.Create(ctx, "server-1", Input{
+		Name: "Automatic backup", Action: "backup", Command: "ignored",
+		Cron: "@every 95m", Timezone: "UTC", Enabled: false, BackupTarget: "s3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Command != "" || task.NextRunAt != "" || task.Enabled {
+		t.Fatalf("paused backup: %+v", task)
+	}
+	resumed, err := NewStore(database.DB).SetEnabled(ctx, "server-1", task.ID, true)
+	if err != nil || !resumed.Enabled || resumed.NextRunAt == "" || resumed.Cron != "@every 95m" || resumed.BackupTarget != "s3" {
+		t.Fatalf("resumed backup: %+v %v", resumed, err)
+	}
+	next, err := time.Parse(time.RFC3339, resumed.NextRunAt)
+	if err != nil || time.Until(next) < 94*time.Minute || time.Until(next) > 96*time.Minute {
+		t.Fatalf("interval not preserved: %s %v", resumed.NextRunAt, err)
+	}
+}
+
+func TestBackupTargetsAreValidatedAndClearedForOtherActions(t *testing.T) {
+	store, _ := testStore(t)
+	ctx := context.Background()
+	for _, target := range []string{"", "local", "s3"} {
+		input := Input{Name: "Backup", Action: "backup", Cron: "midnight", Timezone: "UTC", BackupTarget: target}
+		task, err := store.Create(ctx, "server-1", input)
+		if err != nil || task.BackupTarget != target {
+			t.Fatalf("backup target %q: %+v %v", target, task, err)
+		}
+		input.Action = "restart"
+		updated, err := store.Update(ctx, "server-1", task.ID, input)
+		if err != nil || updated.BackupTarget != "" {
+			t.Fatalf("non-backup target not cleared: %+v %v", updated, err)
+		}
+	}
+	for _, target := range []string{"remote", "sftp", "https://example.com/bucket"} {
+		_, err := store.Create(ctx, "server-1", Input{Name: "Backup", Action: "backup", Cron: "midnight", BackupTarget: target})
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid backup target %q accepted: %v", target, err)
+		}
+	}
+}
+
+func TestBackupSchedulerRecordsResultWithoutRepeatingAfterRestart(t *testing.T) {
+	store, _ := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	task, err := store.Create(ctx, "server-1", Input{
+		Name: "Automatic backup", Action: "backup", Cron: "@every 95m", Timezone: "UTC", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE scheduled_tasks SET next_run_at=? WHERE id=?`, stamp(now), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	execute := func(ctx context.Context, got Task) error {
+		if got.Action != "backup" || got.ServerID != "server-1" {
+			t.Errorf("wrong backup task: %+v", got)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) < 29*time.Minute {
+			t.Error("backup lost its 30-minute timeout")
+		}
+		calls.Add(1)
+		return nil
+	}
+	first := NewScheduler(store, execute, nil)
+	first.tick(ctx, now, false)
+	first.workers.Wait()
+	second := NewScheduler(store, execute, nil)
+	second.tick(ctx, now.Add(time.Minute), true)
+	second.workers.Wait()
+	got, err := store.Get(ctx, "server-1", task.ID)
+	if err != nil || calls.Load() != 1 || got.LastStatus != "success" || got.NextRunAt != stamp(now.Add(95*time.Minute)) {
+		t.Fatalf("backup result: calls=%d task=%+v err=%v", calls.Load(), got, err)
 	}
 }
 

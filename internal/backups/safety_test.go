@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRestoreFailurePreservesCompleteTree(t *testing.T) {
@@ -112,22 +111,6 @@ func TestS3UploadHashesAndStreamsBoundedChunks(t *testing.T) {
 				t.Fatalf("progress counted %d bytes; want uploaded size %d", progress, len(payload))
 			}
 		})
-	}
-}
-func TestSchedulerUsesPersistedSuccessAfterRestart(t *testing.T) {
-	s, _ := openTestStore(t)
-	ctx := context.Background()
-	s.db.Exec(`UPDATE servers SET backup_enabled=0`)
-	writeTestWorld(t, s, "server", "world")
-	s.db.Exec(`UPDATE servers SET backup_enabled=1,backup_interval_minutes=1,created_at=? WHERE id='server'`, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
-	for run := 0; run < 2; run++ {
-		scheduler := NewScheduler(s, s.db, nil, time.Minute)
-		scheduler.tick(ctx)
-		scheduler.jobs.Wait()
-		list, err := s.List(ctx, "server")
-		if err != nil || len(list) != 1 || list[0].Status != StatusCompleted {
-			t.Fatalf("restart postponed or repeated backup: %+v %v", list, err)
-		}
 	}
 }
 

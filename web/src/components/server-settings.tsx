@@ -45,8 +45,6 @@ export function ServerSettings({
   ]);
   const [cpuLimit, setCpuLimit] = useState(server.cpu_limit ?? 0);
   const [memoryLimitMb, setMemoryLimitMb] = useState(server.memory_limit_mb ?? 0);
-  const [backupEnabled, setBackupEnabled] = useState(server.backup_enabled ?? true);
-  const [backupInterval, setBackupInterval] = useState(server.backup_interval_minutes ?? 720);
   const [extraPorts, setExtraPorts] = useState<ExtraPort[]>(server.extra_ports ?? []);
   const [tab, setTab] = useState<SettingsTab>('general');
   const [error, setError] = useState<string | null>(null);
@@ -183,8 +181,6 @@ export function ServerSettings({
         java_version: javaVersion,
         cpu_limit: cpuLimit,
         memory_limit_mb: memoryLimitMb,
-        backup_enabled: backupEnabled,
-        backup_interval_minutes: backupInterval,
         extra_ports: extraPorts,
       });
       if (updated.needs_rebuild) {
@@ -514,26 +510,6 @@ export function ServerSettings({
                 />
                 <p className="text-xs text-muted-foreground">0 allows the configured server RAM plus 2 GiB of overhead.</p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-backup-interval">Automatic backup interval (minutes)</Label>
-                <Input
-                  id="edit-backup-interval"
-                  type="number"
-                  min={5}
-                  step={5}
-                  value={backupInterval}
-                  disabled={!backupEnabled}
-                  onChange={(e) => setBackupInterval(Number(e.target.value))}
-                />
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={backupEnabled}
-                  onChange={(e) => setBackupEnabled(e.target.checked)}
-                />
-                Enable automatic backups
-              </label>
             </div>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}

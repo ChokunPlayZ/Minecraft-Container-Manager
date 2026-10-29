@@ -118,7 +118,11 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time, startup bool) {
 func (s *Scheduler) run(parent context.Context, task Task) {
 	defer s.workers.Done()
 	defer func() { s.mu.Lock(); delete(s.running, task.ID); s.mu.Unlock() }()
-	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
+	timeout := 10 * time.Minute
+	if task.Action == "backup" {
+		timeout = 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	// A single failed task must not terminate the scheduler or the panel.
 	err := func() (err error) {

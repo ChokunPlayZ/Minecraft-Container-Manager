@@ -22,29 +22,31 @@ var (
 )
 
 type Task struct {
-	ID         string `json:"id"`
-	ServerID   string `json:"server_id"`
-	Name       string `json:"name"`
-	Action     string `json:"action"`
-	Command    string `json:"command"`
-	Cron       string `json:"cron"`
-	Timezone   string `json:"timezone"`
-	Enabled    bool   `json:"enabled"`
-	NextRunAt  string `json:"next_run_at"`
-	LastRunAt  string `json:"last_run_at"`
-	LastStatus string `json:"last_status"`
-	LastError  string `json:"last_error"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
+	ID           string `json:"id"`
+	ServerID     string `json:"server_id"`
+	Name         string `json:"name"`
+	Action       string `json:"action"`
+	Command      string `json:"command"`
+	BackupTarget string `json:"backup_target"`
+	Cron         string `json:"cron"`
+	Timezone     string `json:"timezone"`
+	Enabled      bool   `json:"enabled"`
+	NextRunAt    string `json:"next_run_at"`
+	LastRunAt    string `json:"last_run_at"`
+	LastStatus   string `json:"last_status"`
+	LastError    string `json:"last_error"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 type Input struct {
-	Name     string `json:"name"`
-	Action   string `json:"action"`
-	Command  string `json:"command"`
-	Cron     string `json:"cron"`
-	Timezone string `json:"timezone"`
-	Enabled  bool   `json:"enabled"`
+	Name         string `json:"name"`
+	Action       string `json:"action"`
+	Command      string `json:"command"`
+	BackupTarget string `json:"backup_target"`
+	Cron         string `json:"cron"`
+	Timezone     string `json:"timezone"`
+	Enabled      bool   `json:"enabled"`
 }
 
 var parser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
@@ -60,7 +62,7 @@ func DefaultTimezone() string {
 	return "UTC"
 }
 
-// Parse accepts standard five-field cron and common names such as midnight.
+// Parse accepts five-field cron, common names, and fixed whole-minute intervals.
 // Timezones are separate from expressions so the saved zone is authoritative.
 func Parse(expression, zone string) (cron.Schedule, error) {
 	expression = strings.TrimSpace(expression)
@@ -74,14 +76,21 @@ func Parse(expression, zone string) (cron.Schedule, error) {
 	if alias, ok := aliases[strings.ToLower(expression)]; ok {
 		expression = alias
 	}
-	if len(expression) > 120 || len(strings.Fields(expression)) != 5 {
-		return nil, fmt.Errorf("%w: use five cron fields (minute hour day month weekday), or midnight, hourly, daily, weekly, monthly", ErrInvalid)
-	}
 	if zone == "" || zone == "Local" || len(zone) > 100 || strings.ContainsAny(zone, " \t\r\n") {
 		return nil, fmt.Errorf("%w: choose an IANA timezone, such as Asia/Bangkok or UTC", ErrInvalid)
 	}
 	if _, err := time.LoadLocation(zone); err != nil {
 		return nil, fmt.Errorf("%w: unknown timezone %q", ErrInvalid, zone)
+	}
+	if strings.HasPrefix(expression, "@every ") {
+		interval, err := time.ParseDuration(strings.TrimPrefix(expression, "@every "))
+		if err != nil || interval < time.Minute || interval%time.Minute != 0 {
+			return nil, fmt.Errorf("%w: intervals must be a whole number of minutes, at least 1 minute", ErrInvalid)
+		}
+		return cron.Every(interval), nil
+	}
+	if len(expression) > 120 || len(strings.Fields(expression)) != 5 {
+		return nil, fmt.Errorf("%w: use five cron fields (minute hour day month weekday), midnight, hourly, daily, weekly, monthly, or @every 720m", ErrInvalid)
 	}
 	schedule, err := parser.Parse("CRON_TZ=" + zone + " " + expression)
 	if err != nil {
@@ -106,10 +115,19 @@ func normalize(in Input, now time.Time) (Input, string, error) {
 		if in.Command == "" || len(in.Command) > 4096 || strings.ContainsAny(in.Command, "\r\n\x00") {
 			return in, "", fmt.Errorf("%w: enter a single console command (up to 4096 characters)", ErrInvalid)
 		}
-	case "start", "stop", "restart":
+	case "start", "stop", "restart", "backup":
 		in.Command = ""
 	default:
-		return in, "", fmt.Errorf("%w: action must be command, start, stop, or restart", ErrInvalid)
+		return in, "", fmt.Errorf("%w: action must be command, start, stop, restart, or backup", ErrInvalid)
+	}
+	if in.Action == "backup" {
+		switch in.BackupTarget {
+		case "", "local", "s3":
+		default:
+			return in, "", fmt.Errorf("%w: backup target must be the panel default, local, or s3", ErrInvalid)
+		}
+	} else {
+		in.BackupTarget = ""
 	}
 	schedule, err := Parse(in.Cron, in.Timezone)
 	if err != nil {
@@ -140,13 +158,13 @@ func (s *Store) serverExists(ctx context.Context, id string) error {
 	return err
 }
 
-const columns = `id, server_id, name, action, command, cron, timezone, enabled, next_run_at, last_run_at, last_status, last_error, created_at, updated_at`
+const columns = `id, server_id, name, action, command, backup_target, cron, timezone, enabled, next_run_at, last_run_at, last_status, last_error, created_at, updated_at`
 
 type scanner interface{ Scan(...any) error }
 
 func scan(row scanner) (Task, error) {
 	var t Task
-	err := row.Scan(&t.ID, &t.ServerID, &t.Name, &t.Action, &t.Command, &t.Cron, &t.Timezone, &t.Enabled, &t.NextRunAt, &t.LastRunAt, &t.LastStatus, &t.LastError, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(&t.ID, &t.ServerID, &t.Name, &t.Action, &t.Command, &t.BackupTarget, &t.Cron, &t.Timezone, &t.Enabled, &t.NextRunAt, &t.LastRunAt, &t.LastStatus, &t.LastError, &t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound
 	}
@@ -191,7 +209,7 @@ func (s *Store) Create(ctx context.Context, serverID string, in Input) (Task, er
 		return Task{}, err
 	}
 	id := uuid.NewString()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO scheduled_tasks (id, server_id, name, action, command, cron, timezone, enabled, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, serverID, in.Name, in.Action, in.Command, in.Cron, in.Timezone, in.Enabled, next, stamp(now), now.UTC().Format(time.RFC3339Nano))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO scheduled_tasks (id, server_id, name, action, command, backup_target, cron, timezone, enabled, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, serverID, in.Name, in.Action, in.Command, in.BackupTarget, in.Cron, in.Timezone, in.Enabled, next, stamp(now), now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return Task{}, err
 	}
@@ -204,7 +222,7 @@ func (s *Store) Update(ctx context.Context, serverID, id string, in Input) (Task
 	if err != nil {
 		return Task{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE scheduled_tasks SET name=?, action=?, command=?, cron=?, timezone=?, enabled=?, next_run_at=?, updated_at=? WHERE server_id=? AND id=?`, in.Name, in.Action, in.Command, in.Cron, in.Timezone, in.Enabled, next, now.UTC().Format(time.RFC3339Nano), serverID, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE scheduled_tasks SET name=?, action=?, command=?, backup_target=?, cron=?, timezone=?, enabled=?, next_run_at=?, updated_at=? WHERE server_id=? AND id=?`, in.Name, in.Action, in.Command, in.BackupTarget, in.Cron, in.Timezone, in.Enabled, next, now.UTC().Format(time.RFC3339Nano), serverID, id)
 	if err := affected(result, err); err != nil {
 		return Task{}, err
 	}
