@@ -83,3 +83,12 @@ export function useAuth(): AuthContextValue {
   if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
   return ctx;
 }
+
+/**
+ * Whether the signed-in account is an admin. Members manage only assigned
+ * servers. This only shapes the UI; the server enforces access, so components
+ * rendered without an AuthProvider (as in tests) default to admin.
+ */
+export function useIsAdmin(): boolean {
+  return useContext(AuthContext)?.user?.role !== 'member';
+}

@@ -84,7 +84,7 @@ describe('App and user settings', () => {
   it('keeps profile saves tied to the signed-in user', async () => {
     const user = userEvent.setup();
     const save = vi.spyOn(api, 'updateUser').mockResolvedValue({
-      id: 'admin-1', email: 'new@example.com', totp_enabled: false, created_at: '', updated_at: '',
+      id: 'admin-1', email: 'new@example.com', role: 'admin', server_ids: [], totp_enabled: false, created_at: '', updated_at: '',
     });
     renderSettings('/user-settings');
     const email = await screen.findByLabelText('Email');

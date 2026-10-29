@@ -3,6 +3,7 @@ import { Box, Clock, RefreshCw, Search, Server as ServerIcon, X } from 'lucide-r
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../api/client';
 import type { Server } from '../api/types';
+import { useIsAdmin } from '../lib/auth';
 import { formatUptimeFromStartedAt } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
 import { CopyServerDialog } from '../components/copy-server-dialog';
@@ -22,6 +23,7 @@ export const Route = createFileRoute('/dashboard')({ component: DashboardRoute }
 type FleetFilter = 'all' | 'running' | 'stopped' | 'attention';
 
 export function DashboardRoute() {
+  const isAdmin = useIsAdmin();
   const { status: updateStatus } = useUpdateChecker();
   const [servers, setServers] = useState<Server[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,8 +56,8 @@ export function DashboardRoute() {
   return (
     <RequireAuth><AppShell>
       <div className="page-heading">
-        <div><h1 className="page-title">Servers</h1><p className="page-description">Manage your Minecraft server instances.</p></div>
-        <CreateServerDialog onCreated={() => void load()} onError={setError} />
+        <div><h1 className="page-title">Servers</h1><p className="page-description">{isAdmin ? 'Manage your Minecraft server instances.' : 'Manage the servers assigned to you.'}</p></div>
+        {isAdmin && <CreateServerDialog onCreated={() => void load()} onError={setError} />}
       </div>
       {error && <div role="alert" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><p>{error}</p><Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>Try again</Button></div>}
       {servers !== null && <dl className="fleet-summary" aria-label="Fleet summary">
@@ -64,7 +66,7 @@ export function DashboardRoute() {
         <div><dt className="sr-only">Allocated memory</dt><dd><strong>{(allocatedRam / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} GB</strong> allocated RAM</dd></div>
         {attention > 0 && <div><dt className="sr-only">Needs attention</dt><dd className="text-amber-800 dark:text-amber-300"><strong>{attention}</strong> need attention</dd></div>}
       </dl>}
-      <HostCapacity />
+      {isAdmin && <HostCapacity />}
       <div className="overflow-hidden rounded-lg border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b p-4 sm:px-6 sm:py-5">
           <div className="relative w-full sm:max-w-xs"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input aria-label="Search servers" placeholder="Search servers…" value={query} onChange={(e) => setQuery(e.target.value)} className="pl-9 pr-9" />{query && <button type="button" aria-label="Clear server search" className="absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted" onClick={() => setQuery('')}><X className="h-4 w-4" /></button>}</div>
@@ -74,7 +76,8 @@ export function DashboardRoute() {
           </div>
         </div>
         {servers === null ? <div className="space-y-4 p-6" aria-label="Loading servers"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : servers.length === 0 ?
-          <div className="empty-state"><Box /><h2 className="section-heading">No servers yet</h2><p>Create a server to get started.</p><div className="mt-6"><CreateServerDialog onCreated={() => void load()} onError={setError} /></div></div> : visible.length === 0 ?
+          (isAdmin ? <div className="empty-state"><Box /><h2 className="section-heading">No servers yet</h2><p>Create a server to get started.</p><div className="mt-6"><CreateServerDialog onCreated={() => void load()} onError={setError} /></div></div>
+            : <div className="empty-state"><Box /><h2 className="section-heading">No servers assigned</h2><p>Ask an administrator to give you access to a server.</p></div>) : visible.length === 0 ?
           <div className="empty-state"><Search /><h2 className="section-heading">No matching servers</h2><p>Try another name, version, or server state.</p><Button variant="outline" className="mt-5" onClick={() => { setQuery(''); setFilter('all'); }}>Reset filters</Button></div> : <>
           <div className="fleet-row fleet-heading" aria-hidden="true"><span>Server</span><span>Status</span><span>Memory</span><span>Host port</span><span className="fleet-actions-heading text-right">Actions</span></div>
           <ul aria-label="Servers">{visible.map((server) => <li key={server.id} className="fleet-row group">
@@ -82,7 +85,7 @@ export function DashboardRoute() {
             <div><StatusBadge state={server.state} /></div>
             <div className="fleet-secondary"><p className="text-sm font-medium tabular-nums">{(server.ram_mb / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} GB</p><p className="mt-1 text-xs text-muted-foreground">Allocated</p></div>
             <div className="fleet-secondary text-sm tabular-nums">{server.host_port > 0 ? server.host_port : <span className="text-xs text-muted-foreground">Behind proxy</span>}</div>
-            <ServerQuickActions server={server} onCopy={() => setCopyTargetServer(server)} onUpdated={(updated) => setServers((current) => current?.map((item) => item.id === updated.id ? updated : item) ?? null)} />
+            <ServerQuickActions server={server} onCopy={isAdmin ? () => setCopyTargetServer(server) : undefined} onUpdated={(updated) => setServers((current) => current?.map((item) => item.id === updated.id ? updated : item) ?? null)} />
           </li>)}</ul>
         </>}
         {servers !== null && servers.length > 0 && <div aria-live="polite" className="border-t px-6 py-3.5 text-xs text-muted-foreground">{visible.length} of {servers.length} {servers.length === 1 ? 'server' : 'servers'}</div>}

@@ -1,5 +1,5 @@
 import { dnsProviders, isDNSProvider } from '../lib/dns-providers';
-import type { PanelUpdateStatus, UpdateCheckerStatus, DiscordSettings, DiscordSettingsInput, ScheduledTask, Server, PerformanceCollectionMode, PerformanceSettings, SparkReport, ServerType, Mod, ModProvider, DNSRecord } from './types';
+import type { PanelUpdateStatus, UpdateCheckerStatus, DiscordSettings, DiscordSettingsInput, ScheduledTask, Server, PerformanceCollectionMode, PerformanceSettings, SparkReport, ServerType, Mod, ModProvider, DNSRecord, User, UserInput, UserRole } from './types';
 
 export function isMock(): boolean {
   if (typeof window === 'undefined') return false;
@@ -60,6 +60,19 @@ function mockDNSConfig() {
 }
 
 let mockSchedules: ScheduledTask[] = [];
+let mockUsers: User[] = [
+  { id: 'admin-1', email: 'admin@mcm.panel', role: 'admin', server_ids: [], totp_enabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+  { id: 'member-1', email: 'builder@mcm.panel', role: 'member', server_ids: ['demo'], totp_enabled: false, created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+];
+
+/** Preview the member experience with localStorage `mcm-mock-role` = `member`. */
+function mockRole(): UserRole {
+  try {
+    return window.localStorage?.getItem('mcm-mock-role') === 'member' ? 'member' : 'admin';
+  } catch {
+    return 'admin';
+  }
+}
 let mockDiscordSettings: DiscordSettings = {
   enabled: false, configured: false,
   events: ['server_started', 'server_stopped', 'server_crashed', 'server_error', 'backup_completed', 'backup_failed'],
@@ -284,10 +297,34 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
   if (path === '/api/passkey' && (!init.method || init.method === 'GET')) return [] as T;
 
   if (path === '/api/auth/me') {
-    return { id: 'admin-1', email: 'admin@mcm.panel' } as T;
+    return mockRole() === 'member'
+      ? ({ id: 'member-1', email: 'builder@mcm.panel', role: 'member' } as T)
+      : ({ id: 'admin-1', email: 'admin@mcm.panel', role: 'admin' } as T);
   }
   if (path === '/api/users' && (!init.method || init.method === 'GET')) {
-    return { users: [{ id: 'admin-1', email: 'admin@mcm.panel', totp_enabled: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }] } as T;
+    return { users: mockUsers } as T;
+  }
+  if (path === '/api/users' && init.method === 'POST') {
+    const input = JSON.parse(String(init.body)) as UserInput;
+    const now = new Date().toISOString();
+    const role = input.role ?? 'admin';
+    const user: User = { id: `user-${Date.now()}`, email: input.email ?? '', role, server_ids: role === 'member' ? input.server_ids ?? [] : [], totp_enabled: false, created_at: now, updated_at: now };
+    mockUsers = [...mockUsers, user];
+    return user as T;
+  }
+  const mockUserMatch = path.match(/^\/api\/users\/([^/]+)$/);
+  if (mockUserMatch && init.method === 'PATCH') {
+    const input = JSON.parse(String(init.body)) as UserInput;
+    mockUsers = mockUsers.map((u) => {
+      if (u.id !== mockUserMatch[1]) return u;
+      const role = input.role ?? u.role;
+      return { ...u, email: input.email ?? u.email, role, server_ids: role === 'admin' ? [] : input.server_ids ?? u.server_ids, updated_at: new Date().toISOString() };
+    });
+    return mockUsers.find((u) => u.id === mockUserMatch[1]) as T;
+  }
+  if (mockUserMatch && init.method === 'DELETE') {
+    mockUsers = mockUsers.filter((u) => u.id !== mockUserMatch[1]);
+    return { ok: true } as T;
   }
   if (path === '/api/auth/csrf') {
     return { csrf_token: 'mock-csrf-token' } as T;

@@ -170,6 +170,9 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeBackup(w, r, r.PathValue("backupId")) {
+		return
+	}
 	if err := s.backups.Delete(r.Context(), r.PathValue("backupId")); err != nil {
 		s.writeBackupErr(w, err)
 		return
@@ -179,6 +182,9 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDownloadBackup(w http.ResponseWriter, r *http.Request) {
 	backupID := r.PathValue("backupId")
+	if !s.authorizeBackup(w, r, backupID) {
+		return
+	}
 	rc, size, name, err := s.backups.OpenBackup(r.Context(), backupID)
 	if err != nil {
 		s.writeBackupErr(w, err)
