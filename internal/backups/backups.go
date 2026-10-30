@@ -44,6 +44,9 @@ type Backup struct {
 	Location  string `json:"location"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
+	Protected bool   `json:"protected"`
+	DeletedAt string `json:"deleted_at,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 }
 
 // BackupProgress represents the progress of an active backup operation.
@@ -229,17 +232,21 @@ func (s *Store) objectKey(backupID, serverID string) string {
 
 // List returns all backups for a server, newest first.
 func (s *Store) List(ctx context.Context, serverID string) ([]Backup, error) {
+	return s.list(ctx, serverID, false)
+}
+
+func (s *Store) list(ctx context.Context, serverID string, trash bool) ([]Backup, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, server_id, name, COALESCE(size_bytes,0), COALESCE(location,''), status, created_at FROM backups WHERE server_id = ? ORDER BY created_at DESC, rowid DESC`, serverID)
+		`SELECT id, server_id, name, COALESCE(size_bytes,0), COALESCE(location,''), status, created_at, protected, deleted_at FROM backups WHERE server_id = ? AND (deleted_at != '') = ? ORDER BY created_at DESC, rowid DESC`, serverID, trash)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []Backup
+	out := []Backup{}
 	for rows.Next() {
 		var b Backup
-		if err := rows.Scan(&b.ID, &b.ServerID, &b.Name, &b.SizeBytes, &b.Location, &b.Status, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.ServerID, &b.Name, &b.SizeBytes, &b.Location, &b.Status, &b.CreatedAt, &b.Protected, &b.DeletedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -251,8 +258,8 @@ func (s *Store) List(ctx context.Context, serverID string) ([]Backup, error) {
 func (s *Store) Get(ctx context.Context, id string) (Backup, error) {
 	var b Backup
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, server_id, name, COALESCE(size_bytes,0), COALESCE(location,''), status, created_at FROM backups WHERE id = ?`, id).
-		Scan(&b.ID, &b.ServerID, &b.Name, &b.SizeBytes, &b.Location, &b.Status, &b.CreatedAt)
+		`SELECT id, server_id, name, COALESCE(size_bytes,0), COALESCE(location,''), status, created_at, protected, deleted_at FROM backups WHERE id = ?`, id).
+		Scan(&b.ID, &b.ServerID, &b.Name, &b.SizeBytes, &b.Location, &b.Status, &b.CreatedAt, &b.Protected, &b.DeletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Backup{}, ErrNotFound
 	}
@@ -534,19 +541,21 @@ func (s *Store) backupLocked(ctx context.Context, serverID, name string, storage
 	backup.SizeBytes = stat.Size()
 	backup.Status = StatusCompleted
 
+	cleanupMessage := "Backup created successfully"
+	if err := s.enforceRetention(ctx, serverID); err != nil {
+		cleanupMessage += "; retention cleanup needs attention: " + err.Error()
+		backup.Warning = cleanupMessage
+	}
 	s.SetProgress(serverID, BackupProgress{
 		ID:         id,
 		Operation:  "backup",
 		Stage:      "completed",
 		Percent:    100,
-		Message:    "Backup created successfully",
+		Message:    cleanupMessage,
 		BytesDone:  stat.Size(),
 		BytesTotal: stat.Size(),
 	})
 
-	if err := s.enforceRetention(ctx, serverID); err != nil {
-		return backup, err
-	}
 	return backup, nil
 }
 
@@ -662,19 +671,21 @@ func (s *Store) uploadBackupLocked(ctx context.Context, serverID, name string, r
 		CreatedAt: now,
 	}
 
+	cleanupMessage := "Backup uploaded successfully"
+	if err := s.enforceRetention(ctx, serverID); err != nil {
+		cleanupMessage += "; retention cleanup needs attention: " + err.Error()
+		backup.Warning = cleanupMessage
+	}
 	s.SetProgress(serverID, BackupProgress{
 		ID:         id,
 		Operation:  "upload",
 		Stage:      "completed",
 		Percent:    100,
-		Message:    "Backup uploaded successfully",
+		Message:    cleanupMessage,
 		BytesDone:  writtenSize,
 		BytesTotal: writtenSize,
 	})
 
-	if err := s.enforceRetention(ctx, serverID); err != nil {
-		return backup, err
-	}
 	return backup, nil
 }
 
@@ -687,8 +698,8 @@ func (s *Store) Restore(ctx context.Context, backupID string) error {
 	if err != nil {
 		return err
 	}
-	if b.Status != StatusCompleted {
-		return fmt.Errorf("only completed backups can be restored")
+	if b.Status != StatusCompleted || b.DeletedAt != "" {
+		return fmt.Errorf("%w: only active completed backups can be restored", ErrBackupConflict)
 	}
 	release, err := s.lockOperation(ctx, b.ServerID)
 	if err != nil {
@@ -701,6 +712,9 @@ func (s *Store) restoreLocked(ctx context.Context, backupID string) error {
 	b, err := s.Get(ctx, backupID)
 	if err != nil {
 		return err
+	}
+	if b.Status != StatusCompleted || b.DeletedAt != "" {
+		return fmt.Errorf("%w: recover a completed backup from trash before restoring it", ErrBackupConflict)
 	}
 
 	s.SetProgress(b.ServerID, BackupProgress{
@@ -833,6 +847,22 @@ func (s *Store) Delete(ctx context.Context, backupID string) error {
 	if err != nil {
 		return err
 	}
+	release, err := s.lockOperation(ctx, b.ServerID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	b, err = s.Get(ctx, backupID)
+	if err != nil {
+		return err
+	}
+	return s.deleteLocked(ctx, b)
+}
+
+func (s *Store) deleteLocked(ctx context.Context, b Backup) error {
+	if b.Protected || b.Status == StatusPending {
+		return fmt.Errorf("%w: protected or pending backups cannot be permanently deleted", ErrBackupConflict)
+	}
 	if strings.HasPrefix(b.Location, "local:") {
 		path, err := s.existingLocalBackupPath(b.ServerID, b.ID)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -845,8 +875,10 @@ func (s *Store) Delete(ctx context.Context, backupID string) error {
 		if err := s.client.deleteObject(ctx, b.Location); err != nil {
 			return err
 		}
+	} else {
+		return ErrNotConfigured
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, backupID)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, b.ID)
 	return err
 }
 
@@ -856,6 +888,9 @@ func (s *Store) OpenBackup(ctx context.Context, backupID string) (io.ReadCloser,
 	b, err := s.Get(ctx, backupID)
 	if err != nil {
 		return nil, 0, "", err
+	}
+	if b.DeletedAt != "" || b.Status != StatusCompleted {
+		return nil, 0, "", fmt.Errorf("%w: only active completed backups can be downloaded", ErrBackupConflict)
 	}
 	filename := b.Name
 	if !strings.HasSuffix(filename, ".tar.gz") {
@@ -906,34 +941,10 @@ func (s *Store) Retention(ctx context.Context) (keep int) {
 	return keep
 }
 
-// enforceRetention deletes the oldest backups beyond the configured retention
-// count for a server.
+// enforceRetention runs under the server operation lock after a successful write.
 func (s *Store) enforceRetention(ctx context.Context, serverID string) error {
-	keep := s.Retention(ctx)
-	if keep <= 0 {
-		return nil
-	}
-	list, err := s.List(ctx, serverID)
-	if err != nil {
-		return err
-	}
-	completed := list[:0]
-	for _, b := range list {
-		if b.Status == StatusCompleted {
-			completed = append(completed, b)
-		}
-	}
-	list = completed
-	// List is newest-first; failed and pending records never displace recovery history.
-	if len(list) <= keep {
-		return nil
-	}
-	for _, b := range list[keep:] {
-		if err := s.Delete(ctx, b.ID); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := s.cleanupLocked(ctx, serverID, false)
+	return err
 }
 
 // archiveWorld tar.gz's the contents of a server data directory (excluding a

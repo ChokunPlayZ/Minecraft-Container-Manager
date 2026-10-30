@@ -26,6 +26,9 @@ import type {
   ServerType,
   JavaRelease,
   BackupRecord,
+  BackupPolicy,
+  BackupRetentionPreview,
+  BackupCleanupResult,
   BackupProgress,
   BackupProgressResponse,
   TaskProgress,
@@ -398,7 +401,28 @@ export const api = {
     request<{ ok: boolean }>('/api/passkey', { method: 'DELETE', body: JSON.stringify({ id }) }),
 
   listBackups: (serverId: string) =>
-    request<{ backups: BackupRecord[] }>(`/api/servers/${serverId}/backups`),
+    request<{ backups: BackupRecord[]; trash?: BackupRecord[]; policy?: BackupPolicy }>(`/api/servers/${serverId}/backups`),
+
+  getBackupRetention: (serverId: string) =>
+    request<BackupRetentionPreview>(`/api/servers/${serverId}/backups/retention`),
+
+  saveBackupRetention: (serverId: string, policy: BackupPolicy) =>
+    request<BackupRetentionPreview>(`/api/servers/${serverId}/backups/retention`, { method: 'PUT', body: JSON.stringify(policy) }),
+
+  cleanupBackups: (serverId: string) =>
+    request<BackupCleanupResult>(`/api/servers/${serverId}/backups/cleanup`, { method: 'POST' }),
+
+  emptyBackupTrash: (serverId: string) =>
+    request<BackupCleanupResult>(`/api/servers/${serverId}/backups/trash`, { method: 'DELETE' }),
+
+  recoverBackup: (backupId: string) =>
+    request<{ ok: boolean }>(`/api/backups/${backupId}/recover`, { method: 'POST' }),
+
+  protectBackup: (backupId: string, protectedValue: boolean) =>
+    request<{ ok: boolean }>(`/api/backups/${backupId}/protect`, { method: 'PATCH', body: JSON.stringify({ protected: protectedValue }) }),
+
+  purgeBackup: (backupId: string) =>
+    request<{ ok: boolean }>(`/api/backups/${backupId}/purge`, { method: 'DELETE' }),
 
   players: (serverId: string) => request<PlayerList>(`/api/servers/${serverId}/players`),
 

@@ -100,6 +100,7 @@ func main() {
 	}, cfg.DataDir, cfg.BackupDir)
 	backupStore.SetNotifier(notificationService)
 	backupStore.SetDataCoordinator(serverStore.WithStoppedData)
+	go backupStore.RunRetention(notificationCtx, logger)
 	scheduleStore := schedules.NewStore(handle.DB)
 	taskScheduler := schedules.NewScheduler(scheduleStore, scheduledTaskExecutor(serverStore, backupStore), logger)
 	taskScheduler.Start()

@@ -193,7 +193,7 @@ a container.
 - Choose **Fixed interval** to repeat every whole number of minutes, independent of the time of day. The API accepts expressions such as `@every 720m` (12 hours) or `@every 95m`.
 - New tasks default to the existing `TZ` environment setting (`UTC` when unset or invalid). Each task saves its timezone and allows an override. Midnight follows the selected zone, including daylight saving changes.
 - Edit, pause/resume, and delete tasks; inspect the next run, last result, and error details. Console commands require a running server. Restart follows the manual restart behavior and also starts a stopped server.
-- Backup tasks let you choose **Panel default**, **Local disk**, or **Remote (S3)** storage and use the panel’s retention settings, with the same progress, notifications, and stop/resume behavior as manual backups. Remote backups use the panel’s configured S3-compatible endpoint and bucket. Existing automatic backup settings migrate to schedule entries, preserving enabled or paused state, minute intervals, and the panel’s default storage. New servers start with an enabled 12-hour backup schedule. Manage all automatic backups in **Schedules**; the old server backup settings are replaced by schedule tasks.
+- Backup tasks let you choose **Panel default**, **Local disk**, or **Remote (S3)** storage and use the server’s retention policy, with the same progress, notifications, and stop/resume behavior as manual backups. Remote backups use the panel’s configured S3-compatible endpoint and bucket. Existing automatic backup settings migrate to schedule entries, preserving enabled or paused state, minute intervals, and the panel’s default storage. New servers start with an enabled 12-hour backup schedule. Manage all automatic backups in **Schedules**; the old server backup settings are replaced by schedule tasks.
 - Schedules persist in SQLite and run while the panel is online, within the five-second polling cadence. Missed runs are skipped after panel downtime. A task cannot overlap its own previous execution within the panel process, and pausing or deleting a task leaves an already running execution to finish. Failed runs are recorded and wait for the next scheduled occurrence.
 
 ### App and user settings
@@ -263,7 +263,7 @@ The authenticated API exposes `GET`/`PUT /api/notifications/discord` and `POST /
 - **Dedicated Backup Manager**: Open Backups to select a server, manage archives, search by name, filter by local or S3 storage, and open its Schedules tab to manage automatic backups. The server's Backups tab remains available.
 - **Separate Backup Media**: Store local archives and temporary backup files on another disk or mounted share with `MCM_BACKUP_DIR`. Existing local archives remain accessible.
 - **Object Store Integration**: Archive server data directories to compressed `.tar.gz` archives stored in any S3-compatible object store (AWS S3, MinIO, Cloudflare R2, DigitalOcean Spaces).
-- **Automated Scheduling & Retention**: Configure backups with other server tasks in Schedules, using cron presets or fixed intervals, with automatic pruning of older snapshots.
+- **Automated Scheduling & Retention**: Configure backups in Schedules and set each server’s count, age, and trash expiry limits in **Backups → Retention**. Preview cleanup before running it, protect important snapshots, and recover removed backups from **Trash**.
 - **Instant Restore**: One-click in-place snapshot restoration.
 - **Live Backup Progress**: Real-time SSE progress events and progress bars during backup creation.
 - **Backup Downloads & Uploads**: Download backup snapshots directly from storage or upload external archives for restoration.
@@ -781,14 +781,25 @@ For `action: "chain"`, supply an ordered `steps` array of 1–50 objects. Each s
 ### Backups
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/servers/:id/backups` | List backups for a server. |
+| `GET` | `/api/servers/:id/backups` | List active `backups`, `trash`, and the effective retention `policy` for a server. |
+| `GET` | `/api/servers/:id/backups/retention` | Read policy and cleanup preview (`to_trash`, `to_purge`, `trash_bytes`, `purge_bytes`). |
+| `PUT` | `/api/servers/:id/backups/retention` | Save integer `keep_count` (0–100000), `max_age_days` (0–36500), and `trash_retention_days` (0–36500). Returns the updated preview. |
+| `POST` | `/api/servers/:id/backups/cleanup` | Apply the saved policy now. Returns counts `trashed` and `purged`. |
+| `DELETE` | `/api/servers/:id/backups/trash` | Permanently delete all trash for this server without changing active backups. |
 | `POST` | `/api/servers/:id/backup` | Trigger an immediate manual backup snapshot. |
 | `GET` | `/api/servers/:id/backups/progress` | Poll active backup operation progress. |
 | `GET` | `/api/servers/:id/backups/events` | Stream live backup progress events via SSE. |
 | `POST` | `/api/servers/:id/backups/upload` | Upload an existing backup archive (.tar.gz). |
 | `POST` | `/api/servers/:id/restore/:backupId` | Restore a backup snapshot in place. |
 | `GET` | `/api/backups/:backupId/download` | Download backup archive file from storage. |
-| `DELETE` | `/api/backups/:backupId` | Delete a backup archive from storage. |
+| `DELETE` | `/api/backups/:backupId` | Move an unprotected backup to recoverable trash. |
+| `POST` | `/api/backups/:backupId/recover` | Recover a trashed backup; completed snapshots become protected. Does not change the live server world. |
+| `PATCH` | `/api/backups/:backupId/protect` | Set `protected` (boolean) on an active, completed snapshot. |
+| `DELETE` | `/api/backups/:backupId/purge` | Permanently remove a trashed archive and its record. |
+
+Count and age limits apply to completed, unprotected snapshots across local and S3 storage. Protected snapshots are additional to the count limit. The newest successful backup always stays available, even beyond the age limit. Failed and pending records never displace successful history. A count or age limit of `0` disables that limit; trash expiry of `0` keeps trash until it is explicitly emptied. Servers without a custom policy inherit the existing `backup_retention` count setting and default to 30 days of trash with no age limit.
+
+Saving a policy does not immediately run cleanup. Policies run after successful backups/uploads, at panel startup, and hourly, including servers without scheduled backups. Trash expiry uses the current policy and the time each backup entered trash; changing expiry also affects existing trash. Trashed archives remain on their original local disk or S3 object store and continue consuming space until permanently deleted. Failed storage deletions preserve the database record for retry. Trash must be recovered before downloading or restoring a snapshot. Retention changes, protection, recovery, and permanent deletion require the server-scoped `backups.delete` capability; reading settings and previews requires `backups.read`.
 
 ### SRV DNS
 

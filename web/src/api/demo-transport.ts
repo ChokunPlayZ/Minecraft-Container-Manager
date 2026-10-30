@@ -1,6 +1,6 @@
 import { demoPermissionCatalog } from './demo-permissions';
 import { dnsProviders, isDNSProvider } from '../lib/dns-providers';
-import type { PanelUpdateStatus, UpdateCheckerStatus, DiscordSettings, DiscordSettingsInput, ScheduledTask, Server, PerformanceCollectionMode, PerformanceSettings, SparkReport, ServerType, Mod, ModProvider, DNSRecord } from './types';
+import type { BackupPolicy, BackupRecord, BackupRetentionPreview, PanelUpdateStatus, UpdateCheckerStatus, DiscordSettings, DiscordSettingsInput, ScheduledTask, Server, PerformanceCollectionMode, PerformanceSettings, SparkReport, ServerType, Mod, ModProvider, DNSRecord } from './types';
 
 export function isMock(): boolean {
   if (typeof window === 'undefined') return false;
@@ -61,6 +61,32 @@ function mockDNSConfig() {
 }
 
 let mockSchedules: ScheduledTask[] = [];
+const mockBackupPolicies: Record<string, BackupPolicy> = {};
+const mockBackups: Record<string, BackupRecord[]> = {};
+function demoBackups(serverId: string) {
+  return mockBackups[serverId] ??= [
+    { id: `${serverId}-latest`, server_id: serverId, name: 'daily-snapshot', size_bytes: 524288000, location: 'local:latest', status: 'completed', created_at: new Date().toISOString() },
+    { id: `${serverId}-protected`, server_id: serverId, name: 'before-version-upgrade', size_bytes: 498073600, location: 's3:protected', status: 'completed', protected: true, created_at: new Date(Date.now() - 7 * 86400000).toISOString() },
+    { id: `${serverId}-old`, server_id: serverId, name: 'older-daily-snapshot', size_bytes: 471859200, location: 'local:old', status: 'completed', created_at: new Date(Date.now() - 20 * 86400000).toISOString() },
+    { id: `${serverId}-trash`, server_id: serverId, name: 'previous-week-snapshot', size_bytes: 450887680, location: 'local:trash', status: 'completed', created_at: new Date(Date.now() - 40 * 86400000).toISOString(), deleted_at: new Date(Date.now() - 31 * 86400000).toISOString() },
+  ];
+}
+function demoRetention(serverId: string): BackupRetentionPreview {
+  const policy = mockBackupPolicies[serverId] ?? { keep_count: 10, max_age_days: 0, trash_retention_days: 30 };
+  const records = demoBackups(serverId);
+  const completed = records.filter((b) => !b.deleted_at && b.status === 'completed');
+  let count = 0;
+  const toTrash: BackupRetentionPreview['to_trash'] = [];
+  for (const b of completed) {
+    if (b.protected) continue;
+    count++;
+    if (b === completed[0]) continue;
+    const age = policy.max_age_days > 0 && Date.parse(b.created_at) <= Date.now() - policy.max_age_days * 86400000;
+    if (age || (policy.keep_count > 0 && count > policy.keep_count)) toTrash.push({ ...b, reason: age ? 'age' : 'count' });
+  }
+  const toPurge = records.filter((b) => b.deleted_at && policy.trash_retention_days > 0 && Date.parse(b.deleted_at) <= Date.now() - policy.trash_retention_days * 86400000);
+  return { policy, to_trash: toTrash, to_purge: toPurge, trash_bytes: toTrash.reduce((n, b) => n + b.size_bytes, 0), purge_bytes: toPurge.reduce((n, b) => n + b.size_bytes, 0) };
+}
 const mockImportedServers: Server[] = [];
 let mockDiscordSettings: DiscordSettings = {
   enabled: false, configured: false,
@@ -498,20 +524,35 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
       return updated as T;
     }
   }
-  if (path.startsWith('/api/servers/') && path.endsWith('/backups')) {
-    return {
-      backups: [
-        {
-          id: 'b-1',
-          server_id: 'demo',
-          name: 'daily-snapshot-2026-09-09',
-          size_bytes: 524288000,
-          location: 's3://backups',
-          status: 'completed',
-          created_at: '2026-09-09T04:00:00Z',
-        },
-      ],
-    } as T;
+  const backupRoute = path.match(/^\/api\/servers\/([^/]+)\/backups(?:\/(retention|cleanup|trash))?$/);
+  if (backupRoute) {
+    const [, serverId, action] = backupRoute;
+    const records = demoBackups(serverId);
+    if (action === 'retention') {
+      if (init.method === 'PUT') mockBackupPolicies[serverId] = JSON.parse(String(init.body));
+      return demoRetention(serverId) as T;
+    }
+    if (action === 'cleanup' || action === 'trash') {
+      const preview = demoRetention(serverId);
+      const purge = action === 'trash' ? records.filter((b) => b.deleted_at) : preview.to_purge;
+      const move = action === 'trash' ? [] : preview.to_trash;
+      mockBackups[serverId] = records.filter((b) => !purge.some((p) => p.id === b.id)).map((b) => move.some((m) => m.id === b.id) ? { ...b, deleted_at: new Date().toISOString() } : b);
+      return { trashed: move.length, purged: purge.length } as T;
+    }
+    return { backups: records.filter((b) => !b.deleted_at), trash: records.filter((b) => b.deleted_at), policy: demoRetention(serverId).policy } as T;
+  }
+  const backupAction = path.match(/^\/api\/backups\/([^/]+)(?:\/(recover|protect|purge))?$/);
+  if (backupAction) {
+    const [, id, action] = backupAction;
+    for (const [serverId, records] of Object.entries(mockBackups)) {
+      const b = records.find((b) => b.id === id);
+      if (!b) continue;
+      if (action === 'purge') mockBackups[serverId] = records.filter((r) => r.id !== id);
+      else if (action === 'recover') { b.deleted_at = ''; b.protected = b.status === 'completed'; }
+      else if (action === 'protect') b.protected = JSON.parse(String(init.body)).protected;
+      else b.deleted_at = new Date().toISOString();
+    }
+    return { ok: true } as T;
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/backups/progress')) {
     return { active: false } as T;

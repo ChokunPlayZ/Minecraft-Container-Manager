@@ -307,7 +307,26 @@ export interface BackupRecord {
   location: string;
   status: BackupStatus;
   created_at: string;
+  protected?: boolean;
+  deleted_at?: string;
+  warning?: string;
 }
+
+export interface BackupPolicy {
+  keep_count: number;
+  max_age_days: number;
+  trash_retention_days: number;
+}
+
+export interface BackupRetentionPreview {
+  policy: BackupPolicy;
+  to_trash: (BackupRecord & { reason: 'count' | 'age' })[];
+  to_purge: BackupRecord[];
+  trash_bytes: number;
+  purge_bytes: number;
+}
+
+export interface BackupCleanupResult { trashed: number; purged: number }
 
 export interface BackupProgress {
   id: string;

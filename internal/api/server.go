@@ -254,11 +254,18 @@ func (s *Server) routes() {
 	// Backups.
 	s.mux.HandleFunc("POST /api/servers/{id}/backup", s.requirePermission("backups.create", s.wrapJSON(s.handleBackupServer)))
 	s.mux.HandleFunc("GET /api/servers/{id}/backups", s.requirePermission("backups.read", s.wrapJSON(s.handleListBackups)))
+	s.mux.HandleFunc("GET /api/servers/{id}/backups/retention", s.requirePermission("backups.read", s.wrapJSON(s.handleBackupRetention)))
+	s.mux.HandleFunc("PUT /api/servers/{id}/backups/retention", s.requirePermission("backups.delete", s.wrapJSON(s.handleBackupRetention)))
+	s.mux.HandleFunc("POST /api/servers/{id}/backups/cleanup", s.requirePermission("backups.delete", s.wrapJSON(s.handleBackupCleanup)))
+	s.mux.HandleFunc("DELETE /api/servers/{id}/backups/trash", s.requirePermission("backups.delete", s.wrapJSON(s.handleBackupCleanup)))
 	s.mux.HandleFunc("GET /api/servers/{id}/backups/progress", s.requirePermission("backups.read", s.wrapJSON(s.handleBackupProgress)))
 	s.mux.HandleFunc("GET /api/servers/{id}/backups/events", s.requirePermission("backups.read", s.handleBackupEvents))
 	s.mux.HandleFunc("POST /api/servers/{id}/backups/upload", s.requirePermission("backups.create", s.wrapJSON(s.handleUploadBackup)))
 	s.mux.HandleFunc("POST /api/servers/{id}/restore/{backupId}", s.requirePermission("backups.restore", s.wrapJSON(s.handleRestoreBackup)))
 	s.mux.HandleFunc("DELETE /api/backups/{backupId}", s.requirePermission("backups.delete", s.wrapJSON(s.handleDeleteBackup)))
+	s.mux.HandleFunc("POST /api/backups/{backupId}/recover", s.requirePermission("backups.delete", s.wrapJSON(s.handleBackupRecover)))
+	s.mux.HandleFunc("PATCH /api/backups/{backupId}/protect", s.requirePermission("backups.delete", s.wrapJSON(s.handleBackupProtect)))
+	s.mux.HandleFunc("DELETE /api/backups/{backupId}/purge", s.requirePermission("backups.delete", s.wrapJSON(s.handleBackupPurge)))
 	s.mux.HandleFunc("GET /api/backups/{backupId}/download", s.requirePermission("backups.download", s.handleDownloadBackup))
 
 	// Jars and Java runtime.

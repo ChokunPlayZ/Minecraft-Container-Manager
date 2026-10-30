@@ -77,7 +77,7 @@ func TestListAndFeedbackLifecycle(t *testing.T) {
 	}
 }
 
-func TestDeleteRemovesRecordWithoutS3(t *testing.T) {
+func TestDeletePreservesRecordWithoutS3(t *testing.T) {
 	s, _ := openTestStore(t)
 	ctx := context.Background()
 	if _, err := s.db.ExecContext(ctx,
@@ -85,11 +85,11 @@ func TestDeleteRemovesRecordWithoutS3(t *testing.T) {
 		"b1", "srv1", "n", "loc", StatusCompleted, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	if err := s.Delete(ctx, "b1"); err != nil {
-		t.Fatalf("delete: %v", err)
+	if err := s.Delete(ctx, "b1"); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("expected unavailable S3 storage, got: %v", err)
 	}
-	if _, err := s.Get(ctx, "b1"); err != ErrNotFound {
-		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	if _, err := s.Get(ctx, "b1"); err != nil {
+		t.Fatalf("archive record lost without deleting S3 object: %v", err)
 	}
 }
 

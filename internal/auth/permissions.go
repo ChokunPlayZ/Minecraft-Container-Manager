@@ -44,7 +44,7 @@ var PermissionCatalog = []Permission{
 	{"backups.read", "Backups & schedules", "View backups", "List backups and watch backup progress.", true},
 	{"backups.create", "Backups & schedules", "Create and upload backups", "Create snapshots and upload backup archives.", true},
 	{"backups.restore", "Backups & schedules", "Restore backups", "Replace server data from a backup, including executable files.", true},
-	{"backups.delete", "Backups & schedules", "Delete backups", "Permanently remove backups.", true},
+	{"backups.delete", "Backups & schedules", "Manage backup retention & trash", "Set retention, protect backups, move backups to trash, recover them and permanently delete archives.", true},
 	{"backups.download", "Backups & schedules", "Download backups", "Download complete backups, including configuration and secrets.", true},
 	{"schedules.read", "Backups & schedules", "View schedules", "Read scheduled tasks and their commands.", true},
 	{"schedules.manage", "Backups & schedules", "Manage schedules", "Create and manage persistent automation. Requires power controls, send commands and create backups.", true},

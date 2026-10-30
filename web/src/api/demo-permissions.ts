@@ -187,8 +187,8 @@ export const demoPermissionCatalog: PermissionCatalog = {
     {
       "id": "backups.delete",
       "group": "Backups & schedules",
-      "label": "Delete backups",
-      "description": "Permanently remove backups.",
+      "label": "Manage backup retention & trash",
+      "description": "Set retention, protect backups, move backups to trash, recover them and permanently delete archives.",
       "server_scoped": true
     },
     {

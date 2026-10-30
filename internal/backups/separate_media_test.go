@@ -137,7 +137,7 @@ func TestExistingBackupsAfterChangingMedia(t *testing.T) {
 			if data, err := os.ReadFile(worldPath); err != nil || string(data) != "existing-world" {
 				t.Fatalf("existing archive cannot be restored: %q, %v", data, err)
 			}
-			// Retention must remove the existing archive from its actual disk.
+			// Retention keeps the archive recoverable; purging removes it from its actual disk.
 			if _, err := s.db.Exec(`UPDATE backups SET created_at='2000-01-01T00:00:00Z' WHERE id=?`, b.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -146,6 +146,13 @@ func TestExistingBackupsAfterChangingMedia(t *testing.T) {
 			}
 			latest, err := s.Backup(ctx, serverID, "new-disk", "local")
 			if err != nil {
+				t.Fatal(err)
+			}
+			trashed, err := s.Get(ctx, b.ID)
+			if err != nil || trashed.DeletedAt == "" {
+				t.Fatalf("existing backup not moved to trash: %+v, %v", trashed, err)
+			}
+			if err := s.Purge(ctx, b.ID); err != nil {
 				t.Fatal(err)
 			}
 			for _, path := range []string{old.localBackupPath(serverID, b.ID), s.localBackupPath(serverID, b.ID)} {

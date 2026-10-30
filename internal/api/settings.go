@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/mcm-panel/mcm/internal/notifications"
 	"github.com/mcm-panel/mcm/internal/servers"
@@ -48,6 +49,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if value, ok := body.Settings["backup_storage_type"]; ok && value != "local" && value != "s3" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "backup storage must be local or s3")
 		return
+	}
+	if value, ok := body.Settings["backup_retention"]; ok {
+		keep, err := strconv.Atoi(value)
+		if err != nil || keep < 0 || keep > 100000 {
+			writeError(w, http.StatusBadRequest, "invalid_retention", "backup retention must be an integer from 0 to 100000")
+			return
+		}
 	}
 	tx, err := s.db.DB.BeginTx(r.Context(), nil)
 	if err != nil {

@@ -144,7 +144,17 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "could not list backups")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"backups": list})
+	trash, err := s.backups.ListTrash(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "could not list backup trash")
+		return
+	}
+	policy, err := s.backups.GetPolicy(r.Context(), id)
+	if err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"backups": list, "trash": trash, "policy": policy})
 }
 
 func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +180,82 @@ func (s *Server) handleRestoreBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
-	if err := s.backups.Delete(r.Context(), r.PathValue("backupId")); err != nil {
+	if err := s.backups.Trash(r.Context(), r.PathValue("backupId")); err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleBackupRetention(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.servers.Get(r.Context(), id); err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			KeepCount          *int `json:"keep_count"`
+			MaxAgeDays         *int `json:"max_age_days"`
+			TrashRetentionDays *int `json:"trash_retention_days"`
+		}
+		if err := decodeJSON(w, r, &body); err != nil || body.KeepCount == nil || body.MaxAgeDays == nil || body.TrashRetentionDays == nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "supply integer keep_count, max_age_days, and trash_retention_days")
+			return
+		}
+		p := backups.Policy{KeepCount: *body.KeepCount, MaxAgeDays: *body.MaxAgeDays, TrashRetentionDays: *body.TrashRetentionDays}
+		if err := s.backups.SavePolicy(r.Context(), id, p); err != nil {
+			s.writeBackupErr(w, err)
+			return
+		}
+	}
+	preview, err := s.backups.PreviewRetention(r.Context(), id)
+	if err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleBackupCleanup(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.servers.Get(r.Context(), id); err != nil {
+		s.writeServerErr(w, err)
+		return
+	}
+	result, err := s.backups.Cleanup(r.Context(), id, strings.HasSuffix(r.Pattern, "/trash"))
+	if err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleBackupRecover(w http.ResponseWriter, r *http.Request) {
+	if err := s.backups.Recover(r.Context(), r.PathValue("backupId")); err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleBackupProtect(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Protected *bool `json:"protected"`
+	}
+	if err := decodeJSON(w, r, &body); err != nil || body.Protected == nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "supply a protected boolean")
+		return
+	}
+	if err := s.backups.Protect(r.Context(), r.PathValue("backupId"), *body.Protected); err != nil {
+		s.writeBackupErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleBackupPurge(w http.ResponseWriter, r *http.Request) {
+	if err := s.backups.Purge(r.Context(), r.PathValue("backupId")); err != nil {
 		s.writeBackupErr(w, err)
 		return
 	}
@@ -200,6 +285,10 @@ func (s *Server) writeBackupErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, backups.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "backup not found")
+	case errors.Is(err, backups.ErrInvalidPolicy):
+		writeError(w, http.StatusBadRequest, "invalid_retention", err.Error())
+	case errors.Is(err, backups.ErrBackupConflict):
+		writeError(w, http.StatusConflict, "backup_conflict", err.Error())
 	case errors.Is(err, backups.ErrNotConfigured):
 		writeError(w, http.StatusServiceUnavailable, "backup_not_configured", "S3 backup storage is not configured")
 	case errors.Is(err, servers.ErrWorldBusy), errors.Is(err, servers.ErrNBTBusy):
