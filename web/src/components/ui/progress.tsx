@@ -21,6 +21,8 @@ export function ProgressBar({
   size = 'md',
   animated = true,
   className = '',
+  'aria-label': ariaLabel,
+  'aria-valuetext': ariaValueText,
   ...props
 }: ProgressBarProps) {
   const isIndeterminate = value === undefined || value === null;
@@ -61,6 +63,8 @@ export function ProgressBar({
 
       <div
         role="progressbar"
+        aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
+        aria-valuetext={ariaValueText}
         aria-valuemin={0}
         aria-valuemax={max}
         aria-valuenow={!isIndeterminate ? clampedValue : undefined}

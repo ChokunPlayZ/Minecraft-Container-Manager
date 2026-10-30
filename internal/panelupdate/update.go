@@ -25,6 +25,40 @@ type Job struct {
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	Message    string     `json:"message"`
+	Progress   *Progress  `json:"progress,omitempty"`
+}
+
+type Progress struct {
+	Stage string `json:"stage"`
+	Title string `json:"title"`
+	Step  int    `json:"step"`
+	Total int    `json:"total"`
+}
+
+// Progress comes from installer milestones, never elapsed-time estimates.
+func readProgress(directory string) *Progress {
+	data, err := os.ReadFile(filepath.Join(directory, "progress"))
+	if err != nil {
+		return nil
+	}
+	stages := []struct{ name, title string }{
+		{"prepare", "Preparing update"},
+		{"source", "Downloading source changes"},
+		{"build", "Building panel and web interface"},
+		{"backup", "Backing up panel data and settings"},
+		{"restart", "Installing and restarting panel"},
+		{"verify", "Checking panel readiness"},
+	}
+	stage := strings.TrimSpace(string(data))
+	for i, entry := range stages {
+		if stage == entry.name {
+			return &Progress{Stage: stage, Title: entry.title, Step: i + 1, Total: len(stages)}
+		}
+	}
+	if stage == "rollback" {
+		return &Progress{Stage: stage, Title: "Restoring the previous version", Total: len(stages)}
+	}
+	return nil
 }
 
 type Status struct {
@@ -129,6 +163,9 @@ func (m *Manager) status(ctx context.Context) (Status, error) {
 	if log, err := logTail(filepath.Join(m.directory, "update.log")); err == nil {
 		s.Log = log
 	}
+	if s.Job != nil {
+		s.Job.Progress = readProgress(m.directory)
+	}
 	return s, nil
 }
 
@@ -227,6 +264,9 @@ func (m *Manager) Start(ctx context.Context, expected string) (Status, error) {
 	if err := os.MkdirAll(m.directory, 0700); err != nil {
 		return s, err
 	}
+	if err := os.Remove(filepath.Join(m.directory, "progress")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return s, err
+	}
 	job := Job{State: "queued", StartedAt: time.Now().UTC(), Message: "Preparing the panel update."}
 	if err := os.WriteFile(filepath.Join(m.directory, "update.log"), nil, 0600); err != nil {
 		return s, err
@@ -304,7 +344,7 @@ func RunWorker(directory, helper, expected string) error {
 	defer log.Close()
 	cmd := exec.Command(helper, "update", "--commit", expected)
 	cmd.Stdout, cmd.Stderr = log, log
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -oBatchMode=yes -oConnectTimeout=10", "MCM_UPDATE_COMMIT="+expected)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -oBatchMode=yes -oConnectTimeout=10", "MCM_UPDATE_COMMIT="+expected, "MCM_UPDATE_PROGRESS_FILE="+filepath.Join(directory, "progress"))
 	err = cmd.Run()
 	now := time.Now().UTC()
 	job.FinishedAt = &now

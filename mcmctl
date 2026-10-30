@@ -19,6 +19,13 @@ EXISTING_ENGINE=""
 SETTINGS_SAVED=false
 
 say() { printf '%s\n' "$*"; }
+# The web update worker supplies a private file; CLI updates need no reporter.
+update_progress() {
+    [[ -n "${MCM_UPDATE_PROGRESS_FILE:-}" ]] || return 0
+    if ! (umask 077; printf '%s\n' "$1" > "$MCM_UPDATE_PROGRESS_FILE.tmp" && mv -f -- "$MCM_UPDATE_PROGRESS_FILE.tmp" "$MCM_UPDATE_PROGRESS_FILE"); then
+        say 'Could not report update progress; the update will continue.' >&2
+    fi
+}
 die() { say "Error: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "Install $1 first, then retry."; }
 cleanup() {
@@ -865,6 +872,7 @@ update_app() {
             *) die 'Usage: mcmctl update [--local|--commit SHA]' ;;
         esac
     fi
+    update_progress prepare
     load_state
     command_source=$(command_source_dir) || command_source=""
     if [[ -n "$command_source" && "$command_source" != "$SOURCE_DIR" ]]; then
@@ -875,8 +883,10 @@ update_app() {
     check_config_paths
     prepare_engine
     if [[ "$local_build" == false ]]; then
+        update_progress source
         update_source
     fi
+    update_progress build
     ensure_runtime_image
     build_app
     if [[ -n "${MCM_UPDATE_COMMIT:-}" ]]; then
@@ -884,13 +894,16 @@ update_app() {
         "$STAGING/mcm" --version | tr -d ' ' | grep -Fq "\"commit\":\"$MCM_UPDATE_COMMIT\"" || die 'Built binary differs from approved commit.'
     fi
     mkdir -p "$CONFIG_DIR/backups"
+    update_progress backup
     systemctl --user stop mcm.service
     if ! snapshot; then
         systemctl --user start mcm.service || true
         die 'Could not back up the installed version. Update stopped.'
     fi
+    update_progress restart
     mv -f -- "$STAGING/mcm" "$BIN_DIR/mcm"
-    if ! systemctl --user start mcm.service || ! wait_ready; then
+    if ! systemctl --user start mcm.service || ! { update_progress verify; wait_ready; }; then
+        update_progress rollback
         say "The update did not become ready. Restoring the previous binary, config, and panel database."
         restore_snapshot || die "Rollback needs attention. Inspect: mcmctl logs"
         die "The update failed; the previous version is running."

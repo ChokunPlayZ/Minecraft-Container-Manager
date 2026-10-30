@@ -1,13 +1,98 @@
-import { useEffect, useState } from 'react';
-import { Download, RefreshCw } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowDownToLine, Check, ChevronDown, Download, Pause, Play, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import type { PanelUpdateStatus } from '../api/types';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { useModal } from './ui/modal';
+import { ProgressBar } from './ui/progress';
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Could not contact the panel. Try again.';
+}
+
+function PanelUpdateProgress({ job, log, reconnecting }: {
+  job: NonNullable<PanelUpdateStatus['job']>;
+  log?: string;
+  reconnecting: boolean;
+}) {
+  const running = job.state === 'queued' || job.state === 'running';
+  const succeeded = job.state === 'succeeded';
+  const failed = job.state === 'failed';
+  const [logsOpen, setLogsOpen] = useState(running || failed);
+  const [following, setFollowing] = useState(true);
+  const logRef = useRef<HTMLPreElement>(null);
+  const logId = useId();
+  const progress = job.progress;
+  const hasSteps = !!progress && progress.step > 0 && progress.total > 0;
+  const title = succeeded ? 'Update complete' : failed ? 'Update failed' : progress?.title ?? (job.state === 'queued' ? 'Preparing update' : 'Updating panel');
+  const stepText = hasSteps ? `Step ${progress.step} of ${progress.total}` : undefined;
+  const value = succeeded ? 100 : hasSteps ? ((progress.step - 1) / progress.total) * 100 : null;
+
+  useLayoutEffect(() => {
+    if (logsOpen && following && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [log, logsOpen, following]);
+
+  function jumpToLatest() {
+    setFollowing(true);
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }
+
+  return <div className="min-w-0 space-y-4 border-t pt-4">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <p className={`flex min-w-0 items-center gap-2 font-medium ${failed ? 'text-destructive' : ''}`}>
+          {running && <RefreshCw aria-hidden="true" className="h-4 w-4 shrink-0 motion-safe:animate-spin" />}
+          {succeeded && <Check aria-hidden="true" className="h-4 w-4 shrink-0 text-primary" />}
+          <span>{title}</span>
+        </p>
+        {running && stepText && <span className="text-xs tabular-nums text-muted-foreground">{stepText}</span>}
+      </div>
+      <ProgressBar
+        aria-label="Panel update progress"
+        aria-valuetext={`${title}${running && stepText ? `, ${stepText}` : ''}${reconnecting ? ', reconnecting to panel' : ''}`}
+        value={failed && !hasSteps ? 0 : value}
+        showPercent={false}
+        variant={failed ? 'destructive' : 'default'}
+        animated={running}
+        size="sm"
+      />
+      <p role={failed ? 'alert' : 'status'} className={`break-words text-sm ${failed ? 'text-destructive' : 'text-muted-foreground'}`}>
+        {reconnecting ? 'The panel is reconnecting. Update progress and logs will resume automatically.' : job.message}
+      </p>
+    </div>
+    {succeeded && <Button variant="outline" onClick={() => window.location.reload()}>Reload updated panel</Button>}
+    <div className="min-w-0 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button variant="ghost" size="sm" aria-expanded={logsOpen} aria-controls={logId} onClick={() => setLogsOpen(!logsOpen)}>
+          <ChevronDown aria-hidden="true" className={logsOpen ? '' : '-rotate-90'} />Update log
+        </Button>
+        {logsOpen && <div className="flex flex-wrap items-center gap-2">
+          {!following && <Button variant="outline" size="sm" onClick={jumpToLatest}><ArrowDownToLine aria-hidden="true" />Jump to latest</Button>}
+          <Button variant="ghost" size="sm" aria-label={following ? 'Pause auto-scroll' : 'Resume auto-scroll'} aria-pressed={following} onClick={() => following ? setFollowing(false) : jumpToLatest()}>
+            {following ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}{following ? 'Auto-scroll on' : 'Auto-scroll paused'}
+          </Button>
+        </div>}
+      </div>
+      {logsOpen && <>
+        <pre
+          ref={logRef}
+          id={logId}
+          role="region"
+          aria-label="Panel update log"
+          tabIndex={0}
+          onScroll={(event) => {
+            const viewer = event.currentTarget;
+            setFollowing(viewer.scrollHeight - viewer.clientHeight - viewer.scrollTop <= 24);
+          }}
+          className="console-output h-72 max-h-[50vh] overflow-auto overscroll-contain whitespace-pre-wrap break-all rounded-md p-4 font-mono text-xs leading-6 [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        >{log || (running ? 'Waiting for installer output…' : 'No installer output was recorded.')}</pre>
+        <p className="text-xs text-muted-foreground">Latest installer output. Scroll up to pause auto-scroll.</p>
+      </>}
+    </div>
+  </div>;
 }
 
 export function PanelUpdateSettings() {
@@ -83,12 +168,7 @@ export function PanelUpdateSettings() {
             {status.available && <Button disabled={busy || running} onClick={() => void install()}><Download />Install panel update</Button>}
           </div>
         </>}
-        {status.job && <div className="space-y-3 border-t pt-4">
-          <p role={status.job.state === 'failed' ? 'alert' : 'status'} className={`text-sm ${status.job.state === 'failed' ? 'text-destructive' : ''}`}>{reconnecting ? 'The panel is reconnecting. Update progress will resume automatically.' : status.job.message}</p>
-          {running && <p className="flex items-center gap-2 text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin" />Update in progress</p>}
-          {status.job.state === 'succeeded' && <Button variant="outline" onClick={() => window.location.reload()}>Reload updated panel</Button>}
-          {status.log && <details><summary className="cursor-pointer text-sm font-medium">Update log</summary><pre role="region" aria-label="Panel update log" tabIndex={0} className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-secondary p-4 font-mono text-xs leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">{status.log}</pre></details>}
-        </div>}
+        {status.job && <PanelUpdateProgress key={status.job.started_at} job={status.job} log={status.log} reconnecting={reconnecting} />}
       </>}
       {dialog}
     </CardContent>

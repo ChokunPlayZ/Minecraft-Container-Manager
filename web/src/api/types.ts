@@ -1014,7 +1014,13 @@ export interface PanelUpdateStatus {
   latest_commit?: string;
   checked_at?: string;
   available: boolean;
-  job?: { state: 'queued' | 'running' | 'succeeded' | 'failed'; started_at: string; finished_at?: string; message: string };
+  job?: {
+    state: 'queued' | 'running' | 'succeeded' | 'failed';
+    started_at: string;
+    finished_at?: string;
+    message: string;
+    progress?: { stage: string; title: string; step: number; total: number };
+  };
   log?: string;
 }
 

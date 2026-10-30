@@ -25,6 +25,10 @@ args = sys.argv[1:]
 root = pathlib.Path(os.environ['MCM_TEST_ROOT'])
 with (root / 'calls').open('a') as log:
     log.write(json.dumps([name, *args]) + '\n')
+progress_file = os.environ.get('MCM_UPDATE_PROGRESS_FILE')
+if progress_file and pathlib.Path(progress_file).is_file():
+    with (root / 'progress-observations').open('a') as log:
+        log.write(json.dumps([name, args, pathlib.Path(progress_file).read_text().strip()]) + '\n')
 if name == 'uname': print('Linux')
 elif name == 'id': print('tester' if '-un' in args else '1000')
 elif name == 'flock': pass
@@ -790,10 +794,31 @@ class ManagerTests(unittest.TestCase):
         result = self.run_manager(
             'update', '--local', ok=False, MCM_TEST_VERSION='two',
             MCM_TEST_FAIL_VERSION='version: two', MCM_TEST_DATABASE=str(database),
+            MCM_UPDATE_PROGRESS_FILE=str(self.root / 'update-progress'),
         )
         self.assertIn('previous version is running', result.stderr)
         self.assertIn('version: one', self.binary.read_text())
         self.assertEqual(database.read_text(), 'old schema')
+        self.assertTrue((self.root / 'active').exists())
+        self.assertEqual((self.root / 'update-progress').read_text().strip(), 'rollback')
+
+    def test_update_reports_milestones_at_the_corresponding_operations(self):
+        self.run_manager('install')
+        progress = self.root / 'update-progress'
+        self.run_manager('update', MCM_UPDATE_PROGRESS_FILE=str(progress))
+        observations = [json.loads(line) for line in (self.root / 'progress-observations').read_text().splitlines()]
+        self.assertIn(['git', ['-C', str(self.source), 'pull', '--ff-only'], 'source'], observations)
+        self.assertTrue(any(name == 'podman' and args[0] == 'build' and stage == 'build' for name, args, stage in observations))
+        self.assertIn(['systemctl', ['--user', 'stop', 'mcm.service'], 'backup'], observations)
+        self.assertIn(['systemctl', ['--user', 'start', 'mcm.service'], 'restart'], observations)
+        self.assertTrue(any(name == 'curl' and stage == 'verify' for name, _, stage in observations))
+        self.assertEqual(progress.read_text().strip(), 'verify')
+
+    def test_progress_reporting_failure_does_not_abort_the_update(self):
+        self.run_manager('install')
+        result = self.run_manager('update', '--local', MCM_TEST_VERSION='two', MCM_UPDATE_PROGRESS_FILE=str(self.root / 'missing/update-progress'))
+        self.assertIn('Could not report update progress', result.stderr)
+        self.assertIn('version: two', self.binary.read_text())
         self.assertTrue((self.root / 'active').exists())
 
     def test_dirty_checkout_is_not_pulled_or_stopped(self):

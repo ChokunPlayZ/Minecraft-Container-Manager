@@ -146,9 +146,9 @@ func TestWorkerPersistsSuccessAndFailure(t *testing.T) {
 		t.Run(map[bool]string{false: "success", true: "failure"}[fail], func(t *testing.T) {
 			dir := t.TempDir()
 			helper := filepath.Join(dir, "mcmctl")
-			script := "#!/bin/sh\n[ \"$1\" = update ] || exit 2\necho build-progress\n"
+			script := "#!/bin/sh\n[ \"$1\" = update ] || exit 2\necho build-progress\nprintf 'verify\\n' > \"$MCM_UPDATE_PROGRESS_FILE\"\n"
 			if fail {
-				script += "echo rollback-details >&2\nexit 1\n"
+				script += "echo rollback-details >&2\nprintf 'rollback\\n' > \"$MCM_UPDATE_PROGRESS_FILE\"\nexit 1\n"
 			}
 			if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
 				t.Fatal(err)
@@ -168,7 +168,46 @@ func TestWorkerPersistsSuccessAndFailure(t *testing.T) {
 			if !fail && s.Job.State != "succeeded" {
 				t.Fatalf("success hidden: %+v", s)
 			}
+			if s.Job.Progress == nil || (!fail && s.Job.Progress.Step != 6) || (fail && s.Job.Progress.Stage != "rollback") {
+				t.Fatalf("installer progress lost: %+v", s.Job.Progress)
+			}
 		})
+	}
+}
+
+func TestProgressSurvivesRestartAndLogTruncation(t *testing.T) {
+	m, _ := testManager(t)
+	if err := os.MkdirAll(m.directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveJob(m.directory, Job{State: "running", StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.directory, "progress"), []byte("build\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.directory, "update.log"), []byte(strings.Repeat("build output\n", 5000)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &Manager{directory: m.directory, run: m.run}
+	s, err := replacement.Status(context.Background())
+	if err != nil || s.Job.Progress == nil || s.Job.Progress.Step != 3 || s.Job.Progress.Total != 6 || len(s.Log) != 32768 {
+		t.Fatalf("progress after restart: %+v %v", s.Job, err)
+	}
+	// Starting another update must discard the previous installer's milestone.
+	if err := saveJob(m.directory, Job{State: "succeeded"}); err != nil {
+		t.Fatal(err)
+	}
+	s, err = m.Start(context.Background(), testCommit)
+	if err != nil || s.Job.State != "queued" || s.Job.Progress != nil {
+		t.Fatalf("stale progress on new update: %+v %v", s.Job, err)
+	}
+	if err := os.WriteFile(filepath.Join(m.directory, "progress"), []byte("unsupported-stage"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err = m.Status(context.Background())
+	if err != nil || s.Job.Progress != nil {
+		t.Fatalf("unknown milestone must leave progress indeterminate: %+v %v", s.Job, err)
 	}
 }
 
