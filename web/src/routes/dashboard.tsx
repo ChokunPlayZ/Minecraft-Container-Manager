@@ -8,6 +8,7 @@ import { formatUptimeFromStartedAt } from '../lib/uptime';
 import { AppShell } from '../components/app-shell';
 import { CopyServerDialog } from '../components/copy-server-dialog';
 import { CreateServerDialog } from '../components/create-server-dialog';
+import { ImportServerDialog } from '../components/import-server-dialog';
 import { HostCapacity } from '../components/host-capacity';
 import { RequireAuth } from '../components/require-auth';
 import { ServerInstallProgress } from '../components/server-install-progress';
@@ -27,6 +28,7 @@ export function DashboardRoute() {
   const { status: updateStatus } = useUpdateChecker();
   const [servers, setServers] = useState<Server[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [imported, setImported] = useState<Server | null>(null);
   const [copyTargetServer, setCopyTargetServer] = useState<Server | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FleetFilter>('all');
@@ -57,8 +59,9 @@ export function DashboardRoute() {
     <RequireAuth><AppShell>
       <div className="page-heading">
         <div><h1 className="page-title">Servers</h1><p className="page-description">Manage your Minecraft server instances.</p></div>
-        {can('servers.create') && <CreateServerDialog onCreated={() => void load()} onError={setError} />}
+        {can('servers.create') && <div className="flex flex-wrap gap-2"><ImportServerDialog onImported={(server) => { setImported(server); void load(); }} /><CreateServerDialog onCreated={() => void load()} onError={setError} /></div>}
       </div>
+      {imported && <p role="status" className="mb-6 rounded-lg border bg-card p-4 text-sm"><Link to="/servers/$id" params={{ id: imported.id }} className="font-medium text-primary underline underline-offset-4">{imported.name}</Link> imported successfully and is stopped. Review its settings before starting.</p>}
       {error && <div role="alert" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><p>{error}</p><Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>Try again</Button></div>}
       {servers !== null && <dl className="fleet-summary" aria-label="Fleet summary">
         <div className="flex items-center gap-2"><ServerIcon className="h-4 w-4" /><dt className="sr-only">Total servers</dt><dd><strong>{servers.length}</strong> {servers.length === 1 ? 'server' : 'servers'}</dd></div>
@@ -76,7 +79,7 @@ export function DashboardRoute() {
           </div>
         </div>
         {servers === null ? <div className="space-y-4 p-6" aria-label="Loading servers"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div> : servers.length === 0 ?
-          <div className="empty-state"><Box /><h2 className="section-heading">No servers yet</h2><p>{can('servers.create') ? 'Create a server to get started.' : 'An administrator can assign servers to your account in Users.'}</p><div className="mt-6">{can('servers.create') && <CreateServerDialog onCreated={() => void load()} onError={setError} />}</div></div> : visible.length === 0 ?
+          <div className="empty-state"><Box /><h2 className="section-heading">No servers yet</h2><p>{can('servers.create') ? 'Create a server or import an exported server to get started.' : 'An administrator can assign servers to your account in Users.'}</p><div className="mt-6">{can('servers.create') && <CreateServerDialog onCreated={() => void load()} onError={setError} />}</div></div> : visible.length === 0 ?
           <div className="empty-state"><Search /><h2 className="section-heading">No matching servers</h2><p>Try another name, version, or server state.</p><Button variant="outline" className="mt-5" onClick={() => { setQuery(''); setFilter('all'); }}>Reset filters</Button></div> : <>
           <div className="fleet-row fleet-heading" aria-hidden="true"><span>Server</span><span>Status</span><span>Memory</span><span>Host port</span><span className="fleet-actions-heading text-right">Actions</span></div>
           <ul aria-label="Servers">{visible.map((server) => <ServerQuickActions key={server.id} server={server} onCopy={() => setCopyTargetServer(server)} onUpdated={(updated) => setServers((current) => current?.map((item) => item.id === updated.id ? updated : item) ?? null)}>{(actions) => <li className="fleet-row group">

@@ -188,6 +188,9 @@ export const api = {
   createServer: (input: CreateServerInput) =>
     request<Server>('/api/servers', { method: 'POST', body: JSON.stringify(input) }),
 
+  importServer: (file: File, settings: ImportServerInput, onProgress?: (loaded: number, total: number) => void) =>
+    uploadWithProgress<Server>('/api/servers/import', [['file', file], ['settings', JSON.stringify(settings)]], onProgress),
+
   copyServer: (id: string, input: CopyServerInput) =>
     request<Server>(`/api/servers/${id}/copy`, { method: 'POST', body: JSON.stringify(input) }),
 
@@ -864,6 +867,16 @@ export const api = {
       method: 'DELETE',
     }),
 };
+
+export interface ImportServerInput {
+  name?: string;
+  server_type?: ServerType;
+  version?: string;
+  build?: string;
+  ram_mb?: number;
+  java_version?: number;
+  no_host_port?: boolean;
+}
 
 export interface CreateServerInput {
   name: string;

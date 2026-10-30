@@ -159,6 +159,7 @@ a container.
 - **Rebuild Warning System**: Automatically detects when server configuration changes (Java runtime, memory limits, CPU quotas, port bindings) require container recreation and displays an actionable rebuild banner.
 - **1-Click Container Rebuild**: Recreate sibling containers on demand without data loss to apply updated configuration, memory limits, or base images. If online, the server is gracefully shut down first to cleanly save world data, the container is recreated, and it is automatically booted back up.
 - **Instant Server Duplication / Cloning**: 1-click server cloning (`POST /api/servers/:id/copy`) that duplicates server data, configurations, mods, and plugins while automatically allocating fresh host ports.
+- **Server Export & Import**: Export a server as ZIP, then use **Import server** beside **Create server** on the Servers page. New exports include the server type, version, build, RAM, Java and resource limits in `mcm-export.json`. Leave the name blank to retain the exported name, or enter a replacement. For older exports, enter a name, then open **Server settings** in the import dialog and supply the original type and version; RAM defaults to 2048 MB and Java is selected automatically. Imports restore all archived files into a new stopped server, assign a free game port (or no host port when private), and create the default automatic backup schedule. Container identities and additional host-port bindings are not reused; configure additional ports before starting. Limits: 2 GiB compressed, 8 GiB extracted, 100,000 entries. Unsafe paths, links, duplicate entries and damaged archives are rejected, and failed imports are cleaned up. Stop the source server before exporting for a consistent world save.
 
 ### ⚡ Live Console & Command Line
 - **Real-Time Streaming**: Live server logs streamed directly to the browser using Server-Sent Events (SSE).
@@ -645,6 +646,7 @@ On PATCH, omit `access` to preserve permissions. An included `access` object rep
 | --- | --- | --- |
 | `GET` | `/api/servers` | List accessible Minecraft servers with status and uptime. |
 | `POST` | `/api/servers` | Create a new server (flavor, version, build, RAM, CPU, ports, java_version). |
+| `POST` | `/api/servers/import` | Import an exported server ZIP using multipart `file` and optional JSON `settings` fields (`name`, `server_type`, `version`, `build`, `ram_mb`, `java_version`, `no_host_port`). Requires `servers.create` and CSRF protection. |
 | `GET` | `/api/servers/:id` | Get server configuration, container state, and rebuild warning status. |
 | `PATCH` | `/api/servers/:id` | Update server configuration (RAM, CPU, ports, java_version). |
 | `DELETE` | `/api/servers/:id` | Delete server and remove container/data volume. |
@@ -654,7 +656,7 @@ On PATCH, omit `access` to preserve permissions. An included `access` object rep
 | `POST` | `/api/servers/:id/kill` | Force-kill unresponsive server process (`SIGKILL`). |
 | `POST` | `/api/servers/:id/recreate` | Recreate container from runtime image and sync configuration changes. |
 | `POST` | `/api/servers/:id/copy` | Duplicate/clone server data, configuration, and plugins to a new server. |
-| `GET` | `/api/servers/:id/export` | Download full server data archive (`.tar.gz`). |
+| `GET` | `/api/servers/:id/export` | Download server files and portable settings as ZIP (`.zip`). |
 | `GET` | `/api/servers/:id/status` | Lightweight status polling endpoint. |
 | `GET` | `/api/servers/:id/stats` | Real-time container resource metrics (CPU %, memory, net I/O, disk I/O). |
 | `GET` | `/api/servers/:id/console` | Stream real-time console logs via Server-Sent Events (SSE) with `Last-Event-ID`. |

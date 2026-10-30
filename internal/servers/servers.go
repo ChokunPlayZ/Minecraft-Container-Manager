@@ -1806,7 +1806,6 @@ func (s *Store) Export(ctx context.Context, id string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_ = srv
 
 	srcDir := s.dataPath(id)
 	if fi, err := os.Stat(srcDir); err != nil || !fi.IsDir() {
@@ -1814,6 +1813,21 @@ func (s *Store) Export(ctx context.Context, id string, w io.Writer) error {
 	}
 
 	zw := zip.NewWriter(w)
+	manifestWriter, err := zw.Create(exportManifestName)
+	if err != nil {
+		return err
+	}
+	if err := json.NewEncoder(manifestWriter).Encode(exportManifest{
+		FormatVersion: 1,
+		Server: exportSettings{
+			Name: srv.Name, ServerType: jars.JarType(srv.ServerType), Version: srv.Version,
+			Build: srv.Build, RAMMB: srv.RAMMB, CPULimit: srv.CPULimit,
+			MemoryLimitMB: srv.MemoryLimitMB, JavaVersion: srv.JavaVersion,
+		},
+	}); err != nil {
+		_ = zw.Close()
+		return err
+	}
 	err = filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -1827,11 +1841,11 @@ func (s *Store) Export(ctx context.Context, id string, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if rel == "." {
+		if rel == "." || rel == exportManifestName {
 			return nil
 		}
-		// Exclude socket files or ephemeral locks
-		if d.Type()&fs.ModeSocket != 0 {
+		// Export only regular files and directories, never symlinks or devices.
+		if !d.IsDir() && !d.Type().IsRegular() {
 			return nil
 		}
 

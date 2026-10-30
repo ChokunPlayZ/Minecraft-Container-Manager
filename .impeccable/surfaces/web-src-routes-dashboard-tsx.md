@@ -9,6 +9,14 @@ related_targets: ["web/src/routes","web/src/components","web/src/styles/index.cs
 
 Mode: Operate. Scope: all routes, panels, actions, catalogs, and dialogs under web/src.
 
+## Server import extension
+
+The Servers heading adds an outline Import server action beside Create server, using the established protected dialog and semantic theme tokens. The form prioritizes the exported ZIP and optional name. The name starts blank so a modern export retains its manifest name; only a user-entered name overrides it, and changing the ZIP preserves that choice. Server settings remain in a disclosure for older exports; networking has a plain private-server checkbox. Upload progress transitions to indeterminate file import, disables editing and dismissal while active, preserves input after failure, and ends with an announced stopped-server confirmation linked to the new server.
+
+The dialog uses the existing bounded, internally scrolling overlay, shared input/select/button geometry, compact system UI type, quiet dividers, and semantic foreground/background pairs. Its settings fields form two columns from (640px), with a single column below. Desktop and mobile retain the inherited Operate direction. `DESIGN.md` and `.impeccable/design.json` remain the shared design authority; this extension introduces no new visual identity or reusable token rule.
+
+Documentation evidence: source inspection and the dark demo captures `dashboard-desktop.jpg`, `desktop.jpg`, `desktop-settings.jpg`, and `mobile.jpg` in `.impeccable/review/server-import/` support consistency for the dashboard entry point, default dialog on desktop/mobile, and expanded settings on desktop. Light-theme output, expanded mobile settings, and rendered upload/progress/error/success states were not captured. Live browser upload was not completed because automated file selection failed. The initial finish review's optional-name issue was corrected in source and covered by focused tests; the separate verdict owns the final review disposition. See `.impeccable/review/server-import/documentation-check.md` for the bounded handoff evidence.
+
 ## Direction contract
 
 THESIS: An operations atlas: stable wayfinding and aligned, task-focused workspaces replace isolated cards under a sparse top bar.

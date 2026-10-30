@@ -152,6 +152,7 @@ func (s *Server) routes() {
 	// Servers.
 	s.mux.HandleFunc("GET /api/servers", s.requirePermission("servers.view", s.wrapJSON(s.handleListServers)))
 	s.mux.HandleFunc("POST /api/servers", s.requirePermission("servers.create", s.wrapJSON(s.handleCreateServer)))
+	s.mux.HandleFunc("POST /api/servers/import", s.requirePermission("servers.create", s.wrapJSON(s.handleImportServer)))
 	s.mux.HandleFunc("GET /api/servers/{id}", s.requirePermission("servers.view", s.wrapJSON(s.handleGetServer)))
 	s.mux.HandleFunc("PATCH /api/servers/{id}", s.requirePermission("servers.edit", s.wrapJSON(s.handleUpdateServer)))
 	s.mux.HandleFunc("DELETE /api/servers/{id}", s.requirePermission("servers.delete", s.wrapJSON(s.handleDeleteServer)))

@@ -61,6 +61,7 @@ function mockDNSConfig() {
 }
 
 let mockSchedules: ScheduledTask[] = [];
+const mockImportedServers: Server[] = [];
 let mockDiscordSettings: DiscordSettings = {
   enabled: false, configured: false,
   events: ['server_started', 'server_stopped', 'server_crashed', 'server_error', 'backup_completed', 'backup_failed'],
@@ -300,6 +301,7 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
   if (path === '/api/servers' && (!init.method || init.method === 'GET')) {
     return {
       servers: [
+        ...mockImportedServers,
         {
           id: 'demo',
           name: 'Mega SMP Server',
@@ -323,6 +325,19 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/status')) {
     return { id: 'demo', state: 'running', ram_mb: 8192, host_port: 25565, container_id: 'mcm-srv-demo', started_at: '2026-01-01T00:00:00Z', uptime_seconds: 3600 } as T;
+  }
+  if (path === '/api/servers/import' && init.method === 'POST' && init.body instanceof FormData) {
+    const settings = JSON.parse(String(init.body.get('settings') ?? '{}')) as Partial<Server> & { no_host_port?: boolean };
+    const server: Server = {
+      id: `import-${Date.now().toString(36)}`, name: settings.name || 'Imported demo server',
+      server_type: settings.server_type || 'paper', version: settings.version || '1.21.4', build: settings.build || '',
+      ram_mb: settings.ram_mb || 2048, java_version: settings.java_version || 21,
+      cpu_limit: 0, memory_limit_mb: 0, host_port: settings.no_host_port ? 0 : 25566,
+      extra_ports: [], container_id: '', state: 'stopped',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+    mockImportedServers.push(server);
+    return server as T;
   }
   if (path.startsWith('/api/servers/') && path.endsWith('/players')) {
     const players = Array.from({ length: 100 }, (_, i) => ({

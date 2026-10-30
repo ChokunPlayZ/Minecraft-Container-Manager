@@ -66,6 +66,9 @@ func TestPermissionIsolationAndEscalation(t *testing.T) {
 			t.Errorf("%s: got %d: %s", route, rr.Code, rr.Body.String())
 		}
 	}
+	if rr := permissionRequest(t, handler, token, "POST", "/api/servers/import", ""); rr.Code != http.StatusForbidden {
+		t.Fatalf("viewer server import: %d %s", rr.Code, rr.Body.String())
+	}
 	rr := permissionRequest(t, handler, token, "GET", "/api/servers", "")
 	if rr.Code != 200 {
 		t.Fatal(rr.Body.String())
