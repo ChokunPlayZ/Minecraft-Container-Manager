@@ -118,21 +118,7 @@ func (s *Scheduler) tick(ctx context.Context, now time.Time, startup bool) {
 func (s *Scheduler) run(parent context.Context, task Task) {
 	defer s.workers.Done()
 	defer func() { s.mu.Lock(); delete(s.running, task.ID); s.mu.Unlock() }()
-	timeout := 10 * time.Minute
-	if task.Action == "backup" {
-		timeout = 30 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	// A single failed task must not terminate the scheduler or the panel.
-	err := func() (err error) {
-		defer func() {
-			if value := recover(); value != nil {
-				err = fmt.Errorf("task panicked: %v", value)
-			}
-		}()
-		return s.execute(ctx, task)
-	}()
+	err := s.executeTask(parent, task)
 	status, detail := "success", ""
 	if err != nil {
 		status, detail = "failed", err.Error()
@@ -143,4 +129,63 @@ func (s *Scheduler) run(parent context.Context, task Task) {
 	if _, err := s.store.db.ExecContext(writeCtx, `UPDATE scheduled_tasks SET last_status=?, last_error=? WHERE id=?`, status, detail, task.ID); err != nil {
 		s.logger.Printf("task scheduler: record result %s: %v", task.ID, err)
 	}
+}
+
+func (s *Scheduler) executeTask(ctx context.Context, task Task) error {
+	if task.Action != "chain" {
+		return s.executeAction(ctx, task)
+	}
+	if len(task.Steps) == 0 {
+		return fmt.Errorf("action chain has no steps")
+	}
+	for i, step := range task.Steps {
+		// Each action uses the same server and executor as a standalone task.
+		// Keep the chain claimed until every action (including backups) returns.
+		action := task
+		action.Action, action.Command, action.BackupTarget = step.Action, step.Command, step.BackupTarget
+		action.Steps = nil
+		var err error
+		if step.Action == "delay" {
+			err = wait(ctx, time.Duration(step.DelaySeconds)*time.Second)
+		} else {
+			err = s.executeAction(ctx, action)
+		}
+		if err != nil {
+			return fmt.Errorf("step %d of %d (%s): %w", i+1, len(task.Steps), step.Action, err)
+		}
+	}
+	return nil
+}
+
+func wait(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
+}
+
+func (s *Scheduler) executeAction(parent context.Context, task Task) (err error) {
+	// A single failed action must not terminate the scheduler or the panel.
+	defer func() {
+		if value := recover(); value != nil {
+			err = fmt.Errorf("task panicked: %v", value)
+		}
+	}()
+	timeout := 10 * time.Minute
+	if task.Action == "backup" {
+		timeout = 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.execute(ctx, task); err != nil {
+		return err
+	}
+	return ctx.Err()
 }

@@ -102,4 +102,20 @@ func TestScheduleEndpoints(t *testing.T) {
 	request("PATCH", base+"/"+task.ID, `{"enabled":true}`, true, true, 200)
 	request("POST", base, `{"name":"Too frequent","action":"backup","cron":"@every 1s"}`, true, true, 400)
 	request("POST", base, `{"name":"Bad target","action":"backup","backup_target":"unknown","cron":"midnight"}`, true, true, 400)
+	chain := request("POST", base, `{"name":"Announced backup","action":"chain","cron":"midnight","steps":[{"action":"command","command":"say Backup Starting"},{"action":"command","command":"save-all"},{"action":"backup","backup_target":"local"},{"action":"delay","delay_seconds":30},{"action":"command","command":"say Backup Complete"}]}`, true, true, 201)
+	if err := json.Unmarshal(chain.Body.Bytes(), &task); err != nil || task.Action != "chain" || len(task.Steps) != 5 || task.Steps[2].BackupTarget != "local" || task.Steps[3].DelaySeconds != 30 || !task.Enabled {
+		t.Fatalf("chain schedule: %s %v", chain.Body.String(), err)
+	}
+	chainPath := base + "/" + task.ID
+	request("PUT", "/api/servers/two/schedules/"+task.ID, chain.Body.String(), true, true, 404)
+	edited := request("PUT", chainPath, `{"name":"Restart and announce","action":"chain","cron":"hourly","enabled":false,"steps":[{"action":"restart"},{"action":"delay","delay_seconds":60},{"action":"command","command":"say Welcome back"}]}`, true, true, 200)
+	if err := json.Unmarshal(edited.Body.Bytes(), &task); err != nil || len(task.Steps) != 3 || task.Steps[0].Action != "restart" || task.Enabled || task.NextRunAt != "" {
+		t.Fatalf("edited chain: %s %v", edited.Body.String(), err)
+	}
+	request("PATCH", chainPath, `{"enabled":true}`, true, true, 200)
+	request("POST", base, `{"name":"Empty chain","action":"chain","cron":"midnight","steps":[]}`, true, true, 400)
+	request("POST", base, `{"name":"Nested chain","action":"chain","cron":"midnight","steps":[{"action":"chain"}]}`, true, true, 400)
+	request("POST", base, `{"name":"Invalid command","action":"chain","cron":"midnight","steps":[{"action":"command","command":"say hi\nstop"}]}`, true, true, 400)
+	request("POST", base, `{"name":"Invalid wait","action":"chain","cron":"midnight","steps":[{"action":"delay","delay_seconds":1.5}]}`, true, true, 400)
+	request("DELETE", chainPath, "", true, true, 200)
 }

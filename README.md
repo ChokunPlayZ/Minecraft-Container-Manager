@@ -186,7 +186,9 @@ a container.
 
 ### Scheduled Backups, Commands & Server Actions
 
-- Open a server's **Schedules** tab to schedule a backup, console command, start, stop, or graceful restart.
+- Open a server's **Schedules** tab to schedule a backup, console command, start, stop, graceful restart, or **Action chain**.
+- An action chain runs its steps in order. Add console commands, backups (with a separate storage target for each backup), start/stop/restart actions, and **Wait** steps of 1–3600 seconds. Use the arrow buttons to reorder steps and the remove button to delete a step. Chains support up to 50 steps. For example: console command `broadcast "Backup Starting"` → console command `save-all` → **Create backup** → **Wait** → console command `broadcast "Backup Complete"`. Use commands supported by your server; vanilla Minecraft announcements use `say`.
+- A chain waits for each action to return, including the complete backup operation. Console steps finish when sent to the server; Minecraft command output is not parsed for success or completion. If a step fails, times out, or panics, the remaining steps are skipped and the last result identifies the failed step. Each command or power action has a 10-minute limit; each backup has a 30-minute limit. Wait steps are interruptible when the panel shuts down. Starting a container does not mean Minecraft has finished loading: add a wait after a backup, start, or restart before sending a console command.
 - Choose midnight, hourly, every 30 minutes, weekly, or monthly presets, or enter a standard five-field cron expression (`minute hour day month weekday`). For example, `0 0 * * *` runs at midnight and `*/15 * * * *` runs every 15 minutes. Names such as `midnight`, `daily`, and `@hourly` are also accepted by the API.
 - Choose **Fixed interval** to repeat every whole number of minutes, independent of the time of day. The API accepts expressions such as `@every 720m` (12 hours) or `@every 95m`.
 - New tasks default to the existing `TZ` environment setting (`UTC` when unset or invalid). Each task saves its timezone and allows an override. Midnight follows the selected zone, including daylight saving changes.
@@ -700,10 +702,29 @@ On PATCH, omit `access` to preserve permissions. An included `access` object rep
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/servers/:id/schedules` | List recurring tasks, next run, and last result. |
-| `POST` | `/api/servers/:id/schedules` | Create a task with `name`, `action` (`backup`, `command`, `start`, `stop`, `restart`), `command` (for command tasks), optional `backup_target` (`""` for panel default, `local`, or `s3`; backup tasks only), `cron`, optional `timezone` (defaults to `TZ`), and optional `enabled` (defaults to true). |
+| `POST` | `/api/servers/:id/schedules` | Create a task with `name`, `action` (`backup`, `command`, `start`, `stop`, `restart`, `chain`), `command` (for command tasks), optional `backup_target` (`""` for panel default, `local`, or `s3`; backup tasks only), `steps` (for chains; see below), `cron`, optional `timezone` (defaults to `TZ`), and optional `enabled` (defaults to true). |
 | `PUT` | `/api/servers/:id/schedules/:scheduleId` | Replace task configuration; include `enabled`. |
 | `PATCH` | `/api/servers/:id/schedules/:scheduleId` | Pause or resume with `{"enabled": false}` or `{"enabled": true}`. |
 | `DELETE` | `/api/servers/:id/schedules/:scheduleId` | Delete a task and cancel its future runs. |
+
+For `action: "chain"`, supply an ordered `steps` array of 1–50 objects. Each step has an `action` of `command`, `backup`, `start`, `stop`, `restart`, or `delay`. Command steps require `command`; backup steps accept optional `backup_target`; delay steps require integer `delay_seconds` from 1 to 3600. Nested chains are rejected. For example:
+
+```json
+{
+  "name": "Announced backup",
+  "action": "chain",
+  "cron": "midnight",
+  "timezone": "Asia/Bangkok",
+  "enabled": true,
+  "steps": [
+    { "action": "command", "command": "say Backup Starting" },
+    { "action": "command", "command": "save-all" },
+    { "action": "backup", "backup_target": "local" },
+    { "action": "delay", "delay_seconds": 60 },
+    { "action": "command", "command": "say Backup Complete" }
+  ]
+}
+```
 
 ### Players, Whitelist & Operators
 | Method | Path | Description |

@@ -975,14 +975,22 @@ export interface CopyServerInput {
 
 
 
-export type ScheduledAction = 'command' | 'start' | 'stop' | 'restart' | 'backup';
+export type ScheduledAction = 'command' | 'start' | 'stop' | 'restart' | 'backup' | 'chain';
 export type BackupTarget = '' | 'local' | 's3';
+
+export interface ScheduleStep {
+  action: Exclude<ScheduledAction, 'chain'> | 'delay';
+  command?: string;
+  backup_target?: BackupTarget;
+  delay_seconds?: number;
+}
 
 export interface ScheduleInput {
   name: string;
   action: ScheduledAction;
   command: string;
   backup_target: BackupTarget;
+  steps?: ScheduleStep[];
   cron: string;
   timezone: string;
   enabled: boolean;

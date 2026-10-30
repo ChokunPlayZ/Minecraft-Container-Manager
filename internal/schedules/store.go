@@ -4,6 +4,7 @@ package schedules
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,6 +22,16 @@ var (
 	ErrInvalid        = errors.New("invalid schedule")
 )
 
+const MaxSteps = 50
+
+// Step is one action in a chain. Delays are explicit steps, in whole seconds.
+type Step struct {
+	Action       string `json:"action"`
+	Command      string `json:"command,omitempty"`
+	BackupTarget string `json:"backup_target,omitempty"`
+	DelaySeconds int    `json:"delay_seconds,omitempty"`
+}
+
 type Task struct {
 	ID           string `json:"id"`
 	ServerID     string `json:"server_id"`
@@ -28,6 +39,7 @@ type Task struct {
 	Action       string `json:"action"`
 	Command      string `json:"command"`
 	BackupTarget string `json:"backup_target"`
+	Steps        []Step `json:"steps,omitempty"`
 	Cron         string `json:"cron"`
 	Timezone     string `json:"timezone"`
 	Enabled      bool   `json:"enabled"`
@@ -44,6 +56,7 @@ type Input struct {
 	Action       string `json:"action"`
 	Command      string `json:"command"`
 	BackupTarget string `json:"backup_target"`
+	Steps        []Step `json:"steps,omitempty"`
 	Cron         string `json:"cron"`
 	Timezone     string `json:"timezone"`
 	Enabled      bool   `json:"enabled"`
@@ -106,28 +119,29 @@ func normalize(in Input, now time.Time) (Input, string, error) {
 	if in.Timezone == "" {
 		in.Timezone = DefaultTimezone()
 	}
-	in.Command = strings.TrimSpace(in.Command)
 	if in.Name == "" || len(in.Name) > 100 {
 		return in, "", fmt.Errorf("%w: task name must contain 1–100 characters", ErrInvalid)
 	}
-	switch in.Action {
-	case "command":
-		if in.Command == "" || len(in.Command) > 4096 || strings.ContainsAny(in.Command, "\r\n\x00") {
-			return in, "", fmt.Errorf("%w: enter a single console command (up to 4096 characters)", ErrInvalid)
+	if in.Action == "chain" {
+		if len(in.Steps) < 1 || len(in.Steps) > MaxSteps {
+			return in, "", fmt.Errorf("%w: an action chain must contain 1–%d steps", ErrInvalid, MaxSteps)
 		}
-	case "start", "stop", "restart", "backup":
-		in.Command = ""
-	default:
-		return in, "", fmt.Errorf("%w: action must be command, start, stop, restart, or backup", ErrInvalid)
-	}
-	if in.Action == "backup" {
-		switch in.BackupTarget {
-		case "", "local", "s3":
-		default:
-			return in, "", fmt.Errorf("%w: backup target must be the panel default, local, or s3", ErrInvalid)
+		// Do not mutate a caller's slice while normalizing its configuration.
+		in.Steps = append([]Step(nil), in.Steps...)
+		for i, step := range in.Steps {
+			normalized, err := normalizeStep(step, true)
+			if err != nil {
+				return in, "", fmt.Errorf("step %d: %w", i+1, err)
+			}
+			in.Steps[i] = normalized
 		}
+		in.Command, in.BackupTarget = "", ""
 	} else {
-		in.BackupTarget = ""
+		step, err := normalizeStep(Step{Action: in.Action, Command: in.Command, BackupTarget: in.BackupTarget}, false)
+		if err != nil {
+			return in, "", err
+		}
+		in.Command, in.BackupTarget, in.Steps = step.Command, step.BackupTarget, nil
 	}
 	schedule, err := Parse(in.Cron, in.Timezone)
 	if err != nil {
@@ -141,6 +155,49 @@ func normalize(in Input, now time.Time) (Input, string, error) {
 		return in, "", nil
 	}
 	return in, stamp(next), nil
+}
+
+func normalizeStep(step Step, allowDelay bool) (Step, error) {
+	step.Command = strings.TrimSpace(step.Command)
+	switch step.Action {
+	case "command":
+		if step.Command == "" || len(step.Command) > 4096 || strings.ContainsAny(step.Command, "\r\n\x00") {
+			return step, fmt.Errorf("%w: enter a single console command (up to 4096 characters)", ErrInvalid)
+		}
+	case "start", "stop", "restart", "backup":
+		step.Command = ""
+	case "delay":
+		if !allowDelay || step.DelaySeconds < 1 || step.DelaySeconds > 3600 {
+			return step, fmt.Errorf("%w: wait steps are only allowed in chains and must be 1–3600 whole seconds", ErrInvalid)
+		}
+		step.Command = ""
+	default:
+		if allowDelay {
+			return step, fmt.Errorf("%w: chain steps must be command, start, stop, restart, backup, or delay; nested chains are not allowed", ErrInvalid)
+		}
+		return step, fmt.Errorf("%w: action must be command, start, stop, restart, backup, or chain", ErrInvalid)
+	}
+	if step.Action == "backup" {
+		switch step.BackupTarget {
+		case "", "local", "s3":
+		default:
+			return step, fmt.Errorf("%w: backup target must be the panel default, local, or s3", ErrInvalid)
+		}
+	} else {
+		step.BackupTarget = ""
+	}
+	if step.Action != "delay" {
+		step.DelaySeconds = 0
+	}
+	return step, nil
+}
+
+func encodeSteps(steps []Step) string {
+	if len(steps) == 0 {
+		return "[]"
+	}
+	data, _ := json.Marshal(steps) // Step only contains strings and integers.
+	return string(data)
 }
 
 func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -158,17 +215,24 @@ func (s *Store) serverExists(ctx context.Context, id string) error {
 	return err
 }
 
-const columns = `id, server_id, name, action, command, backup_target, cron, timezone, enabled, next_run_at, last_run_at, last_status, last_error, created_at, updated_at`
+const columns = `id, server_id, name, action, command, backup_target, steps, cron, timezone, enabled, next_run_at, last_run_at, last_status, last_error, created_at, updated_at`
 
 type scanner interface{ Scan(...any) error }
 
 func scan(row scanner) (Task, error) {
 	var t Task
-	err := row.Scan(&t.ID, &t.ServerID, &t.Name, &t.Action, &t.Command, &t.BackupTarget, &t.Cron, &t.Timezone, &t.Enabled, &t.NextRunAt, &t.LastRunAt, &t.LastStatus, &t.LastError, &t.CreatedAt, &t.UpdatedAt)
+	var steps string
+	err := row.Scan(&t.ID, &t.ServerID, &t.Name, &t.Action, &t.Command, &t.BackupTarget, &steps, &t.Cron, &t.Timezone, &t.Enabled, &t.NextRunAt, &t.LastRunAt, &t.LastStatus, &t.LastError, &t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound
 	}
-	return t, err
+	if err != nil {
+		return t, err
+	}
+	if err := json.Unmarshal([]byte(steps), &t.Steps); err != nil {
+		return t, fmt.Errorf("decode schedule steps: %w", err)
+	}
+	return t, nil
 }
 
 func (s *Store) List(ctx context.Context, serverID string) ([]Task, error) {
@@ -209,7 +273,7 @@ func (s *Store) Create(ctx context.Context, serverID string, in Input) (Task, er
 		return Task{}, err
 	}
 	id := uuid.NewString()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO scheduled_tasks (id, server_id, name, action, command, backup_target, cron, timezone, enabled, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, serverID, in.Name, in.Action, in.Command, in.BackupTarget, in.Cron, in.Timezone, in.Enabled, next, stamp(now), now.UTC().Format(time.RFC3339Nano))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO scheduled_tasks (id, server_id, name, action, command, backup_target, steps, cron, timezone, enabled, next_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, serverID, in.Name, in.Action, in.Command, in.BackupTarget, encodeSteps(in.Steps), in.Cron, in.Timezone, in.Enabled, next, stamp(now), now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return Task{}, err
 	}
@@ -222,7 +286,7 @@ func (s *Store) Update(ctx context.Context, serverID, id string, in Input) (Task
 	if err != nil {
 		return Task{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE scheduled_tasks SET name=?, action=?, command=?, backup_target=?, cron=?, timezone=?, enabled=?, next_run_at=?, updated_at=? WHERE server_id=? AND id=?`, in.Name, in.Action, in.Command, in.BackupTarget, in.Cron, in.Timezone, in.Enabled, next, now.UTC().Format(time.RFC3339Nano), serverID, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE scheduled_tasks SET name=?, action=?, command=?, backup_target=?, steps=?, cron=?, timezone=?, enabled=?, next_run_at=?, updated_at=? WHERE server_id=? AND id=?`, in.Name, in.Action, in.Command, in.BackupTarget, encodeSteps(in.Steps), in.Cron, in.Timezone, in.Enabled, next, now.UTC().Format(time.RFC3339Nano), serverID, id)
 	if err := affected(result, err); err != nil {
 		return Task{}, err
 	}

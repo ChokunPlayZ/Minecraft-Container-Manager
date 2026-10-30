@@ -2,13 +2,15 @@ import { usePermissions } from '../lib/auth';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { CalendarClock, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
-import type { BackupTarget, ScheduleInput, ScheduledAction, ScheduledTask } from '../api/types';
+import type { BackupTarget, ScheduleInput, ScheduleStep, ScheduledAction, ScheduledTask } from '../api/types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { useModal } from './ui/modal';
+import { backupTargets, stepLabel } from '../lib/schedules';
+import { ScheduleChainEditor } from './schedule-chain-editor';
 
 const presets = [
   { value: 'midnight', label: 'Every day at midnight' },
@@ -17,8 +19,7 @@ const presets = [
   { value: '0 0 * * 0', label: 'Every Sunday at midnight' },
   { value: '0 0 1 * *', label: 'First day of every month' },
 ];
-const actions: Record<ScheduledAction, string> = { command: 'Console command', backup: 'Create backup', restart: 'Restart server', start: 'Start server', stop: 'Stop server' };
-const backupTargets: Record<BackupTarget, string> = { '': 'Panel default', local: 'Local disk', s3: 'Remote (S3)' };
+const actions: Record<ScheduledAction, string> = { command: 'Console command', backup: 'Create backup', restart: 'Restart server', start: 'Start server', stop: 'Stop server', chain: 'Action chain' };
 
 function defaultInput(timezone = 'UTC'): ScheduleInput {
   return { name: '', action: 'command', command: '', backup_target: '', cron: 'midnight', timezone, enabled: true };
@@ -89,10 +90,22 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
   }, [serverId, reload]);
 
   function open(task: ScheduledTask | 'new') {
-    setInput(task === 'new' ? defaultInput(defaultTimezone) : { name: task.name, action: task.action, command: task.command, backup_target: task.backup_target, cron: task.cron, timezone: task.timezone, enabled: task.enabled });
+    setInput(task === 'new' ? defaultInput(defaultTimezone) : { name: task.name, action: task.action, command: task.command, backup_target: task.backup_target, ...(task.action === 'chain' ? { steps: task.steps ?? [] } : {}), cron: task.cron, timezone: task.timezone, enabled: task.enabled });
     setFrequency(task === 'new' ? 'midnight' : presetFor(task.cron));
     setEditing(task);
     setError(null);
+  }
+
+  function changeAction(action: ScheduledAction) {
+    const { steps, ...current } = input;
+    const firstStep: ScheduleStep = input.action === 'chain' ? { action: 'command', command: '' }
+      : { action: input.action, ...(input.action === 'command' ? { command: input.command } : input.action === 'backup' ? { backup_target: input.backup_target } : {}) };
+    setInput({
+      ...current, action,
+      command: action === 'command' ? input.command : '',
+      backup_target: action === 'backup' ? input.backup_target : '',
+      ...(action === 'chain' ? { steps: steps?.length ? steps : [firstStep] } : {}),
+    });
   }
 
   async function save(event: FormEvent) {
@@ -137,7 +150,7 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="schedules-title" className="text-lg font-semibold tracking-tight">Schedules</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Schedule backups, console commands, and server actions.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Schedule backups, console commands, server actions, or a chain of steps.</p>
         </div>
         {!editing && <Button onClick={() => open('new')} disabled={!canManage || loading || !!loadError || busy}><Plus className="h-4 w-4" />Add schedule</Button>}
       </div>
@@ -150,9 +163,10 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
           <h3 className="font-semibold">{editing === 'new' ? 'New schedule' : 'Edit schedule'}</h3>
           <fieldset disabled={!canManage || busy} className="grid min-w-0 gap-4 sm:grid-cols-2">
             <div className="min-w-0 space-y-1.5"><Label htmlFor="schedule-name">Task name</Label><Input id="schedule-name" autoFocus required maxLength={100} placeholder="Nightly restart" value={input.name} onChange={(event) => setInput({ ...input, name: event.target.value })} /></div>
-            <div className="min-w-0 space-y-1.5"><Label htmlFor="schedule-action">Action</Label><Select id="schedule-action" value={input.action} onValueChange={(value) => setInput({ ...input, action: value as ScheduledAction, command: value === 'command' ? input.command : '', backup_target: value === 'backup' ? input.backup_target : '' })}>{Object.entries(actions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div>
+            <div className="min-w-0 space-y-1.5"><Label htmlFor="schedule-action">Action</Label><Select id="schedule-action" value={input.action} onValueChange={(value) => changeAction(value as ScheduledAction)}>{Object.entries(actions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div>
             {input.action === 'backup' && <div className="min-w-0 space-y-1.5 sm:col-span-2"><Label htmlFor="schedule-backup-target">Backup target</Label><Select id="schedule-backup-target" value={input.backup_target || 'default'} onValueChange={(value) => setInput({ ...input, backup_target: value === 'default' ? '' : value as BackupTarget })}>{Object.entries(backupTargets).map(([value, label]) => <option key={value} value={value || 'default'}>{label}</option>)}</Select><p className="text-xs text-muted-foreground">Remote backups use the panel’s configured S3-compatible storage.</p></div>}
             {input.action === 'command' && <div className="min-w-0 space-y-1.5 sm:col-span-2"><Label htmlFor="schedule-command">Console command</Label><Input id="schedule-command" required maxLength={4096} placeholder="say Server restart in 5 minutes" className="font-mono" value={input.command} onChange={(event) => setInput({ ...input, command: event.target.value })} /><p className="text-xs text-muted-foreground">One Minecraft command per task. The server must be running.</p></div>}
+            {input.action === 'chain' && <ScheduleChainEditor steps={input.steps ?? []} disabled={!canManage || busy} onChange={(steps) => setInput({ ...input, steps })} />}
             <div className="min-w-0 space-y-1.5"><Label htmlFor="schedule-frequency">Frequency</Label><Select id="schedule-frequency" value={frequency} onValueChange={(value) => { setFrequency(value); setInput({ ...input, cron: value === 'custom' ? '' : value === 'interval' ? '@every 720m' : value }); }}>{presets.map((preset) => <option key={preset.value} value={preset.value}>{preset.label}</option>)}<option value="interval">Fixed interval</option><option value="custom">Custom cron expression</option></Select></div>
             <div className="min-w-0 space-y-1.5"><Label htmlFor="schedule-timezone">Timezone</Label><Input id="schedule-timezone" required maxLength={100} list="schedule-timezones" placeholder="Asia/Bangkok" value={input.timezone} onChange={(event) => setInput({ ...input, timezone: event.target.value })} /><datalist id="schedule-timezones">{Array.from(new Set([defaultTimezone, 'UTC', 'Asia/Bangkok', 'Asia/Tokyo', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney'])).map((zone) => <option key={zone} value={zone} />)}</datalist><p className="text-xs text-muted-foreground">Panel timezone: {defaultTimezone}. You can override it for this task.</p></div>
             {frequency === 'custom' && <div className="min-w-0 space-y-1.5 sm:col-span-2"><Label htmlFor="schedule-cron">Cron expression</Label><Input id="schedule-cron" required maxLength={120} className="font-mono" placeholder="0 0 * * *" aria-describedby="schedule-cron-help" value={input.cron} onChange={(event) => setInput({ ...input, cron: event.target.value })} /><p id="schedule-cron-help" className="text-xs text-muted-foreground">minute · hour · day of month · month · weekday (0 = Sunday). For example, <code>0 0 * * *</code> runs daily at midnight; <code>*/15 * * * *</code> runs every 15 minutes.</p></div>}
@@ -174,7 +188,7 @@ export function SchedulesPanel({ serverId }: { serverId: string }) {
           {tasks.map((task) => (
             <li key={task.id} className="space-y-3 p-4 sm:p-5">
               <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
-                <div className="min-w-0 flex-1 space-y-1"><h3 className="break-words font-semibold">{task.name}</h3><p className="text-sm text-muted-foreground">{actions[task.action]} · {frequencyLabel(task.cron)}{task.action === 'backup' && ` · ${backupTargets[task.backup_target]}`}</p>{task.action === 'command' && <code className="block break-all text-sm">{task.command}</code>}</div>
+                <div className="min-w-0 flex-1 space-y-1"><h3 className="break-words font-semibold">{task.name}</h3><p className="text-sm text-muted-foreground">{actions[task.action]} · {frequencyLabel(task.cron)}{task.action === 'backup' && ` · ${backupTargets[task.backup_target]}`}{task.action === 'chain' && ` · ${task.steps?.length ?? 0} steps`}</p>{task.action === 'command' && <code className="block break-all text-sm">{task.command}</code>}{task.action === 'chain' && <ol className="list-decimal space-y-1 pl-5 pt-2 text-sm" aria-label={`Steps for ${task.name}`}>{task.steps?.map((step, index) => <li key={index} className="break-words pl-1">{step.action === 'command' ? <code className="break-all">{stepLabel(step)}</code> : stepLabel(step)}</li>)}</ol>}</div>
                 <div className="flex shrink-0 items-center gap-2"><span className="text-xs text-muted-foreground">{task.enabled ? 'Enabled' : 'Paused'}</span><Switch checked={task.enabled} disabled={!canManage || busy || !!editing} aria-label={`Enable ${task.name}`} onCheckedChange={() => void toggle(task)} /><Button variant="ghost" size="icon" disabled={!canManage || busy || !!editing} aria-label={`Edit ${task.name}`} onClick={() => open(task)}><Pencil className="h-4 w-4" /></Button><Button variant="ghost" size="icon" disabled={!canManage || busy || !!editing} aria-label={`Delete ${task.name}`} onClick={() => void remove(task)}><Trash2 className="h-4 w-4" /></Button></div>
               </div>
               <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground"><span className="break-all"><code>{task.cron}</code> · {task.timezone}</span><span>Next run: <span className="font-medium text-foreground">{task.enabled ? localTime(task.next_run_at, task.timezone) : 'Paused'}</span></span><span>Last result: <span className={task.last_status === 'failed' ? 'font-medium text-destructive' : 'font-medium text-foreground'}>{({ success: 'Succeeded', failed: 'Failed', running: 'Running', skipped: 'Skipped', '': 'Not run yet' })[task.last_status]}</span>{task.last_run_at && ` · ${localTime(task.last_run_at, task.timezone)}`}</span></div>

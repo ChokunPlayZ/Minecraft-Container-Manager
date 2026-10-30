@@ -22,7 +22,7 @@ func TestBackupScheduleMigrationPreservesConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = store.DB.Exec(`
-		DELETE FROM schema_migrations WHERE name='0023_backup_schedules.sql';
+		DELETE FROM schema_migrations WHERE name IN ('0023_backup_schedules.sql', '0025_schedule_chains.sql');
 		INSERT INTO servers (id,name,server_type,version,ram_mb,backup_enabled,backup_interval_minutes,created_at,updated_at)
 		VALUES ('active','Active','paper','1.21.4',2048,1,95,'2026-10-01T00:00:00Z',''),
 		('paused','Paused','paper','1.21.4',2048,0,37,'2026-10-01T00:00:00Z',''),
