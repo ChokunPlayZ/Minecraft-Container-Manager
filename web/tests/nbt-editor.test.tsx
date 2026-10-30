@@ -187,7 +187,7 @@ describe('NBT editor', () => {
 });
 
 describe('NBT entry points', () => {
-  it('opens .dat files in the NBT editor and offers arbitrary files as NBT', async () => {
+  it('opens .dat files in the NBT editor and limits NBT actions to supported files', async () => {
     vi.spyOn(api, 'listFiles').mockResolvedValue({
       path: '',
       entries: [
@@ -203,8 +203,31 @@ describe('NBT entry points', () => {
     expect(nbtApi.read).toHaveBeenCalledWith('one', 'level.dat');
     expect(textRead).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Back to browser' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Open custom.bin as NBT' }));
-    await waitFor(() => expect(nbtApi.read).toHaveBeenLastCalledWith('one', 'custom.bin'));
+    expect(screen.queryByRole('button', { name: 'Open custom.bin as NBT' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Open level.dat as NBT' }));
+    await waitFor(() => expect(nbtApi.read).toHaveBeenCalledTimes(2));
+    expect(nbtApi.read).toHaveBeenLastCalledWith('one', 'level.dat');
+  });
+
+  it.each([
+    ['level.dat', false, true],
+    ['structure.NBT.GZ', false, true],
+    ['build.schem', false, true],
+    ['config.yml', false, false],
+    ['custom.bin', false, false],
+    ['region.mca', false, false],
+    ['backup.zip', false, false],
+    ['folder.nbt', true, false],
+  ])('shows the NBT context action only for supported files: %s', async (name, isDirectory, supported) => {
+    vi.spyOn(api, 'listFiles').mockResolvedValue({ path: '', entries: [{ name, is_directory: isDirectory, size_bytes: 100, modified_at: '' }] });
+    vi.spyOn(api, 'subscribeTaskEvents').mockReturnValue(() => {});
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    const file = await screen.findByRole('button', { name });
+    expect(screen.queryByRole('button', { name: `Open ${name} as NBT` }) !== null).toBe(supported);
+    await user.pointer({ target: file, keys: '[MouseRight]' });
+    const menu = await screen.findByRole('menu', { name: `Actions for ${name}` });
+    expect(within(menu).queryByRole('menuitem', { name: 'Open as NBT' }) !== null).toBe(supported);
   });
 
   it('finds offline player data by name and opens quick edit from Players', async () => {

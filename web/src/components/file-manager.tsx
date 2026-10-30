@@ -103,6 +103,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
   const [url, setUrl] = useState('');
   const [urlName, setUrlName] = useState('');
   const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
+  const selectionAnchor = useRef<string | null>(null);
 
   // Editor state.
   const [editorPath, setEditorPath] = useState<string | null>(null);
@@ -156,7 +157,9 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
     setError(null);
     try {
       const res = await api.listFiles(server.id, cwd);
-      setEntries(res.entries ?? []);
+      const nextEntries = res.entries ?? [];
+      setEntries(nextEntries);
+      setSelectedNames((previous) => new Set(nextEntries.filter((entry) => previous.has(entry.name)).map((entry) => entry.name)));
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : 'Failed to load files');
     }
@@ -164,6 +167,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
 
   useEffect(() => {
     setSelectedNames(new Set());
+    selectionAnchor.current = null;
     void load();
   }, [load]);
 
@@ -198,6 +202,10 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
   async function closeEditor() {
     if (editorBusy) return;
     if (editorDirty && !(await confirm('Discard unsaved changes?', { title: 'Discard changes', confirmLabel: 'Discard', destructive: true }))) return;
+    clearEditor();
+  }
+
+  function clearEditor() {
     setEditorPath(null);
     setEditorContent('');
     setEditorDirty(false);
@@ -320,8 +328,21 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
     }
   }
 
-  function toggleSelect(name: string) {
+  function selectEntry(name: string, modifiers: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) {
+    if (busy) return;
+    const anchorIndex = entries.findIndex((entry) => entry.name === selectionAnchor.current);
+    const targetIndex = entries.findIndex((entry) => entry.name === name);
+    if (modifiers.shiftKey && anchorIndex >= 0 && targetIndex >= 0) {
+      const range = entries.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1);
+      setSelectedNames((previous) => new Set([
+        ...(modifiers.ctrlKey || modifiers.metaKey ? previous : []),
+        ...range.map((entry) => entry.name),
+      ]));
+      return;
+    }
+    selectionAnchor.current = name;
     setSelectedNames((prev) => {
+      if (!modifiers.ctrlKey && !modifiers.metaKey) return new Set([name]);
       const next = new Set(prev);
       if (next.has(name)) {
         next.delete(name);
@@ -332,7 +353,14 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
     });
   }
 
+  function selectContextEntry(name: string) {
+    if (busy || selectedNames.has(name)) return;
+    selectionAnchor.current = name;
+    setSelectedNames(new Set([name]));
+  }
+
   function toggleSelectAll() {
+    selectionAnchor.current = null;
     if (selectedNames.size === entries.length) {
       setSelectedNames(new Set());
     } else {
@@ -414,11 +442,48 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
   }
 
   async function handleDelete(entry: FileEntry) {
-    const what = entry.is_directory ? 'folder' : 'file';
-    if (!(await confirm(`Delete ${what} "${entry.name}"? This cannot be undone.`, { title: `Delete ${what}`, confirmLabel: 'Delete', destructive: true }))) return;
-    const path = joinPath(cwd, entry.name);
-    await run(() => api.deleteFile(server.id, path));
-    if (path === editorPath) await closeEditor();
+    await handleDeleteEntries([entry]);
+  }
+
+  async function handleDeleteSelected() {
+    await handleDeleteEntries(entries.filter((entry) => selectedNames.has(entry.name)));
+  }
+
+  async function handleDeleteEntries(targets: FileEntry[]) {
+    if (!canDelete || busy || editorBusy || targets.length === 0) return;
+    const paths = targets.map((entry) => joinPath(cwd, entry.name));
+    const single = targets.length === 1 ? targets[0] : null;
+    const what = single?.is_directory ? 'folder' : 'file';
+    const title = single ? `Delete ${what}` : 'Delete selected items';
+    const description = single
+      ? `Delete ${what} "${single.name}"? This cannot be undone.`
+      : `Delete ${targets.length} selected items? Folders and their contents will also be deleted. This cannot be undone.\n\n${targets.map((entry) => entry.name).join('\n')}`;
+    const deletesEditor = editorPath !== null && paths.some((path) => editorPath === path || editorPath.startsWith(`${path}/`));
+    const message = deletesEditor && editorDirty ? `${description}\n\nUnsaved changes in "${editorPath}" will also be discarded.` : description;
+    if (!(await confirm(message, { title, confirmLabel: single ? 'Delete' : `Delete ${targets.length} items`, destructive: true }))) return;
+
+    setBusy(true);
+    setError(null);
+    const deleted = new Set<string>();
+    const failures: string[] = [];
+    try {
+      for (const [index, entry] of targets.entries()) {
+        try {
+          await api.deleteFile(server.id, paths[index]);
+          deleted.add(entry.name);
+          if (editorPath === paths[index] || editorPath?.startsWith(`${paths[index]}/`)) clearEditor();
+        } catch (err) {
+          failures.push(`${entry.name}: ${err instanceof ApiError ? err.detail : 'Delete failed'}`);
+        }
+      }
+      setSelectedNames((previous) => new Set([...previous].filter((name) => !deleted.has(name))));
+      await load();
+      if (failures.length > 0) {
+        setError(`Could not delete ${failures.length} of ${targets.length} items. ${failures.join('; ')}`);
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleMkdir() {
@@ -509,12 +574,21 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
           variant="outline"
           size="sm"
           onClick={() => void handleArchiveSelected()}
-          disabled={!canDelete || busy || selectedNames.size === 0}
+          disabled={!canWrite || busy || selectedNames.size === 0}
           title="Zip selected items"
         >
           <Archive className="h-4 w-4 mr-1 text-primary" /> Zip ({selectedNames.size})
         </Button>
-        <Button variant="ghost" size="icon" onClick={() => void load()} title="Refresh" aria-label="Refresh">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleDeleteSelected()}
+          disabled={!canDelete || busy || editorBusy || selectedNames.size === 0}
+          className="text-destructive hover:text-destructive"
+        >
+          <Trash2 className="h-4 w-4" /> Delete selected ({selectedNames.size})
+        </Button>
+        <Button variant="ghost" size="icon" onClick={() => void load()} disabled={busy} title="Refresh" aria-label="Refresh">
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
@@ -541,7 +615,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
         </div>
       )}
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
 
       {/* Active Long-Running Task Progress Bar (Unzip, Archive, URL Download) */}
       {activeTask && (
@@ -591,6 +665,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
           <div className="flex min-w-0 flex-wrap items-center gap-1 border-b px-4 py-3 text-sm">
             <button
               type="button"
+              disabled={busy}
               onClick={() => setCwd('')}
               className="inline-flex items-center rounded px-1.5 py-0.5 font-medium text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
@@ -601,6 +676,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                 <span className="text-muted-foreground/50">/</span>
                 <button
                   type="button"
+                  disabled={busy}
                   onClick={() => navigate(i + 1)}
                   className="max-w-[9rem] truncate rounded px-1.5 py-0.5 font-medium text-muted-foreground hover:bg-secondary hover:text-foreground"
                 >
@@ -609,7 +685,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
               </span>
             ))}
             {(cwd === '' || cwd.includes('/')) && (
-              <Button aria-label="Go up" variant="ghost" size="icon" title="Go up" onClick={goUp} className="ml-1 h-6 w-6">
+              <Button aria-label="Go up" variant="ghost" size="icon" title="Go up" disabled={busy} onClick={goUp} className="ml-1 h-6 w-6">
                 <ArrowUp className="h-3.5 w-3.5" />
               </Button>
             )}
@@ -621,6 +697,8 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
               <label className="flex items-center gap-1.5 cursor-pointer hover:text-foreground select-none">
                 <input
                   type="checkbox"
+                  disabled={busy}
+                  ref={(input) => { if (input) input.indeterminate = selectedNames.size > 0 && selectedNames.size < entries.length; }}
                   checked={selectedNames.size > 0 && selectedNames.size === entries.length}
                   onChange={toggleSelectAll}
                   className="rounded border-border text-primary focus:ring-primary cursor-pointer"
@@ -645,14 +723,19 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
             {entries.map((e) => {
               const editable = isEditable(e);
               const isSelected = selectedNames.has(e.name);
+              const multipleSelected = isSelected && selectedNames.size > 1;
               return (
-                <ContextMenu key={e.name}>
+                <ContextMenu key={e.name} onOpenChange={(open) => { if (open) selectContextEntry(e.name); }}>
                 <ContextMenuTrigger asChild>
                 <div
                   tabIndex={0}
                   aria-label={e.name}
-                  className={`flex flex-col items-stretch gap-3 px-4 py-3 text-sm transition-colors sm:flex-row sm:items-center sm:justify-between ${
-                    isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-accent/40'
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest('button, input')) return;
+                    selectEntry(e.name, event);
+                  }}
+                  className={`flex select-none flex-col items-stretch gap-3 px-4 py-3 text-sm transition-colors sm:flex-row sm:items-center sm:justify-between ${
+                    isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/40'
                   } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring`}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -660,14 +743,20 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                       type="checkbox"
                       aria-label={`Select ${e.name}`}
                       checked={isSelected}
-                      onChange={() => toggleSelect(e.name)}
+                      disabled={busy}
+                      onChange={(event) => selectEntry(e.name, { shiftKey: (event.nativeEvent as MouseEvent).shiftKey === true, ctrlKey: true, metaKey: false })}
                       onClick={(ev) => ev.stopPropagation()}
                       className="rounded border-border text-primary focus:ring-primary cursor-pointer shrink-0"
                     />
                     <button
                       type="button"
+                      disabled={busy}
                       className="flex min-w-0 items-center gap-2 text-left truncate"
-                      onClick={() => handleEntryClick(e)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        selectEntry(e.name, event);
+                        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) handleEntryClick(e);
+                      }}
                     >
                       {e.is_directory ? (
                         <Folder className="h-4 w-4 shrink-0 text-amber-600" />
@@ -698,8 +787,8 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                         <Download className="h-4 w-4" />
                       </Button>
                     )}
-                    {!e.is_directory && (
-                      <Button variant="ghost" size="icon" title="Open as NBT" aria-label={`Open ${e.name} as NBT`} onClick={() => void openNBT(joinPath(cwd, e.name))}>
+                    {!e.is_directory && isNBTFile(e.name) && (
+                      <Button variant="ghost" size="icon" title="Open as NBT" aria-label={`Open ${e.name} as NBT`} disabled={busy} onClick={() => void openNBT(joinPath(cwd, e.name))}>
                         <Database className="h-4 w-4" />
                       </Button>
                     )}
@@ -709,6 +798,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                         size="icon"
                         title="Edit"
                         aria-label="Edit"
+                        disabled={busy}
                         onClick={() => void openEditor(joinPath(cwd, e.name))}
                       >
                         <Pencil className="h-4 w-4" />
@@ -720,7 +810,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                         size="icon"
                         title="Unzip archive"
                         aria-label="Unzip"
-                        disabled={!canWrite}
+                        disabled={!canWrite || busy}
                         onClick={() => void handleUnzip(e)}
                       >
                         <Layers className="h-4 w-4 text-sky-600" />
@@ -731,13 +821,13 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                         size="icon"
                         title="Archive as zip"
                         aria-label="Archive"
-                        disabled={!canWrite}
+                        disabled={!canWrite || busy}
                         onClick={() => void handleArchive(e)}
                       >
                         <Archive className="h-4 w-4" />
                       </Button>
                     )}
-                    <Button variant="ghost" size="icon" title="Rename" aria-label="Rename" disabled={!canWrite} onClick={() => void handleRename(e)}>
+                    <Button variant="ghost" size="icon" title="Rename" aria-label="Rename" disabled={!canWrite || busy} onClick={() => void handleRename(e)}>
                       <TextCursorInput className="h-4 w-4" />
                     </Button>
                     <Button
@@ -745,7 +835,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                       size="icon"
                       title="Delete"
                       aria-label="Delete"
-                      disabled={!canDelete}
+                      disabled={!canDelete || busy || editorBusy}
                       onClick={() => void handleDelete(e)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -753,22 +843,26 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                   </div>
                 </div>
                 </ContextMenuTrigger>
-                <ContextMenuContent aria-label={`Actions for ${e.name}`}>
-                  <ContextMenuLabel>{e.name}</ContextMenuLabel>
+                <ContextMenuContent aria-label={multipleSelected ? `Actions for ${selectedNames.size} selected items` : `Actions for ${e.name}`}>
+                  <ContextMenuLabel>{multipleSelected ? `${selectedNames.size} items selected` : e.name}</ContextMenuLabel>
+                  {multipleSelected ? <>
+                    <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleArchiveSelected()}><Archive />Zip selected ({selectedNames.size})</ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem className="text-destructive focus:text-destructive" disabled={!canDelete || busy || editorBusy} onSelect={() => void handleDeleteSelected()}><Trash2 />Delete selected ({selectedNames.size})</ContextMenuItem>
+                  </> : <>
                   {(e.is_directory || editable || isNBTFile(e.name)) && <ContextMenuItem disabled={busy || editorBusy} onSelect={() => handleEntryClick(e)}>
                     {e.is_directory ? <Folder /> : isNBTFile(e.name) ? <Database /> : <Pencil />}
                     {e.is_directory ? 'Open folder' : isNBTFile(e.name) ? 'Open as NBT' : 'Edit'}
                   </ContextMenuItem>}
                   {!e.is_directory && <ContextMenuItem disabled={busy} onSelect={() => void handleDownload(e)}><Download />Download</ContextMenuItem>}
-                  {!e.is_directory && !isNBTFile(e.name) && <ContextMenuItem disabled={busy || editorBusy} onSelect={() => void openNBT(joinPath(cwd, e.name))}><Database />Open as NBT</ContextMenuItem>}
                   <ContextMenuSeparator />
                   {!e.is_directory && e.name.toLowerCase().endsWith('.zip') ?
                     <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleUnzip(e)}><Layers />Unzip archive</ContextMenuItem> :
                     <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleArchive(e)}><Archive />Archive as zip</ContextMenuItem>}
-                  {isSelected && selectedNames.size > 1 && <ContextMenuItem disabled={!canDelete || busy} onSelect={() => void handleArchiveSelected()}><Archive />Zip selected ({selectedNames.size})</ContextMenuItem>}
                   <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleRename(e)}><TextCursorInput />Rename</ContextMenuItem>
                   <ContextMenuSeparator />
-                  <ContextMenuItem className="text-destructive focus:text-destructive" disabled={!canDelete || busy} onSelect={() => void handleDelete(e)}><Trash2 />Delete</ContextMenuItem>
+                  <ContextMenuItem className="text-destructive focus:text-destructive" disabled={!canDelete || busy || editorBusy} onSelect={() => void handleDelete(e)}><Trash2 />Delete</ContextMenuItem>
+                  </>}
                 </ContextMenuContent>
                 </ContextMenu>
               );
@@ -781,7 +875,11 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
             <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleMkdir()}><FolderPlus />New folder</ContextMenuItem>
             <ContextMenuItem disabled={!canWrite || busy} onSelect={() => fileInputRef.current?.click()}><Upload />Upload files</ContextMenuItem>
             <ContextMenuItem disabled={!canWrite || busy} onSelect={() => setShowUrlInput(true)}><Globe />Download from URL</ContextMenuItem>
-            {selectedNames.size > 0 && <ContextMenuItem disabled={!canDelete || busy} onSelect={() => void handleArchiveSelected()}><Archive />Zip selected ({selectedNames.size})</ContextMenuItem>}
+            {selectedNames.size > 0 && <>
+              <ContextMenuSeparator />
+              <ContextMenuItem disabled={!canWrite || busy} onSelect={() => void handleArchiveSelected()}><Archive />Zip selected ({selectedNames.size})</ContextMenuItem>
+              <ContextMenuItem className="text-destructive focus:text-destructive" disabled={!canDelete || busy || editorBusy} onSelect={() => void handleDeleteSelected()}><Trash2 />Delete selected ({selectedNames.size})</ContextMenuItem>
+            </>}
             <ContextMenuSeparator />
             <ContextMenuItem disabled={busy} onSelect={() => void load()}><RefreshCw />Refresh</ContextMenuItem>
           </ContextMenuContent>
@@ -811,7 +909,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
                   <Button
                     size="sm"
                     onClick={() => void saveEditor()}
-                    disabled={!canWrite || editorBusy || !editorPath || editorRevision === null}
+                    disabled={!canWrite || busy || editorBusy || !editorPath || editorRevision === null}
                   >
                     <Save className="h-4 w-4" /> {editorBusy ? 'Saving...' : 'Save'}
                   </Button>
@@ -823,7 +921,7 @@ export function FileManager({ server, onNBTDirtyChange }: { server: Server; onNB
               {editorError && !editorConflict && <p role="alert" className="border-b px-3 py-2 text-sm text-destructive">{editorError}</p>}
               <Textarea
                 aria-label="File content"
-                disabled={!canWrite || editorBusy || editorRevision === null}
+                disabled={!canWrite || busy || editorBusy || editorRevision === null}
                 className="min-h-[26rem] flex-1 resize-none rounded-none border-0 bg-transparent font-mono text-xs leading-relaxed whitespace-pre focus-visible:ring-0"
                 value={editorContent}
                 spellCheck={false}

@@ -105,6 +105,243 @@ describe('FileManager context menus', () => {
   });
 });
 
+const selectionEntries = ['config.yml', 'server.properties', 'level.dat', 'plugins'].map((name) => ({
+  ...entry, name, is_directory: name === 'plugins',
+}));
+
+function expectSelected(...names: string[]) {
+  for (const checkbox of screen.getAllByRole('checkbox', { name: /^Select / })) {
+    const label = checkbox.getAttribute('aria-label');
+    if (!label) continue;
+    const name = label.slice('Select '.length);
+    if (names.includes(name)) expect(checkbox).toBeChecked();
+    else expect(checkbox).not.toBeChecked();
+  }
+}
+
+describe('FileManager multi-selection', () => {
+  beforeEach(() => {
+    vi.mocked(api.listFiles).mockResolvedValue({ path: '', entries: selectionEntries });
+  });
+
+  it.each(['ctrlKey', 'metaKey'] as const)('toggles files and folders with %s without opening them', async (modifier) => {
+    const download = vi.spyOn(api, 'downloadFile');
+    render(<FileManager server={server} />);
+    const first = await screen.findByRole('button', { name: 'config.yml' });
+    fireEvent.click(first, { [modifier]: true });
+    fireEvent.click(screen.getByRole('button', { name: 'plugins' }), { [modifier]: true });
+    expectSelected('config.yml', 'plugins');
+    fireEvent.click(first, { [modifier]: true });
+    expectSelected('plugins');
+    expect(api.readFileContent).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+    expect(api.listFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it('extends and shrinks ranges in both directions from the original anchor', async () => {
+    render(<FileManager server={server} />);
+    const first = await screen.findByRole('button', { name: 'config.yml' });
+    const third = screen.getByRole('button', { name: 'level.dat' });
+    fireEvent.click(first, { ctrlKey: true });
+    fireEvent.click(third, { shiftKey: true });
+    expectSelected('config.yml', 'server.properties', 'level.dat');
+    fireEvent.click(screen.getByRole('button', { name: 'server.properties' }), { shiftKey: true });
+    expectSelected('config.yml', 'server.properties');
+    fireEvent.click(screen.getByLabelText('level.dat', { selector: 'div' }));
+    fireEvent.click(first, { shiftKey: true });
+    expectSelected('config.yml', 'server.properties', 'level.dat');
+    expect(api.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('adds a range to an existing selection with Ctrl+Shift and supports row clicks', async () => {
+    render(<FileManager server={server} />);
+    await screen.findByRole('button', { name: 'config.yml' });
+    fireEvent.click(screen.getByLabelText('config.yml', { selector: 'div' }), { ctrlKey: true });
+    fireEvent.click(screen.getByLabelText('plugins', { selector: 'div' }), { ctrlKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'level.dat' }), { ctrlKey: true, shiftKey: true });
+    expectSelected('config.yml', 'level.dat', 'plugins');
+    expect(screen.getByRole('checkbox', { name: 'Select all (4)' })).toBePartiallyChecked();
+    fireEvent.click(screen.getByLabelText('server.properties', { selector: 'div' }));
+    expectSelected('server.properties');
+    expect(api.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('selects a range when Shift-clicking checkboxes', async () => {
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    await user.click(await screen.findByRole('checkbox', { name: 'Select config.yml' }));
+    await user.keyboard('{Shift>}');
+    await user.click(screen.getByRole('checkbox', { name: 'Select plugins' }));
+    await user.keyboard('{/Shift}');
+    expectSelected(...selectionEntries.map((entry) => entry.name));
+    expect(api.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('preserves a selection on right click and replaces it when another file is targeted', async () => {
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    const first = await screen.findByRole('button', { name: 'config.yml' });
+    fireEvent.click(first, { ctrlKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'server.properties' }), { ctrlKey: true });
+    await user.pointer({ target: first, keys: '[MouseRight]' });
+    const menu = await screen.findByRole('menu', { name: 'Actions for 2 selected items' });
+    expect(within(menu).getByRole('menuitem', { name: 'Zip selected (2)' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Delete selected (2)' })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expectSelected('config.yml', 'server.properties');
+    await user.pointer({ target: screen.getByRole('button', { name: 'level.dat' }), keys: '[MouseRight]' });
+    expect(await screen.findByRole('menu', { name: 'Actions for level.dat' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expectSelected('level.dat');
+  });
+
+  it('offers group actions from the keyboard and the folder background', async () => {
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    const first = await screen.findByRole('button', { name: 'config.yml' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select all (4)' }));
+    first.focus();
+    await user.keyboard('{Shift>}{F10}{/Shift}');
+    expect(await screen.findByRole('menu', { name: 'Actions for 4 selected items' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await user.pointer({ target: screen.getByLabelText('File browser'), keys: '[MouseRight]' });
+    const menu = await screen.findByRole('menu', { name: 'Folder actions' });
+    expect(within(menu).getByRole('menuitem', { name: 'Delete selected (4)' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expectSelected(...selectionEntries.map((entry) => entry.name));
+  });
+
+  it('prunes missing selections on refresh and clears the anchor when changing folders', async () => {
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'config.yml' }), { ctrlKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'server.properties' }), { ctrlKey: true });
+    vi.mocked(api.listFiles).mockResolvedValue({ path: '', entries: selectionEntries.slice(1) });
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'config.yml' })).not.toBeInTheDocument());
+    expectSelected('server.properties');
+    vi.mocked(api.listFiles).mockResolvedValue({ path: 'plugins', entries: selectionEntries.slice(0, 3) });
+    await user.click(screen.getByRole('button', { name: 'plugins' }));
+    await waitFor(() => expect(api.listFiles).toHaveBeenLastCalledWith(server.id, 'plugins'));
+    expectSelected();
+    fireEvent.click(await screen.findByRole('button', { name: 'level.dat' }), { shiftKey: true });
+    expectSelected('level.dat');
+  });
+});
+
+describe('FileManager batch deletion', () => {
+  beforeEach(() => {
+    vi.mocked(api.listFiles).mockResolvedValue({ path: '', entries: selectionEntries });
+  });
+
+  it('confirms the selected files once and keeps the selection when canceled', async () => {
+    const remove = vi.spyOn(api, 'deleteFile').mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    const first = await screen.findByRole('button', { name: 'config.yml' });
+    fireEvent.click(first, { ctrlKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'server.properties' }), { ctrlKey: true });
+    await user.pointer({ target: first, keys: '[MouseRight]' });
+    await user.click(screen.getByRole('menuitem', { name: 'Delete selected (2)' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete selected items' });
+    expect(dialog).toHaveTextContent('config.yml');
+    expect(dialog).toHaveTextContent('server.properties');
+    expect(remove).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expectSelected('config.yml', 'server.properties');
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('deletes selected files in the current directory and refreshes once', async () => {
+    const remove = vi.spyOn(api, 'deleteFile').mockResolvedValue({ ok: true });
+    vi.mocked(api.listFiles).mockImplementation(async (_id, path) => ({ path: path ?? '', entries: path ? selectionEntries.slice(0, 2) : [selectionEntries[3]] }));
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    await user.click(await screen.findByRole('button', { name: 'plugins' }));
+    await screen.findByRole('button', { name: 'config.yml' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select all (2)' }));
+    await user.click(screen.getByRole('button', { name: 'Delete selected (2)' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete selected items' });
+    vi.mocked(api.listFiles).mockResolvedValue({ path: 'plugins', entries: [] });
+    const loads = vi.mocked(api.listFiles).mock.calls.length;
+    await user.click(within(dialog).getByRole('button', { name: 'Delete 2 items' }));
+    await screen.findByText('Empty folder');
+    expect(remove.mock.calls).toEqual([[server.id, 'plugins/config.yml'], [server.id, 'plugins/server.properties']]);
+    expect(api.listFiles).toHaveBeenCalledTimes(loads + 1);
+    expect(screen.getByRole('button', { name: 'Delete selected (0)' })).toBeDisabled();
+  });
+
+  it('continues after failures and keeps only failed items selected for retry', async () => {
+    const remove = vi.spyOn(api, 'deleteFile').mockImplementation(async (_id, path) => {
+      if (path === 'server.properties') throw new ApiError(403, 'Permission denied');
+      return { ok: true };
+    });
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    await screen.findByRole('button', { name: 'config.yml' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select all (4)' }));
+    await user.click(screen.getByRole('button', { name: 'Delete selected (4)' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete 4 items' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete 1 of 4 items. server.properties: Permission denied');
+    expect(remove).toHaveBeenCalledTimes(4);
+    expect(remove).toHaveBeenCalledWith(server.id, 'plugins');
+    expectSelected('server.properties');
+    expect(screen.getByRole('button', { name: 'Delete selected (1)' })).toBeEnabled();
+  });
+
+  it('keeps the directory and selection stable while a batch is being deleted', async () => {
+    let finishDelete!: (result: { ok: boolean }) => void;
+    vi.spyOn(api, 'deleteFile').mockImplementationOnce(() => new Promise((resolve) => { finishDelete = resolve; })).mockResolvedValue({ ok: true });
+    const user = userEvent.setup();
+    render(<FileManager server={server} />);
+    await screen.findByRole('button', { name: 'config.yml' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select all (4)' }));
+    await user.click(screen.getByRole('button', { name: 'Delete selected (4)' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete 4 items' }));
+    for (const name of ['plugins', 'config.yml', 'server root', 'Refresh', 'Delete selected (4)']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled();
+    }
+    expect(screen.getByRole('checkbox', { name: 'Select all (4)' })).toBeDisabled();
+    finishDelete({ ok: true });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
+  });
+
+  it.each([false, true])('preserves an open editor unless its deletion succeeds (success: %s)', async (succeeds) => {
+    const remove = vi.spyOn(api, 'deleteFile').mockImplementation(async () => {
+      if (!succeeds) throw new ApiError(403, 'Permission denied');
+      return { ok: true };
+    });
+    const { user, editor } = await openAndEdit();
+    fireEvent.click(screen.getByRole('button', { name: 'server.properties' }), { ctrlKey: true });
+    await user.click(screen.getByRole('button', { name: 'Delete selected (2)' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete selected items' });
+    expect(dialog).toHaveTextContent('Unsaved changes in "config.yml" will also be discarded.');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete 2 items' }));
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(2));
+    if (succeeds) {
+      await waitFor(() => expect(screen.queryByRole('textbox', { name: 'File content' })).not.toBeInTheDocument());
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete 2 of 2 items');
+      expect(editor).toHaveValue('pvp: false\nplayers: 20');
+      expectSelected('config.yml', 'server.properties');
+    }
+  });
+
+  it('uses write permission for ZIP and delete permission for batch removal', async () => {
+    const user = userEvent.setup();
+    renderWithUser(<FileManager server={server} />, { ...adminUser, role: 'custom', permissions: ['servers.view', 'files.read', 'files.write'] });
+    const first = await screen.findByRole('button', { name: 'config.yml' });
+    await user.click(screen.getByRole('checkbox', { name: 'Select all (4)' }));
+    expect(screen.getByRole('button', { name: 'Zip (4)' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Delete selected (4)' })).toBeDisabled();
+    await user.pointer({ target: first, keys: '[MouseRight]' });
+    expect(screen.getByRole('menuitem', { name: 'Zip selected (4)' })).not.toHaveAttribute('aria-disabled');
+    expect(screen.getByRole('menuitem', { name: 'Delete selected (4)' })).toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
 async function openAndEdit() {
   const user = userEvent.setup();
   render(<FileManager server={server} />);

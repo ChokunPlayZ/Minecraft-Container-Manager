@@ -95,7 +95,7 @@ export function useModal() {
       }}
     >
       <div
-        className="w-full max-w-md rounded-lg border bg-card p-6 text-card-foreground shadow-lg"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-lg border bg-card p-6 text-card-foreground shadow-lg"
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
@@ -106,7 +106,7 @@ export function useModal() {
         <h2 id="modal-title" className="text-lg font-semibold">
           {request.title}
         </h2>
-        <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{request.message}</p>
+        <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">{request.message}</p>
         {request.kind === 'prompt' && (
           <Input
             autoFocus
