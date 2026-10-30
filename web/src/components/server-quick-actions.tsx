@@ -2,7 +2,7 @@ import { usePermissions } from '../lib/auth';
 import { useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from '@tanstack/react-router';
-import { Archive, ArrowRight, Copy, Loader2, MoreHorizontal, Play, RotateCw, Square, Zap } from 'lucide-react';
+import { Archive, ArrowRight, Copy, Download, Loader2, MoreHorizontal, Play, RotateCw, Square, Zap } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server } from '../api/types';
 import { Button } from './ui/button';
@@ -59,6 +59,7 @@ export function ServerQuickActions({ server, onUpdated, onCopy, children }: {
       </>}
       <Item disabled={!can('servers.power', server.id) || pending !== null || server.state !== 'running'} onSelect={() => void run('restart')}><RotateCw className="h-4 w-4" />Restart</Item>
       <Item disabled={!can('backups.read', server.id) || pending !== null} asChild><Link to="/backups" search={{ server: server.id }}><Archive className="h-4 w-4" />Backups</Link></Item>
+      <Item disabled={!can('servers.export', server.id) || pending !== null} onSelect={() => api.exportServer(server.id, server.name)}><Download className="h-4 w-4" />Export server (.zip)</Item>
       <Item disabled={!can('servers.copy', server.id) || pending !== null} onSelect={onCopy}><Copy className="h-4 w-4" />Copy server</Item>
       <Separator />
       <Item className="text-destructive focus:text-destructive" disabled={!can('servers.power', server.id) || pending !== null || !canKill} onSelect={() => void run('kill')}><Zap className="h-4 w-4" />Force kill</Item>
