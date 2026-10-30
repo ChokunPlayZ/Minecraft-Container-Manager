@@ -15,6 +15,9 @@ import (
 // builds belonging only to that version.
 func (s *Store) rememberSoftwareCatalog(ctx context.Context, kind, version string, values []string) error {
 	latest := newestStable(values)
+	if version == "" {
+		latest = newestStableVersion(values)
+	}
 	if latest == "" {
 		return nil
 	}
@@ -27,6 +30,9 @@ func (s *Store) rememberSoftwareCatalog(ctx context.Context, kind, version strin
 	err = tx.QueryRowContext(ctx, `SELECT latest FROM software_catalog WHERE server_type=? AND version=?`, kind, version).Scan(&previous)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
+	}
+	if version == "" && !stableSoftwareVersionPattern.MatchString(previous) {
+		previous = ""
 	}
 	if previous != "" && jars.CompareVersionTokens(latest, previous) <= 0 {
 		return nil
@@ -58,6 +64,9 @@ func (s *Store) applySoftwareCatalog(ctx context.Context, status *UpdateCheckerS
 		}
 		software := &SoftwareUpdate{Supported: true, LatestVersion: version}
 		if scope == "" {
+			if !stableSoftwareVersionPattern.MatchString(latest) {
+				continue
+			}
 			if jars.CompareVersionTokens(latest, version) > 0 {
 				software.LatestVersion = latest
 				software.Available = true

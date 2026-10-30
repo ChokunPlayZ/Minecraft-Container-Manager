@@ -93,3 +93,103 @@ func TestSoftwareCatalogPreservesSavedModsAndUnpinnedBuilds(t *testing.T) {
 		t.Fatalf("reconfigured server missed a known build or kept stale mods: %+v %v", status, err)
 	}
 }
+
+func TestSoftwareCatalogDiscardsCachedNonReleaseRecommendations(t *testing.T) {
+	for _, invalid := range []string{"3D Shareware v1.34", "b1.8.1", "26w14a", "26.1-rc1"} {
+		t.Run(invalid, func(t *testing.T) {
+			s, id := newModTestStore(t, "fabric")
+			t.Cleanup(func() { s.db.Close() })
+			ctx := context.Background()
+			srv, err := s.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mods := &ServerModUpdatesResponse{Updates: map[string]ModUpdateInfo{"shared": {LatestVersion: "2"}}, UpdateCount: 1}
+			if err := s.saveUpdateCheck(ctx, srv, ServerUpdateCheck{
+				Software:  &SoftwareUpdate{Supported: true, Available: true, LatestVersion: invalid},
+				Mods:      mods,
+				CheckedAt: "2026-10-28T00:00:00Z",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`INSERT INTO software_catalog (server_type,version,latest,observed_at) VALUES ('fabric','',?,'2026-10-28T00:00:00Z')`, invalid); err != nil {
+				t.Fatal(err)
+			}
+			// Loading old results after a restart must suppress the invalid update
+			// without requiring another upstream scan or losing mod/plugin badges.
+			restarted := &Store{db: s.db}
+			status, err := restarted.UpdateCheckerStatus(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := status.Servers[id]
+			if result.Software != nil && result.Software.Available {
+				t.Fatalf("cached non-release still recommended: %+v", result.Software)
+			}
+			if result.Mods == nil || result.Mods.UpdateCount != 1 {
+				t.Fatal("discarding an invalid recommendation lost mod updates")
+			}
+			// A valid discovery must replace a bad entry even when the generic
+			// version comparator ranks that bad entry above all normal releases.
+			if err := restarted.rememberSoftwareCatalog(ctx, "fabric", "", []string{invalid, "1.21.5"}); err != nil {
+				t.Fatal(err)
+			}
+			var latest string
+			if err := s.db.QueryRow(`SELECT latest FROM software_catalog WHERE server_type='fabric' AND version=''`).Scan(&latest); err != nil {
+				t.Fatal(err)
+			}
+			if latest != "1.21.5" {
+				t.Fatalf("invalid catalog entry was not repaired: %q", latest)
+			}
+			status, err = restarted.UpdateCheckerStatus(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if software := status.Servers[id].Software; software == nil || !software.Available || software.LatestVersion != "1.21.5" {
+				t.Fatalf("valid release hidden by an old recommendation: %+v", software)
+			}
+		})
+	}
+}
+
+func TestSoftwareCatalogPreservesBuildUpdatesForSpecialInstalledVersions(t *testing.T) {
+	for _, tc := range []struct{ kind, version, build, latestBuild string }{
+		{"fabric", "26w14a", "0.16.9", "0.16.10"},
+		{"bungeecord", "latest", "100", "120"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			s, id := newModTestStore(t, tc.kind)
+			t.Cleanup(func() { s.db.Close() })
+			ctx := context.Background()
+			if _, err := s.db.Exec(`UPDATE servers SET version=?,build=? WHERE id=?`, tc.version, tc.build, id); err != nil {
+				t.Fatal(err)
+			}
+			srv, err := s.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.saveUpdateCheck(ctx, srv, ServerUpdateCheck{Software: &SoftwareUpdate{
+				Supported: true, Available: true, LatestVersion: tc.version, LatestBuild: tc.latestBuild,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			for _, source := range []string{"saved scan", "catalog discovery"} {
+				if source == "catalog discovery" {
+					if _, err := s.db.Exec(`DELETE FROM server_update_checks WHERE server_id=?`, id); err != nil {
+						t.Fatal(err)
+					}
+					if err := s.rememberSoftwareCatalog(ctx, tc.kind, tc.version, []string{tc.latestBuild}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				status, err := s.UpdateCheckerStatus(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if software := status.Servers[id].Software; software == nil || !software.Available || software.LatestVersion != tc.version || software.LatestBuild != tc.latestBuild {
+					t.Fatalf("%s lost a build update: %+v", source, software)
+				}
+			}
+		})
+	}
+}

@@ -85,19 +85,24 @@ func (s *Store) UpdateCheckerStatus(ctx context.Context) (*UpdateCheckerStatus, 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.server_id, c.software, c.mods, c.checked_at, c.error FROM server_update_checks c JOIN servers s ON s.id=c.server_id WHERE s.server_type=c.server_type AND s.version=c.version AND COALESCE(s.build,'')=c.build`)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.server_id, c.version, c.software, c.mods, c.checked_at, c.error FROM server_update_checks c JOIN servers s ON s.id=c.server_id WHERE s.server_type=c.server_type AND s.version=c.version AND COALESCE(s.build,'')=c.build`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, software, mods string
+		var id, version, software, mods string
 		var result ServerUpdateCheck
-		if err := rows.Scan(&id, &software, &mods, &result.CheckedAt, &result.Error); err != nil {
+		if err := rows.Scan(&id, &version, &software, &mods, &result.CheckedAt, &result.Error); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(software), &result.Software); err != nil {
 			return nil, err
+		}
+		// Older scans could recommend joke/legacy versions. Discard those
+		// recommendations immediately, preserving builds for the installed version.
+		if sw := result.Software; sw != nil && sw.LatestVersion != "" && sw.LatestVersion != version && !stableSoftwareVersionPattern.MatchString(sw.LatestVersion) {
+			result.Software = nil
 		}
 		if err := json.Unmarshal([]byte(mods), &result.Mods); err != nil {
 			return nil, err
@@ -275,6 +280,23 @@ func (s *Store) saveUpdateCheck(ctx context.Context, srv Server, result ServerUp
 
 var prereleasePattern = regexp.MustCompile(`(?i)(alpha|beta|snapshot|preview|experimental|dev|\d{2}w\d{2}|(?:^|[.\s_-])(pre|rc)[.\s_\d-])`)
 
+// Release versions use dotted numbers (including proxy versions and year-based
+// Minecraft versions). A prerelease denylist alone misses joke and legacy IDs.
+var stableSoftwareVersionPattern = regexp.MustCompile(`^\d+(?:\.\d+)+$`)
+
+func newestStableVersion(values []string) string {
+	latest := ""
+	for _, v := range values {
+		if !stableSoftwareVersionPattern.MatchString(v) {
+			continue
+		}
+		if latest == "" || jars.CompareVersionTokens(v, latest) > 0 {
+			latest = v
+		}
+	}
+	return latest
+}
+
 func newestStable(values []string) string {
 	latest := ""
 	for _, v := range values {
@@ -311,7 +333,7 @@ func (s *Store) checkSoftwareUpdate(ctx context.Context, srv Server) (*SoftwareU
 		return result, nil
 	}
 	result.Supported = true
-	result.LatestVersion = newestStable(versions)
+	result.LatestVersion = newestStableVersion(versions)
 	if result.LatestVersion == "" {
 		result.LatestVersion = srv.Version
 	}

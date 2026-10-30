@@ -21,6 +21,52 @@ func testJSONResponse(body string) *http.Response {
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}
 }
 
+func TestSoftwareUpdatesIgnoreNonReleaseVersions(t *testing.T) {
+	for _, tc := range []struct {
+		name, installed, candidate, build, wantVersion, wantBuild string
+		available                                                 bool
+	}{
+		{name: "current release", installed: "1.21.4", wantVersion: "1.21.4"},
+		{name: "new release", installed: "1.21.4", candidate: "1.21.5", wantVersion: "1.21.5", available: true},
+		{name: "year numbered release", installed: "1.21.4", candidate: "26.1.1", wantVersion: "26.1.1", available: true},
+		{name: "snapshot candidate", installed: "1.21.4", candidate: "26.1-snapshot-1", wantVersion: "1.21.4"},
+		{name: "loader update", installed: "1.21.4", build: "0.16.9", wantVersion: "1.21.4", wantBuild: "0.16.10", available: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) *http.Response {
+				if req.URL.Path == "/versions/game" {
+					versions := []string{"1.21.4", "3D Shareware v1.34", "1.RV-Pre1", "20w14infinite", "23w13a_or_b", "24w14potato", "25w14craftmine", "26w14a", "b1.8.1", "rd-132211", "1.22-pre1", "1.22-rc1", "latest", "custom"}
+					if tc.candidate != "" {
+						versions = append(versions, tc.candidate)
+					}
+					games := make([]map[string]string, 0, len(versions))
+					for _, v := range versions {
+						games = append(games, map[string]string{"version": v})
+					}
+					body, err := json.Marshal(games)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return testJSONResponse(string(body))
+				}
+				if req.URL.Path == "/versions/loader/1.21.4" {
+					return testJSONResponse(`[{"loader":{"version":"0.16.9"}},{"loader":{"version":"0.16.10"}},{"loader":{"version":"0.17.0-beta.1"}}]`)
+				}
+				t.Errorf("unexpected upstream request: %s", req.URL)
+				return testJSONResponse(`[]`)
+			})}
+			s := &Store{jars: jars.NewResolverWithBases(client, "", "https://catalog.test", "")}
+			software, err := s.checkSoftwareUpdate(context.Background(), Server{ServerType: "fabric", Version: tc.installed, Build: tc.build})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !software.Supported || software.Available != tc.available || software.LatestVersion != tc.wantVersion || software.LatestBuild != tc.wantBuild {
+				t.Fatalf("unexpected software update: %+v", software)
+			}
+		})
+	}
+}
+
 func TestNightlyUpdateChecksOptInPersistenceAndSharedResponses(t *testing.T) {
 	s, first := newModTestStore(t, "paper")
 	t.Cleanup(func() { s.db.Close() })
