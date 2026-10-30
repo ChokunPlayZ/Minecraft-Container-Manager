@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -181,6 +182,125 @@ func TestNightlyUpdateChecksOptInPersistenceAndSharedResponses(t *testing.T) {
 	status, _ = s.UpdateCheckerStatus(ctx)
 	if !status.Servers[first].Software.Available || status.NextCheckAt != "" {
 		t.Fatal("opt-out discarded known updates or left a scheduled scan")
+	}
+}
+
+func TestManualModUpdatesAppearWithoutFleetScan(t *testing.T) {
+	s, id := newModTestStore(t, "paper")
+	t.Cleanup(func() { s.db.Close() })
+	ctx := context.Background()
+	dir := filepath.Join(s.dataPath(id), "plugins")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createTestJar(t, dir, "shared.jar", map[string]string{"plugin.yml": "name: Shared\nversion: 1.0\n"})
+	writeModMeta(dir, "shared.jar", ModDownloadMeta{Provider: "hangar", ProjectSlug: "shared"})
+	requests := 0
+	px := proxy.NewService()
+	px.SetClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) *http.Response {
+		requests++
+		if req.URL.Path != "/api/v1/projects/shared/versions" {
+			t.Errorf("unexpected upstream request: %s", req.URL)
+		}
+		return testJSONResponse(`{"result":[{"name":"2.0","downloads":{"PAPER":{"fileInfo":{"name":"shared-2.jar"},"downloadUrl":"https://example.test/shared-2.jar"}}}]}`)
+	})})
+	s.SetProxy(px)
+	updates, err := s.CheckModUpdates(ctx, id, true)
+	if err != nil || updates.UpdateCount != 1 {
+		t.Fatalf("manual check: %+v %v", updates, err)
+	}
+	// Neither reading badges nor restarting the panel should lose a manual discovery.
+	for _, store := range []*Store{s, {db: s.db}} {
+		status, err := store.UpdateCheckerStatus(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := status.Servers[id]
+		if status.Enabled || status.LastChecked != "" || result.Mods == nil || result.Mods.UpdateCount != 1 || result.CheckedAt == "" {
+			t.Fatalf("manual discovery missing from badges: %+v", status)
+		}
+		cached, err := store.CachedModUpdates(ctx, id)
+		if err != nil || cached.UpdateCount != 1 {
+			t.Fatalf("manual discovery missing from installed list: %+v %v", cached, err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("reading discoveries triggered %d catalog requests", requests)
+	}
+}
+
+func TestManualModUpdatesPreserveMatchingSoftwareResults(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint("configuration changed: ", changed), func(t *testing.T) {
+			s, id := newModTestStore(t, "paper")
+			t.Cleanup(func() { s.db.Close() })
+			ctx := context.Background()
+			srv, err := s.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.saveUpdateCheck(ctx, srv, ServerUpdateCheck{
+				Software: &SoftwareUpdate{Supported: true, Available: true, LatestVersion: "1.21.5"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if changed {
+				if _, err := s.db.Exec(`UPDATE servers SET version='1.21.5' WHERE id=?`, id); err != nil {
+					t.Fatal(err)
+				}
+				srv, err = s.Get(ctx, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.setUpdatesCache(ctx, srv, &ServerModUpdatesResponse{
+				Updates:     map[string]ModUpdateInfo{"shared": {ModName: "shared", LatestVersion: "2"}},
+				LastChecked: time.Now(), UpdateCount: 1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			status, err := s.UpdateCheckerStatus(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := status.Servers[id]
+			if result.Mods == nil || result.Mods.UpdateCount != 1 {
+				t.Fatalf("manual results missing: %+v", result)
+			}
+			if changed && result.Software != nil {
+				t.Fatalf("old software result retained: %+v", result.Software)
+			}
+			if !changed && (result.Software == nil || !result.Software.Available) {
+				t.Fatalf("matching software result discarded: %+v", result.Software)
+			}
+		})
+	}
+}
+
+func TestModUpdateCheckDiscardsResultsForChangedServer(t *testing.T) {
+	s, id := newModTestStore(t, "paper")
+	t.Cleanup(func() { s.db.Close() })
+	ctx := context.Background()
+	srv, err := s.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE servers SET version='1.21.5' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.setUpdatesCache(ctx, srv, &ServerModUpdatesResponse{
+		Updates:     map[string]ModUpdateInfo{"shared": {ModName: "shared", LatestVersion: "2"}},
+		LastChecked: time.Now(), UpdateCount: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.UpdateCheckerStatus(ctx)
+	if err != nil || len(status.Servers) != 0 {
+		t.Fatalf("outdated scan persisted: %+v %v", status, err)
+	}
+	cached, err := s.CachedModUpdates(ctx, id)
+	if err != nil || len(cached.Updates) != 0 {
+		t.Fatalf("outdated scan cached: %+v %v", cached, err)
 	}
 }
 

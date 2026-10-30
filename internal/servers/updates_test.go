@@ -511,6 +511,10 @@ func TestCheckTargetVersionCompatibility(t *testing.T) {
 func TestBatchUpdateModsCurrentVersion(t *testing.T) {
 	st, serverID := newModTestStore(t, "fabric")
 	ctx := context.Background()
+	srv, err := st.Get(ctx, serverID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	srvDir := filepath.Join(st.dataPath(serverID), "mods")
 	_ = os.MkdirAll(srvDir, 0o755)
@@ -531,7 +535,7 @@ func TestBatchUpdateModsCurrentVersion(t *testing.T) {
 	defer fakeDownloadServer.Close()
 
 	// Seed update cache
-	st.setUpdatesCache(serverID, &ServerModUpdatesResponse{
+	if err := st.setUpdatesCache(ctx, srv, &ServerModUpdatesResponse{
 		TotalMods:   1,
 		UpdateCount: 1,
 		LastChecked: time.Now(),
@@ -547,7 +551,9 @@ func TestBatchUpdateModsCurrentVersion(t *testing.T) {
 				LatestDownloadURL: fakeDownloadServer.URL + "/appleskin-fabric-mc1.20.1-2.5.1.jar",
 			},
 		},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// 1. Successful BatchUpdateMods
 	res, err := st.BatchUpdateMods(ctx, serverID, nil)
@@ -568,7 +574,7 @@ func TestBatchUpdateModsCurrentVersion(t *testing.T) {
 	}
 
 	// 2. Failure preserves old jar
-	st.setUpdatesCache(serverID, &ServerModUpdatesResponse{
+	if err := st.setUpdatesCache(ctx, srv, &ServerModUpdatesResponse{
 		TotalMods:   1,
 		UpdateCount: 1,
 		LastChecked: time.Now(),
@@ -584,7 +590,9 @@ func TestBatchUpdateModsCurrentVersion(t *testing.T) {
 				LatestDownloadURL: fakeDownloadServer.URL + "/fail.jar",
 			},
 		},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	failRes, err := st.BatchUpdateMods(ctx, serverID, nil)
 	if err != nil {

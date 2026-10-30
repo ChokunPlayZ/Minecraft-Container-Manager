@@ -85,4 +85,38 @@ describe('Update checker', () => {
     await waitFor(() => expect(result.current.status).toEqual(enabled));
     expect(api.getUpdateChecker).toHaveBeenCalledTimes(2);
   });
+
+  it.each(['get', 'post'])('shows a badge immediately after a manual mod check via %s with nightly checks off', async (method) => {
+    const mods = { last_checked: '2026-10-31T00:00:00Z', updates: { shared: { mod_name: 'shared', mod_file: 'shared.jar', provider: 'hangar' as const, title: 'Shared', latest_version: '2', latest_jar: 'shared-2.jar' } } };
+    const discovered: UpdateCheckerStatus = { ...disabled, servers: { paper: { checked_at: mods.last_checked, mods } } };
+    vi.mocked(api.getUpdateChecker).mockResolvedValueOnce(disabled).mockResolvedValue(discovered);
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => Response.json(mods)));
+    function ServerBadge() {
+      const { status } = useUpdateChecker();
+      return <UpdateAvailableBadge result={status?.servers.paper} />;
+    }
+    render(<ServerBadge />);
+    await waitFor(() => expect(api.getUpdateChecker).toHaveBeenCalledOnce());
+    expect(screen.queryByText('Update Available')).not.toBeInTheDocument();
+    await act(async () => {
+      if (method === 'get') await api.checkModUpdates('paper', true);
+      else await api.checkModUpdatesForce('paper');
+    });
+    expect(await screen.findByText('Update Available')).toHaveAttribute('title', '1 plugin/mod updates');
+    expect(api.getUpdateChecker).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reload badges for saved mod results or a failed manual check', async () => {
+    const fetch = vi.fn()
+      .mockImplementationOnce(async () => Response.json({ updates: {} }))
+      .mockImplementationOnce(async () => Response.json({ error: { message: 'Catalog unavailable' } }, { status: 502 }));
+    vi.stubGlobal('fetch', fetch);
+    const { result } = renderHook(() => useUpdateChecker());
+    await waitFor(() => expect(result.current.status).toEqual(disabled));
+    await act(async () => {
+      await api.checkModUpdates('paper');
+      await expect(api.checkModUpdates('paper', true)).rejects.toThrow('Catalog unavailable');
+    });
+    expect(api.getUpdateChecker).toHaveBeenCalledOnce();
+  });
 });

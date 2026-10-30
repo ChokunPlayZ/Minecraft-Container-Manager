@@ -278,10 +278,29 @@ func (s *Store) InvalidateModUpdatesCache(serverID string) {
 	}
 }
 
-func (s *Store) setUpdatesCache(serverID string, resp *ServerModUpdatesResponse) {
+func (s *Store) setUpdatesCache(ctx context.Context, srv Server, resp *ServerModUpdatesResponse) error {
 	if s.db != nil && len(resp.Errors) == 0 {
-		if raw, err := json.Marshal(resp); err == nil {
-			_, _ = s.db.Exec(`UPDATE server_update_checks SET mods = ? WHERE server_id = ?`, string(raw), serverID)
+		raw, err := json.Marshal(resp)
+		if err != nil {
+			return err
+		}
+		// Manual checks must create saved results even before the first fleet scan.
+		// Keep software results only when they describe the same configuration.
+		res, err := s.db.ExecContext(ctx, `INSERT INTO server_update_checks (server_id,server_type,version,build,mods,checked_at)
+			SELECT id,server_type,version,COALESCE(build,''),?,? FROM servers WHERE id=? AND server_type=? AND version=? AND COALESCE(build,'')=?
+			ON CONFLICT(server_id) DO UPDATE SET
+				software=CASE WHEN server_update_checks.server_type=excluded.server_type AND server_update_checks.version=excluded.version AND server_update_checks.build=excluded.build THEN server_update_checks.software ELSE 'null' END,
+				error=CASE WHEN server_update_checks.server_type=excluded.server_type AND server_update_checks.version=excluded.version AND server_update_checks.build=excluded.build THEN server_update_checks.error ELSE '' END,
+				server_type=excluded.server_type,version=excluded.version,build=excluded.build,mods=excluded.mods,checked_at=excluded.checked_at`,
+			string(raw), resp.LastChecked.UTC().Format(time.RFC3339), srv.ID, srv.ServerType, srv.Version, srv.Build)
+		if err != nil {
+			return err
+		}
+		if count, err := res.RowsAffected(); err != nil {
+			return err
+		} else if count == 0 {
+			// The server changed while its catalogs were being checked.
+			return nil
 		}
 	}
 	s.updatesMu.Lock()
@@ -289,7 +308,8 @@ func (s *Store) setUpdatesCache(serverID string, resp *ServerModUpdatesResponse)
 	if s.updatesCache == nil {
 		s.updatesCache = make(map[string]*ServerModUpdatesResponse)
 	}
-	s.updatesCache[serverID] = resp
+	s.updatesCache[srv.ID] = resp
+	return nil
 }
 
 func (s *Store) setTargetUpdatesCache(cacheKey string, resp *VersionUpdateReport) {
@@ -373,7 +393,9 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 			TotalMods:   0,
 			UpdateCount: 0,
 		}
-		s.setUpdatesCache(serverID, result)
+		if checkErr = s.setUpdatesCache(ctx, srv, result); checkErr != nil {
+			return nil, checkErr
+		}
 		return result, nil
 	}
 
@@ -750,7 +772,9 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 		UpdateCount: len(updates),
 		Errors:      upstreamErrors,
 	}
-	s.setUpdatesCache(serverID, result)
+	if checkErr = s.setUpdatesCache(ctx, srv, result); checkErr != nil {
+		return nil, checkErr
+	}
 	return result, nil
 }
 

@@ -452,7 +452,7 @@ export const api = {
     return request<ServerModUpdatesResponse>(
       `/api/servers/${serverId}/mods/updates${force ? '?force=true' : '?cached=true'}`,
       { headers: cfHeader },
-    );
+    ).then((result) => force ? announceUpdateDiscovery(result) : result);
   },
 
   checkModUpdatesForce: (serverId: string) => {
@@ -462,7 +462,7 @@ export const api = {
     return request<ServerModUpdatesResponse>(
       `/api/servers/${serverId}/mods/updates/check`,
       { method: 'POST', headers: cfHeader },
-    );
+    ).then(announceUpdateDiscovery);
   },
 
   checkVersionUpgradeCompatibility: (serverId: string, targetVersion: string, force = false) => {
