@@ -8,6 +8,8 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { ProgressBar } from './ui/progress';
 import { Select } from './ui/select';
+import { ServerZipUpload } from './server-zip-upload';
+import { ImportServerReleaseFields } from './import-server-release-fields';
 
 const serverTypes: Array<[ServerType, string]> = [
   ['paper', 'Paper'], ['purpur', 'Purpur'], ['folia', 'Folia'], ['pufferfish', 'Pufferfish'],
@@ -25,6 +27,7 @@ export function ImportServerDialog({ onImported }: { onImported: (server: Server
   const [name, setName] = useState('');
   const [serverType, setServerType] = useState('exported');
   const [version, setVersion] = useState('');
+  const [build, setBuild] = useState('');
   const [ram, setRam] = useState('');
   const [java, setJava] = useState('');
   const [privateServer, setPrivateServer] = useState(false);
@@ -33,7 +36,7 @@ export function ImportServerDialog({ onImported }: { onImported: (server: Server
   const [error, setError] = useState<string | null>(null);
 
   function startImport() {
-    setFile(null); setName(''); setServerType('exported'); setVersion(''); setRam(''); setJava('');
+    setFile(null); setName(''); setServerType('exported'); setVersion(''); setBuild(''); setRam(''); setJava('');
     setPrivateServer(false); setError(null); setProgress(0); setOpen(true);
   }
 
@@ -44,6 +47,7 @@ export function ImportServerDialog({ onImported }: { onImported: (server: Server
       name: name.trim() || undefined,
       server_type: serverType === 'exported' ? undefined : serverType as ServerType,
       version: version.trim() || undefined,
+      build: build.trim() || undefined,
       ram_mb: ram ? Number(ram) : undefined,
       java_version: java ? Number(java) : undefined,
       no_host_port: privateServer,
@@ -73,25 +77,15 @@ export function ImportServerDialog({ onImported }: { onImported: (server: Server
         </div>
         <form onSubmit={(event) => void submit(event)} className="mt-5 space-y-5">
           <fieldset disabled={busy} className="min-w-0 space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor={`${id}-file`}>Server ZIP file</Label>
-              <Input id={`${id}-file`} type="file" accept=".zip,application/zip" required aria-describedby={`${id}-file-help`} onChange={(event) => {
-                const selected = event.target.files?.[0] ?? null;
-                setError(null);
-                if (selected && (!selected.name.toLowerCase().endsWith('.zip') || selected.size > 2 * 1024 ** 3 || selected.size === 0)) {
-                  setFile(null); setError('Choose a non-empty ZIP file of at most 2 GiB.'); return;
-                }
-                setFile(selected);
-              }} />
-              <p id={`${id}-file-help`} className="text-xs text-muted-foreground">Up to 2 GiB compressed and 8 GiB extracted. Includes worlds, mods, plugins and configuration.</p>
-            </div>
+            <ServerZipUpload file={file} disabled={busy} onChange={(selected) => { setFile(selected); setError(null); }} />
             <div className="space-y-2"><Label htmlFor={`${id}-name`}>Server name (optional)</Label><Input id={`${id}-name`} value={name} maxLength={255} onChange={(event) => setName(event.target.value)} placeholder="Use the exported server name" /></div>
             <details className="border-y py-4">
               <summary className="cursor-pointer text-sm font-medium">Server settings</summary>
               <p className="mt-3 text-xs text-muted-foreground">New exports include these settings. For older ZIPs, enter a server name, choose the server type and enter its version. RAM defaults to 2048 MB and Java is selected automatically.</p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2"><Label htmlFor={`${id}-type`}>Server type</Label><Select id={`${id}-type`} value={serverType} onValueChange={setServerType} disabled={busy}><option value="exported">Use exported setting</option>{serverTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div>
-                <div className="space-y-2"><Label htmlFor={`${id}-version`}>Version</Label><Input id={`${id}-version`} value={version} maxLength={128} onChange={(event) => setVersion(event.target.value)} placeholder="e.g. 1.21.1" /></div>
+                <div className="space-y-2 sm:col-span-2"><Label htmlFor={`${id}-type`}>Server type</Label><Select id={`${id}-type`} value={serverType} onValueChange={(value) => { setServerType(value); setVersion(''); setBuild(''); }} disabled={busy}><option value="exported">Use exported setting</option>{serverTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></div>
+                <ImportServerReleaseFields key={serverType} serverType={serverType === 'exported' ? undefined : serverType as ServerType} version={version} build={build} disabled={busy}
+                  onVersionChange={(value) => { setVersion(value); setBuild(''); }} onBuildChange={setBuild} />
                 <div className="space-y-2"><Label htmlFor={`${id}-ram`}>RAM (MB)</Label><Input id={`${id}-ram`} type="number" min={1} step={1} value={ram} onChange={(event) => setRam(event.target.value)} placeholder="Use exported setting" /></div>
                 <div className="space-y-2"><Label htmlFor={`${id}-java`}>Java version</Label><Input id={`${id}-java`} type="number" min={8} max={99} step={1} value={java} onChange={(event) => setJava(event.target.value)} placeholder="Use exported setting" /></div>
               </div>

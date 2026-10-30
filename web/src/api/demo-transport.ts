@@ -77,6 +77,14 @@ let mockPanelUpdate: PanelUpdateStatus = {
 export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
 
+  const jarCatalog = path.match(/^\/api\/jars\/([^/]+)\/versions(?:\/([^/]+)\/builds)?$/);
+  if (jarCatalog) {
+    const [, type, version] = jarCatalog;
+    if (!version) return [{ name: '1.21.4' }, { name: '1.21.1' }, { name: '1.20.1' }] as T;
+    const builds = type === 'fabric' || type === 'quilt' ? ['0.16.10', '0.16.9'] : ['145', '144', '143'];
+    return builds.map((build) => ({ version: decodeURIComponent(version), build, display: build })) as T;
+  }
+
   if (path === '/api/panel/update/check') {
     mockPanelUpdate = { ...mockPanelUpdate, latest_commit: 'adb7819c46d63b13405b2fd259a90adf9480157c', checked_at: new Date().toISOString(), available: true };
     return mockPanelUpdate as T;
