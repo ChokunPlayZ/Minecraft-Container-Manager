@@ -179,6 +179,7 @@ interface ModDownloadOptions {
 }
 
 export const api = {
+  panelHealth: (signal: AbortSignal) => request<{ status: string }>('/healthz', { cache: 'no-store', signal }),
   listSchedules: (id: string) => request<{ schedules: ScheduledTask[]; default_timezone: string }>(`/api/servers/${id}/schedules`),
   createSchedule: (id: string, input: ScheduleInput) => request<ScheduledTask>(`/api/servers/${id}/schedules`, { method: 'POST', body: JSON.stringify(input) }),
   updateSchedule: (id: string, scheduleId: string, input: ScheduleInput) => request<ScheduledTask>(`/api/servers/${id}/schedules/${scheduleId}`, { method: 'PUT', body: JSON.stringify(input) }),

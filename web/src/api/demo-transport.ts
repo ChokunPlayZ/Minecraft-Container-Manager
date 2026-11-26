@@ -104,6 +104,8 @@ let mockPanelUpdate: PanelUpdateStatus = {
 export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | null {
   if (!isMock()) return null;
 
+  if (path === '/healthz') return { status: 'ok' } as T;
+
   if (path === '/api/curseforge/settings') {
     if (init.method === 'PUT') {
       const input = JSON.parse(String(init.body)) as { api_key: string };

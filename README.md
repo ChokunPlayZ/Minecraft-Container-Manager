@@ -138,6 +138,7 @@ a container.
 - **One-Click Modlist Export**: Download a shareable `.txt` list from Installed Mods or Plugins, including server details, installed versions, filenames, enabled/disabled status, and known catalog links. Exports include the full list regardless of search filters and are available with read-only access.
 
 ### 📊 Real-Time Metrics & Container Monitoring
+- **Panel Connection Notice**: The open web interface checks whether MCM is reachable every 15 seconds. It shows **MCM Not reachable** if a check fails and clears the message when the panel responds again.
 - **Dashboard Host Resources**: Live CPU, memory, and network usage summed across active managed server containers, with CPU and memory compared against the Docker or Podman host's capacity. The resource viewer refreshes every five seconds and shows available, used, and total space on the filesystem containing `MCM_DATA_DIR`. Available disk space excludes filesystem reservations and remains visible when the runtime is offline. Container usage excludes other host processes; it is not a sum of configured limits.
 - **Live Container Resource Metrics**: Real-time stats polled directly from the Docker daemon:
   - **CPU Utilization %**: Shown as a share of the whole host in both live cards and performance charts: 100% means all logical CPU cores are busy. CPU quotas remain labeled in cores. For example, Docker-style 397% on an eight-core host displays as 49.6%.

@@ -1,4 +1,5 @@
 import { createRootRoute, Outlet } from '@tanstack/react-router';
+import { PanelConnectionNotice } from '../components/panel-connection-notice';
 import { ThemeProvider } from '../components/theme-provider';
 import { AuthProvider } from '../lib/auth';
 import '../styles/index.css';
@@ -14,6 +15,7 @@ function RootComponent() {
       <AuthProvider>
         <Outlet />
       </AuthProvider>
+      <PanelConnectionNotice />
     </ThemeProvider>
   );
 }
