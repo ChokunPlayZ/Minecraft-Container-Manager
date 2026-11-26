@@ -51,6 +51,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv(EnvDockerHost, "")
 	t.Setenv(EnvContainerRuntime, "")
 	t.Setenv(EnvContainerHost, "")
+	t.Setenv(EnvPodmanPasta, "")
 	t.Setenv(EnvPodmanHost, "")
 	t.Setenv(EnvSessionSecret, "")
 	t.Setenv(EnvAddr, "")
@@ -80,6 +81,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.ContainerRuntime != "docker" {
 		t.Errorf("ContainerRuntime = %q, want docker", cfg.ContainerRuntime)
+	}
+	if cfg.PodmanPasta {
+		t.Error("PodmanPasta should be disabled by default")
 	}
 	if cfg.DBPath != filepath.Join("./data", "mcm.db") {
 		t.Errorf("DBPath = %q", cfg.DBPath)
@@ -130,6 +134,7 @@ func TestContainerRuntimeEndpoints(t *testing.T) {
 
 func TestPodmanDefaultEndpoint(t *testing.T) {
 	t.Setenv(EnvContainerRuntime, "podman")
+	t.Setenv(EnvPodmanPasta, "true")
 	t.Setenv(EnvContainerHost, "")
 	t.Setenv(EnvDockerHost, "")
 	t.Setenv(EnvPodmanHost, "")
@@ -138,6 +143,9 @@ func TestPodmanDefaultEndpoint(t *testing.T) {
 		cfg, err := Load()
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !cfg.PodmanPasta {
+			t.Error("PodmanPasta should be enabled")
 		}
 		if runtimeDir == "" {
 			runtimeDir = fmt.Sprintf("/run/user/%d", os.Geteuid())

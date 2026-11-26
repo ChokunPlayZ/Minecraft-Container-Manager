@@ -25,12 +25,13 @@ import (
 // including rootless host metadata and lowercase missing-image responses.
 type podmanDaemon struct {
 	fakeDaemon
-	rootless     bool
-	failInfo     bool
-	imageFilters []string
-	createdHost  container.HostConfig
-	createdNet   network.NetworkingConfig
-	lifecycle    []string
+	rootless       bool
+	failInfo       bool
+	imageFilters   []string
+	createdHost    container.HostConfig
+	createdNet     network.NetworkingConfig
+	bridgeConnects int
+	lifecycle      []string
 }
 
 func (d *podmanDaemon) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -70,7 +71,10 @@ func (d *podmanDaemon) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	case strings.HasSuffix(p, "/containers/container-1234/update"):
 		return d.response(http.StatusOK, `{}`)
+	case strings.HasSuffix(p, "/containers/container-1234/json"):
+		return d.response(http.StatusOK, fmt.Sprintf(`{"HostConfig":{"NetworkMode":%q}}`, d.createdHost.NetworkMode))
 	case strings.HasSuffix(p, "/networks/"+NetworkName+"/connect"):
+		d.bridgeConnects++
 		return d.response(http.StatusOK, `{}`)
 	case strings.HasSuffix(p, "/containers/container-1234/start"):
 		d.lifecycle = append(d.lifecycle, "start")
@@ -102,13 +106,25 @@ func newPodmanTestManager(t *testing.T, d *podmanDaemon) *Manager {
 }
 
 func TestPodmanCreateAndLifecycle(t *testing.T) {
-	for _, rootless := range []bool{false, true} {
-		t.Run(fmt.Sprintf("rootless=%t", rootless), func(t *testing.T) {
-			d := &podmanDaemon{rootless: rootless}
+	for _, tc := range []struct {
+		name        string
+		rootless    bool
+		enablePasta bool
+		hostPort    int
+		wantPasta   bool
+	}{
+		{name: "rootful", hostPort: 25601, enablePasta: true},
+		{name: "rootless bridge", rootless: true, hostPort: 25601},
+		{name: "rootless pasta", rootless: true, hostPort: 25601, enablePasta: true, wantPasta: true},
+		{name: "rootless private game port", rootless: true, enablePasta: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &podmanDaemon{rootless: tc.rootless}
 			m := newPodmanTestManager(t, d)
+			m.SetPodmanPasta(tc.enablePasta)
 			ctx := context.Background()
 			id, err := m.Create(ctx, CreateOpts{
-				ID: "podman", DataDir: "/srv/mcm/servers/podman", HostPort: 25565,
+				ID: "podman", DataDir: "/srv/mcm/servers/podman", HostPort: tc.hostPort,
 				ServerType: "paper", RAMMB: 2048, CPULimit: 1.5,
 				ExtraPorts: []ExtraPort{{HostPort: 19132, ContainerPort: 19132, Protocol: "udp"}},
 			})
@@ -122,7 +138,7 @@ func TestPodmanCreateAndLifecycle(t *testing.T) {
 				t.Errorf("shared bind = %v", d.createdHost.Binds)
 			}
 			wantNS, wantUser := "", ""
-			if rootless {
+			if tc.rootless {
 				wantNS = fmt.Sprintf("keep-id:uid=%d,gid=%d", os.Geteuid(), os.Getegid())
 				wantUser = "0:0"
 			}
@@ -132,18 +148,35 @@ func TestPodmanCreateAndLifecycle(t *testing.T) {
 			if d.createdHost.NanoCPUs != 1_500_000_000 || d.createdHost.Memory != 4096*1024*1024 {
 				t.Errorf("resource limits = %+v", d.createdHost.Resources)
 			}
-			for port, want := range map[nat.Port]string{"25565/tcp": "25565", "19132/udp": "19132"} {
-				bindings := d.createdHost.PortBindings[port]
-				if len(bindings) != 1 || bindings[0].HostPort != want {
-					t.Errorf("%s binding = %v", port, bindings)
+			gameBindings := d.createdHost.PortBindings[nat.Port("25565/tcp")]
+			if tc.hostPort == 0 {
+				if len(gameBindings) != 0 {
+					t.Errorf("private game port has bindings %v", gameBindings)
+				}
+			} else if len(gameBindings) != 1 || gameBindings[0].HostPort != fmt.Sprint(tc.hostPort) {
+				t.Errorf("game port bindings = %v", gameBindings)
+			}
+			udpBindings := d.createdHost.PortBindings[nat.Port("19132/udp")]
+			if len(udpBindings) != 1 || udpBindings[0].HostPort != "19132" {
+				t.Errorf("UDP port bindings = %v", udpBindings)
+			}
+			if tc.wantPasta {
+				if d.createdHost.NetworkMode != "pasta" || len(d.createdNet.EndpointsConfig) != 0 {
+					t.Errorf("pasta networking = %q, endpoints = %v", d.createdHost.NetworkMode, d.createdNet.EndpointsConfig)
+				}
+			} else {
+				endpoint := d.createdNet.EndpointsConfig[NetworkName]
+				if d.createdHost.NetworkMode == "pasta" || endpoint == nil || len(endpoint.Aliases) != 1 || endpoint.Aliases[0] != "mcm-podman" {
+					t.Errorf("bridge networking = %q, endpoint = %+v", d.createdHost.NetworkMode, endpoint)
 				}
 			}
-			endpoint := d.createdNet.EndpointsConfig[NetworkName]
-			if endpoint == nil || len(endpoint.Aliases) != 1 || endpoint.Aliases[0] != "mcm-podman" {
-				t.Errorf("network endpoint = %+v", endpoint)
-			}
+			// Start must respect the stored mode even after the setting changes.
+			m.SetPodmanPasta(!tc.enablePasta)
 			if err := m.Start(ctx, id); err != nil {
 				t.Fatal(err)
+			}
+			if (d.bridgeConnects > 0) == tc.wantPasta {
+				t.Errorf("bridge connections = %d, pasta = %t", d.bridgeConnects, tc.wantPasta)
 			}
 			if err := m.Stop(ctx, id, 15*time.Second); err != nil {
 				t.Fatal(err)

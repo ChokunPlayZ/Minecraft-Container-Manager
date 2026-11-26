@@ -418,6 +418,46 @@ or Docker Compose. For a rootful deployment, enable `podman.socket` with
 Rootless resource limits require cgroup v2 with CPU and memory controllers
 delegated to the user service.
 
+### Player IP addresses on rootless Podman
+
+Podman's default rootless bridge forwarding can replace a player's source IP
+with a container-network address.
+
+**Direct connections to a published game port.** On Podman 4.4 or later, install
+`passt` (which provides `pasta`) on the Podman host and set
+`MCM_PODMAN_PASTA=true` in the panel environment. For a managed install, edit
+`~/.config/mcm/mcm.env` and run `mcmctl restart`. For Podman Compose, set it in
+`.env` and run `podman compose -f podman-compose.yml up -d --build`. In the
+panel, choose **Rebuild container** from the server's actions menu, then start
+the server if it was stopped. The rebuild keeps the server data and uses its
+configured port mappings. Use this mode for containers that operate
+independently of the shared `mcm-network` bridge.
+[Podman 4.4 release notes](https://github.com/podman-container-tools/podman/releases/tag/v4.4.0)
+[Podman pasta documentation](https://docs.podman.io/en/v5.7.0/markdown/podman-run.1.html#network-mode-net)
+
+**Shared bridge for Velocity, BungeeCord, or private RCON.** Podman 6 supports
+an experimental pasta forwarder for bridge networks. Install `passt` with
+`pesto` on the Podman host. Add the following to
+`~/.config/containers/containers.conf` for the user running the rootless
+Podman service. If a `[network]` section already exists, add the setting there.
+
+```toml
+[network]
+rootless_port_forwarder = "pasta"
+```
+
+Stop the user's rootless bridge containers, restart the Podman API
+(`systemctl --user restart podman.service` on Linux with systemd), then start the
+containers again. Podman 6.1 adds IPv6 support to this bridge forwarder. If
+players connect through a Minecraft proxy, enable the proxy's player IP
+forwarding to its backends too.
+[Podman 6.0 release notes](https://github.com/podman-container-tools/podman/releases/tag/v6.0.0)
+[Podman 6.1 release notes](https://github.com/podman-container-tools/podman/releases/tag/v6.1.0)
+
+To verify, join from another device and check the server's connection log. For
+a VM or external relay, the forwarding path to the Podman host must also
+preserve the source IP.
+
 ### Running the panel directly
 
 With the rootless socket enabled, launch the built binary as the same user:
@@ -504,6 +544,7 @@ service lifecycle and recovery commands.
 | `MCM_CONTAINER_HOST` | *(empty)* | API endpoint override for either engine; takes priority over `DOCKER_HOST`. |
 | `CONTAINER_HOST` | *(empty)* | Podman endpoint fallback when `MCM_CONTAINER_HOST` and `DOCKER_HOST` are unset. |
 | `MCM_PODMAN_SOCKET` | `/run/podman/podman.sock` | Absolute host socket path mounted by `podman-compose.yml`, without `unix://`; set explicitly for rootless or VM deployments. |
+| `MCM_PODMAN_PASTA` | `false` | Use pasta to preserve source IPs on rootless Podman containers with a published game port. Those containers run outside the shared bridge. |
 | `PUID` / `PGID` | `1000` / `1000` | UID/GID the panel runs as and applies to the data directory. |
 | `MCM_TRUSTED_PROXIES` | *(empty)* | Comma-separated trusted reverse proxy IPs/CIDRs for client IP forwarding. Sessions use random tokens whose hashes are persisted in SQLite. |
 | `MCM_HTTP_ONLY` | `false` | Serve plain HTTP instead of native HTTPS, for local development or a TLS-terminating reverse proxy. Cannot be combined with supplied certificate paths. |

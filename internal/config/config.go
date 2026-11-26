@@ -23,6 +23,7 @@ type Config struct {
 	// DockerHost is the resolved API endpoint for either Docker or Podman.
 	DockerHost       string
 	ContainerRuntime string
+	PodmanPasta      bool
 	TrustedProxies   []netip.Prefix
 	WebAuthn         WebAuthnConfig
 	HTTPOnly         bool
@@ -87,6 +88,7 @@ const (
 	EnvDockerHost       = "DOCKER_HOST"
 	EnvContainerRuntime = "MCM_CONTAINER_RUNTIME"
 	EnvContainerHost    = "MCM_CONTAINER_HOST"
+	EnvPodmanPasta      = "MCM_PODMAN_PASTA"
 	EnvPodmanHost       = "CONTAINER_HOST"
 	EnvSessionSecret    = "MCM_SESSION_SECRET"
 	EnvTLS              = "MCM_TLS"
@@ -137,6 +139,7 @@ func Load() (*Config, error) {
 		DataDirHost:      getenv(EnvDataDirHost, ""),
 		BackupDir:        getenv(EnvBackupDir, filepath.Join(getenv(EnvDataDir, defaultDataDir), "backups")),
 		ContainerRuntime: strings.ToLower(strings.TrimSpace(getenv(EnvContainerRuntime, "docker"))),
+		PodmanPasta:      parseBoolEnv(EnvPodmanPasta, false),
 		HTTPOnly:         parseBoolEnv(EnvHTTPOnly, false),
 		TLSCert:          getenv(EnvTLSCert, ""),
 		TLSKey:           getenv(EnvTLSKey, ""),

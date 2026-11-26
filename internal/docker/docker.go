@@ -34,6 +34,8 @@ const (
 	// NetworkName is the Docker bridge network used for inter-container communication.
 	NetworkName = "mcm-network"
 
+	podmanPastaMode = "pasta"
+
 	mcPort        = 25565
 	mcProto       = "tcp"
 	containerData = "/data"
@@ -266,12 +268,13 @@ type ContainerStats struct {
 // Manager wraps a Docker client and owns the container lifecycle operations for
 // MCM servers.
 type Manager struct {
-	client   *client.Client
-	host     string
-	image    string
-	runtime  string
-	cpuMu    sync.Mutex
-	cpuCache map[string]cpuSample
+	client      *client.Client
+	host        string
+	image       string
+	runtime     string
+	podmanPasta bool
+	cpuMu       sync.Mutex
+	cpuCache    map[string]cpuSample
 }
 
 // New builds a Manager from a Docker host string (e.g. "unix:///...") and the
@@ -313,6 +316,10 @@ func NewWithRuntime(runtimeName, host, image string) (*Manager, error) {
 
 // Close releases idle API connections.
 func (m *Manager) Close() error { return m.client.Close() }
+
+// SetPodmanPasta configures networking for new rootless Podman containers
+// with a published game port. Call it before using the manager.
+func (m *Manager) SetPodmanPasta(enabled bool) { m.podmanPasta = enabled }
 
 func (m *Manager) runtimeName() string {
 	if m.runtime == "podman" {
@@ -524,22 +531,28 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 				hostCfg.UsernsMode = container.UsernsMode(fmt.Sprintf("keep-id:uid=%d,gid=%d", os.Geteuid(), os.Getegid()))
 				// keep-id otherwise overrides the image user, bypassing bootstrap.
 				cfg.User = "0:0"
+				if m.podmanPasta && opts.HostPort > 0 {
+					hostCfg.NetworkMode = podmanPastaMode
+				}
 				break
 			}
 		}
 	}
 
-	_ = m.EnsureNetwork(ctx)
-	netCfg := &network.NetworkingConfig{
-		EndpointsConfig: map[string]*network.EndpointSettings{
-			NetworkName: {
-				Aliases: []string{name},
+	var netCfg *network.NetworkingConfig
+	if hostCfg.NetworkMode != podmanPastaMode {
+		_ = m.EnsureNetwork(ctx)
+		netCfg = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				NetworkName: {
+					Aliases: []string{name},
+				},
 			},
-		},
+		}
 	}
 
 	resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
-	if err != nil && (strings.Contains(err.Error(), "network") || strings.Contains(err.Error(), NetworkName)) {
+	if err != nil && netCfg != nil && (strings.Contains(err.Error(), "network") || strings.Contains(err.Error(), NetworkName)) {
 		// Fallback to default networking if custom network creation/attachment fails
 		resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
 	}
@@ -565,7 +578,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 				return "", fmt.Errorf("pull image after create failure: %w", perr)
 			}
 			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
-			if err != nil {
+			if err != nil && netCfg != nil {
 				resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
 			}
 			if err != nil {
@@ -730,7 +743,7 @@ func (m *Manager) EnsureRestartPolicyDisabled(ctx context.Context, containerID s
 // Start starts a stopped or created container.
 func (m *Manager) Start(ctx context.Context, containerID string) error {
 	_ = m.EnsureRestartPolicyDisabled(ctx, containerID)
-	if m.client != nil {
+	if !m.usesPodmanPasta(ctx, containerID) {
 		_ = m.EnsureNetwork(ctx)
 		_ = m.client.NetworkConnect(ctx, NetworkName, containerID, nil)
 	}
@@ -738,6 +751,18 @@ func (m *Manager) Start(ctx context.Context, containerID string) error {
 		return fmt.Errorf("start container: %w", err)
 	}
 	return nil
+}
+
+func (m *Manager) usesPodmanPasta(ctx context.Context, containerID string) bool {
+	if m.runtime != "podman" {
+		return false
+	}
+	inspect, err := m.client.ContainerInspect(ctx, containerID)
+	if err != nil || inspect.ContainerJSONBase == nil || inspect.HostConfig == nil {
+		return false
+	}
+	mode, _, _ := strings.Cut(string(inspect.HostConfig.NetworkMode), ":")
+	return mode == podmanPastaMode
 }
 
 // Stop gracefully stops a container, falling back to a hard stop after timeout.

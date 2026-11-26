@@ -74,6 +74,7 @@ func main() {
 	if err != nil {
 		logger.Fatalf("create container runtime client: %v", err)
 	}
+	dockerMgr.SetPodmanPasta(cfg.PodmanPasta)
 	logger.Printf("container runtime: %s (%s)", cfg.ContainerRuntime, cfg.DockerHost)
 	defer dockerMgr.Close()
 

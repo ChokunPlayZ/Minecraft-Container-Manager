@@ -20,6 +20,7 @@ services:
       MCM_DB_PATH: ${MCM_DB_PATH:-/data/mcm.db}
       MCM_CONTAINER_RUNTIME: podman
       MCM_CONTAINER_HOST: unix:///run/podman/podman.sock
+      MCM_PODMAN_PASTA: ${MCM_PODMAN_PASTA:-false}
       MCM_SERVER_IMAGE: ${MCM_SERVER_IMAGE:-eclipse-temurin:21-jre-alpine}
       MCM_S3_ENDPOINT: ${MCM_S3_ENDPOINT:-}
       MCM_S3_ACCESS_KEY: ${MCM_S3_ACCESS_KEY:-}
