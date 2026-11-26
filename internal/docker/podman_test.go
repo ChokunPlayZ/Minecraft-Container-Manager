@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -28,7 +27,6 @@ type podmanDaemon struct {
 	rootless       bool
 	failInfo       bool
 	imageFilters   []string
-	createdHost    container.HostConfig
 	createdNet     network.NetworkingConfig
 	bridgeConnects int
 	lifecycle      []string
@@ -57,13 +55,12 @@ func (d *podmanDaemon) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		var payload struct {
-			HostConfig       container.HostConfig
 			NetworkingConfig network.NetworkingConfig
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
 			return nil, err
 		}
-		d.createdHost, d.createdNet = payload.HostConfig, payload.NetworkingConfig
+		d.createdNet = payload.NetworkingConfig
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		if d.failFirstCreate.Load() && d.createCount.Load() == 0 {
 			d.createCount.Add(1)

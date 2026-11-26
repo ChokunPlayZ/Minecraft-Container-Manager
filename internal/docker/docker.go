@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
@@ -39,6 +40,7 @@ const (
 	mcPort        = 25565
 	mcProto       = "tcp"
 	containerData = "/data"
+	hostLocaltime = "/etc/localtime"
 	// errNoSuchImage is the substring Docker returns when a create references an
 	// image that is not present locally. It is treated as a retry-after-pull
 	// condition rather than a hard failure.
@@ -508,6 +510,12 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 	}
 	hostCfg := &container.HostConfig{
 		Binds: []string{fmt.Sprintf("%s:%s", opts.DataDir, containerData)},
+		Mounts: []mount.Mount{{
+			Type:     mount.TypeBind,
+			Source:   hostLocaltime,
+			Target:   hostLocaltime,
+			ReadOnly: true,
+		}},
 		RestartPolicy: container.RestartPolicy{
 			// Server containers are created with no restart policy so that the
 			// panel (and the user) retain explicit control over their lifecycle.
@@ -551,10 +559,20 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 		}
 	}
 
-	resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+	create := func(netCfg *network.NetworkingConfig) (container.CreateResponse, error) {
+		resp, err := m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+		// Some daemon hosts use UTC without an /etc/localtime file.
+		if len(hostCfg.Mounts) > 0 && errdefs.IsInvalidParameter(err) &&
+			strings.HasSuffix(err.Error(), "bind source path does not exist: "+hostLocaltime) {
+			hostCfg.Mounts = nil
+			return m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+		}
+		return resp, err
+	}
+	resp, err := create(netCfg)
 	if err != nil && netCfg != nil && (strings.Contains(err.Error(), "network") || strings.Contains(err.Error(), NetworkName)) {
 		// Fallback to default networking if custom network creation/attachment fails
-		resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
+		resp, err = create(nil)
 	}
 	if err != nil {
 		errLower := strings.ToLower(err.Error())
@@ -566,7 +584,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 				return insp.ID, nil
 			}
 			_ = m.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
-			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+			resp, err = create(netCfg)
 			if err == nil {
 				return resp.ID, nil
 			}
@@ -577,9 +595,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 			if perr := m.pullNamedImage(ctx, img); perr != nil {
 				return "", fmt.Errorf("pull image after create failure: %w", perr)
 			}
-			resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+			resp, err = create(netCfg)
 			if err != nil && netCfg != nil {
-				resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, nil, nil, name)
+				resp, err = create(nil)
 			}
 			if err != nil {
 				errLower := strings.ToLower(err.Error())
@@ -591,7 +609,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (string, error) {
 						return insp.ID, nil
 					}
 					_ = m.client.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
-					resp, err = m.client.ContainerCreate(ctx, cfg, hostCfg, netCfg, nil, name)
+					resp, err = create(netCfg)
 					if err == nil {
 						return resp.ID, nil
 					}

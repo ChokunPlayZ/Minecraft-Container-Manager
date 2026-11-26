@@ -208,7 +208,7 @@ App settings remain at `/settings`; personal settings are at `/user-settings`. E
 
 ### Automatic update checks
 
-Enable **App Settings → Updates → Enable nightly update checks** to check server software, plugins, and mods at **00:00 in the panel timezone** (`TZ`, UTC by default). This is off by default. **Check now** starts an immediate fleet scan after opting in; scans never install updates or restart servers.
+Enable **App Settings → Updates → Enable nightly update checks** to check server software, plugins, and mods at **00:00 in the configured `TZ` timezone** (UTC by default). This is off by default. **Check now** starts an immediate fleet scan after opting in; scans never install updates or restart servers.
 
 Saved results survive panel restarts. Servers with available updates display an **Update Available** badge on the dashboard and server page. Successful software catalog lookups also remember published versions and builds, including lookups while browsing releases, creating a server, or changing its software. These discoveries immediately mark matching servers as outdated, even with nightly checks off. Previously known newer releases are retained if a later lookup fails or returns older data. Builds are compared only within the same software type and game version. The server page shows the software version/build and plugin/mod update count, with actions to review them. Opening the installed plugins/mods list reads saved results; use its re-check action for an explicit refresh. Changing software settings or installed artifacts invalidates corresponding scan results; saved catalog discoveries are compared against the new software settings.
 
@@ -318,6 +318,21 @@ Both Compose services forward the documented S3, login, request-limit and defaul
 New Minecraft containers inherit the panel process's UID/GID. Their startup step prepares required tools and repairs ownership of `/data` as root, then drops privileges before running server installers or Java. This keeps automatically generated mod configs editable in the panel. Set `PUID` to a nonzero UID to use this behavior. Custom server images must provide `su-exec` or `gosu`, or an Alpine/Debian package manager to install one.
 
 After upgrading from a version that ran Minecraft as root, use **Rebuild container** for each existing server. Rebuilding preserves its data, replaces the old container, and applies the ownership repair at its next start. Restarting the old container alone does not update its startup settings. This runs Minecraft as a non-root user; running the Docker daemon itself in rootless mode is a separate host configuration.
+
+### Host timezone
+
+Docker and Podman Compose mount the host's `/etc/localtime` read-only into the
+panel. The panel uses that timezone by default. Remove `TZ=UTC` from an older
+`.env` if you want the panel to inherit the host timezone. Set `TZ` to an IANA
+timezone such as `Asia/Bangkok` to override the panel timezone and set the
+default for new schedules and nightly update checks. Those jobs default to
+UTC when no IANA timezone is configured. Each saved task keeps its own timezone.
+
+New Minecraft containers bind-mount `/etc/localtime` read-only from the engine
+host, including when the panel runs natively or connects to a remote engine.
+If Docker reports that the host file is missing, the server uses its image's
+timezone. On upgrade, recreate the Compose panel and use **Rebuild container**
+for each existing Minecraft server to apply the mount while keeping its data.
 
 ### Separate backup media
 
@@ -568,7 +583,7 @@ service lifecycle and recovery commands.
 | `MCM_S3_SECRET_KEY` | *(empty)* | Secret key for S3 backup storage. |
 | `MCM_S3_BUCKET` | *(empty)* | S3 bucket used for server backup archives. |
 | `MCM_S3_REGION` | `us-east-1` | S3 region for signing requests. |
-| `TZ` | `UTC` | Container and server timezone. |
+| `TZ` | Host timezone for the Compose panel, UTC for schedule defaults | Optional IANA timezone for the panel, new schedules, and nightly update checks. Minecraft containers use the engine host's timezone. |
 
 ### HTTPS certificates
 

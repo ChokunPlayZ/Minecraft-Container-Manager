@@ -9,6 +9,18 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class ContainerContractTests(unittest.TestCase):
+    def test_compose_uses_host_timezone_by_default(self):
+        for name in ('docker-compose.yml', 'podman-compose.yml'):
+            with self.subTest(compose=name):
+                text = (ROOT / name).read_text()
+                self.assertIn('      TZ: ${TZ:-:/etc/localtime}\n', text)
+                self.assertIn('      - type: bind\n'
+                              '        source: /etc/localtime\n'
+                              '        target: /etc/localtime\n'
+                              '        read_only: true\n'
+                              '        bind:\n'
+                              '          create_host_path: false\n', text)
+
     def test_compose_forwards_s3_limits_and_proxy_configuration(self):
         keys = ('MCM_S3_ENDPOINT', 'MCM_S3_ACCESS_KEY', 'MCM_S3_SECRET_KEY',
                 'MCM_S3_BUCKET', 'MCM_S3_REGION', 'MCM_LOGIN_MAX_ATTEMPTS',

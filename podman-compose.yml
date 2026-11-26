@@ -46,7 +46,7 @@ services:
       # panel and its sibling servers in that mapping, including socket access.
       PUID: 0
       PGID: 0
-      TZ: ${TZ:-UTC}
+      TZ: ${TZ:-:/etc/localtime}
       CURSEFORGE_API_KEY: ${CURSEFORGE_API_KEY:-}
     security_opt:
       - label=disable
@@ -62,6 +62,12 @@ services:
       - type: bind
         source: ${MCM_PODMAN_SOCKET:-/run/podman/podman.sock}
         target: /run/podman/podman.sock
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/localtime
+        target: /etc/localtime
+        read_only: true
         bind:
           create_host_path: false
     restart: unless-stopped

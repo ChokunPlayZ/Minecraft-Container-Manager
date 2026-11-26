@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 )
 
@@ -21,11 +22,13 @@ const testImage = "itzg/minecraft-server:test"
 // sequence of image/pull/create responses. It exercises image-presence checks
 // and pull-on-create without a real daemon or a bound port.
 type fakeDaemon struct {
-	haveImage       atomic.Bool
-	pullCount       atomic.Int32
-	createCount     atomic.Int32
-	failFirstCreate atomic.Bool
-	createdConfig   container.Config
+	haveImage        atomic.Bool
+	pullCount        atomic.Int32
+	createCount      atomic.Int32
+	failFirstCreate  atomic.Bool
+	missingLocaltime bool
+	createdConfig    container.Config
+	createdHost      container.HostConfig
 }
 
 // RoundTrip implements http.RoundTripper over the Docker Engine API.
@@ -46,10 +49,18 @@ func (d *fakeDaemon) RoundTrip(req *http.Request) (*http.Response, error) {
 {"status":"Status: Downloaded newer image for `+testImage+`"}
 `)
 	case strings.HasSuffix(p, "/containers/create"):
-		if err := json.NewDecoder(req.Body).Decode(&d.createdConfig); err != nil {
+		var payload struct {
+			container.Config
+			HostConfig container.HostConfig
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
 			return nil, err
 		}
+		d.createdConfig, d.createdHost = payload.Config, payload.HostConfig
 		d.createCount.Add(1)
+		if d.missingLocaltime && len(d.createdHost.Mounts) > 0 {
+			return d.response(http.StatusBadRequest, `{"message":"invalid mount config for type \"bind\": bind source path does not exist: /etc/localtime"}`)
+		}
 		if d.failFirstCreate.Load() && d.createCount.Load() == 1 {
 			return d.response(http.StatusNotFound, `{"message":"No such image: `+testImage+`"}`)
 		}
@@ -132,6 +143,40 @@ func TestCreateSkipsPullWhenImagePresent(t *testing.T) {
 	}
 	if d.pullCount.Load() != 0 {
 		t.Fatalf("expected no pull when image present, got %d", d.pullCount.Load())
+	}
+}
+
+func TestCreateInheritsHostTimezone(t *testing.T) {
+	for _, runtime := range []string{"docker", "podman"} {
+		t.Run(runtime, func(t *testing.T) {
+			d := &fakeDaemon{}
+			m := newFakeManager(d)
+			if runtime == "podman" {
+				podman := &podmanDaemon{rootless: true}
+				d = &podman.fakeDaemon
+				m = newPodmanTestManager(t, podman)
+			}
+			d.haveImage.Store(true)
+			if _, err := m.Create(context.Background(), CreateOpts{ID: "timezone", DataDir: "/tmp/data"}); err != nil {
+				t.Fatal(err)
+			}
+			want := mount.Mount{Type: mount.TypeBind, Source: "/etc/localtime", Target: "/etc/localtime", ReadOnly: true}
+			if len(d.createdHost.Mounts) != 1 || d.createdHost.Mounts[0] != want {
+				t.Fatalf("mounts = %+v, want %+v", d.createdHost.Mounts, want)
+			}
+		})
+	}
+}
+
+func TestCreateWhenHostLocaltimeIsMissing(t *testing.T) {
+	d := &fakeDaemon{missingLocaltime: true}
+	d.haveImage.Store(true)
+	m := newFakeManager(d)
+	if _, err := m.Create(context.Background(), CreateOpts{ID: "timezone", DataDir: "/tmp/data"}); err != nil {
+		t.Fatal(err)
+	}
+	if d.createCount.Load() != 2 || len(d.createdHost.Mounts) != 0 {
+		t.Fatalf("create attempts = %d, mounts = %+v, want two attempts ending without a timezone mount", d.createCount.Load(), d.createdHost.Mounts)
 	}
 }
 
