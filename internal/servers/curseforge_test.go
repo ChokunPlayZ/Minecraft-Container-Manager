@@ -63,7 +63,8 @@ func TestCurseForgeServerOperationsUseSharedKey(t *testing.T) {
 	if err != nil || url == "" || file != "example-new.jar" {
 		t.Fatalf("modpack file: %s %s %v", url, file, err)
 	}
-	if calls != 4 {
-		t.Fatalf("expected four server-side catalog operations, got %d", calls)
+	// The version picker reuses the current-version catalog response from the scan.
+	if calls != 3 {
+		t.Fatalf("expected three server-side catalog requests, got %d", calls)
 	}
 }

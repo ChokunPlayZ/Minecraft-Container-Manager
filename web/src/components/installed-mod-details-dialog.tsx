@@ -1,3 +1,4 @@
+import { ModChannelBadge } from './mod-channel-filter';
 import { useEffect, useState } from 'react';
 import { ExternalLink, Loader2, Package, X } from 'lucide-react';
 import {
@@ -72,6 +73,7 @@ export function InstalledModDetailsDialog({ mod, type, onClose }: InstalledModDe
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">{mod.enabled ? 'Enabled' : 'Disabled'}</Badge>
             {providerLabel && <Badge variant="secondary">{providerLabel}</Badge>}
+            <ModChannelBadge channel={mod.release_type} />
             {details?.categories?.map((category) => <Badge key={category} variant="outline">{category}</Badge>)}
           </div>
 

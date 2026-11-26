@@ -168,6 +168,16 @@ async function readResponse<T>(response: Response): Promise<T> {
 }
 
 
+interface ModDownloadOptions {
+  projectId?: string;
+  projectSlug?: string;
+  provider?: ModProvider;
+  hashes?: Record<string, string>;
+  releaseType?: string;
+  versionId?: string;
+  allowChannelSwitch?: boolean;
+}
+
 export const api = {
   listSchedules: (id: string) => request<{ schedules: ScheduledTask[]; default_timezone: string }>(`/api/servers/${id}/schedules`),
   createSchedule: (id: string, input: ScheduleInput) => request<ScheduledTask>(`/api/servers/${id}/schedules`, { method: 'POST', body: JSON.stringify(input) }),
@@ -528,7 +538,7 @@ export const api = {
     modName: string,
     url: string,
     filename: string,
-    meta?: { deleteOld?: boolean; projectId?: string; projectSlug?: string; provider?: ModProvider; hashes?: Record<string,string> },
+    meta?: ModDownloadOptions & { deleteOld?: boolean },
   ) =>
     request<Mod>(
       `/api/servers/${serverId}/mods/${encodeURIComponent(modName)}/update`,
@@ -541,7 +551,10 @@ export const api = {
           project_id: meta?.projectId,
           project_slug: meta?.projectSlug,
           provider: meta?.provider,
- hashes:meta?.hashes??getArtifactHashes(url),
+          hashes: meta?.hashes ?? getArtifactHashes(url),
+          release_type: meta?.releaseType,
+          catalog_version_id: meta?.versionId,
+          allow_channel_switch: meta?.allowChannelSwitch,
         }),
       },
     ),
@@ -551,7 +564,7 @@ export const api = {
     url: string,
     filename: string,
     deleteOldName?: string,
-    meta?: { projectId?: string; projectSlug?: string; provider?: ModProvider; hashes?: Record<string,string> },
+    meta?: ModDownloadOptions,
   ) =>
     request<Mod>(`/api/servers/${serverId}/mods/download`, {
       method: 'POST',
@@ -562,7 +575,10 @@ export const api = {
         project_id: meta?.projectId,
         project_slug: meta?.projectSlug,
         provider: meta?.provider,
- hashes:meta?.hashes??getArtifactHashes(url),
+        hashes: meta?.hashes ?? getArtifactHashes(url),
+        release_type: meta?.releaseType,
+        catalog_version_id: meta?.versionId,
+        allow_channel_switch: meta?.allowChannelSwitch,
       }),
     }),
 

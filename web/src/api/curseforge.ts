@@ -165,6 +165,8 @@ export async function getCurseForgeFiles(
     gameVersion?: string;
     modLoaderType?: number;
     pageSize?: number;
+    allPages?: boolean;
+    stopWhen?: (build: CurseForgeFile) => boolean;
   },
   signal?: AbortSignal,
 ): Promise<CurseForgeFile[]> {
@@ -175,25 +177,19 @@ export async function getCurseForgeFiles(
   if (options?.modLoaderType !== undefined) {
     searchParams.set('modLoaderType', String(options.modLoaderType));
   }
-  searchParams.set('pageSize', String(options?.pageSize ?? 25));
+  searchParams.set('pageSize', String(options?.pageSize ?? (options?.allPages ? 50 : 25)));
 
-  const query = searchParams.toString();
-  const url = `${CURSEFORGE_API_BASE}/mods/${modId}/files?${query}`;
-
-  const data = await rateLimitedFetchJson<{ data: CurseForgeFile[] }>(
-    url,
-    {
-      headers: {
-        Accept: 'application/json',
-      },
-    },
-    {
-      cacheTtlMs: 300000, // 5 minutes
-      signal,
-    },
-  );
-
-  const files=data.data??[];
+  const files: CurseForgeFile[] = [];
+  for (;;) {
+    const url = `${CURSEFORGE_API_BASE}/mods/${modId}/files?${searchParams}`;
+    const page = await rateLimitedFetchJson<{ data: CurseForgeFile[]; pagination?: { totalCount: number } }>(
+      url, { headers: { Accept: 'application/json' } }, { cacheTtlMs: 300000, signal },
+    );
+    files.push(...(page.data ?? []));
+    if (options?.stopWhen && (page.data ?? []).some(options.stopWhen)) break;
+    if (!options?.allPages || !page.data?.length || files.length >= (page.pagination?.totalCount ?? 0)) break;
+    searchParams.set('index', String(files.length));
+  }
  for(const file of files){const hashes:Record<string,string>={};for(const hash of file.hashes??[]){if(hash.algo===1)hashes.sha1=hash.value;else if(hash.algo===2)hashes.md5=hash.value;}rememberArtifactHashes(file.downloadUrl??undefined,hashes);}
  return files;
 }

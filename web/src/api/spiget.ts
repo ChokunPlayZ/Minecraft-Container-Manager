@@ -78,24 +78,21 @@ export async function searchSpiget(
 export async function getSpigetVersions(
   resourceId: number,
   signal?: AbortSignal,
+  allPages = false,
 ): Promise<SpigetVersion[]> {
-  const url = `${SPIGET_API_BASE}/resources/${resourceId}/versions?size=25&sort=-releaseDate`;
-
   try {
-    const data = await rateLimitedFetchJson<SpigetVersion[]>(
-      url,
-      {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'mcm-panel/1.0',
-        },
-      },
-      {
-        cacheTtlMs: 600000, // 10 minutes cache for Spiget releases
-        signal,
-      },
-    );
-    return Array.isArray(data) ? data : [];
+    const size = allPages ? 100 : 25;
+    const versions: SpigetVersion[] = [];
+    for (let page = 1; ; page++) {
+      const url = `${SPIGET_API_BASE}/resources/${resourceId}/versions?size=${size}&sort=-releaseDate${page > 1 ? `&page=${page}` : ''}`;
+      const data = await rateLimitedFetchJson<SpigetVersion[]>(url, {
+        headers: { Accept: 'application/json', 'User-Agent': 'mcm-panel/1.0' },
+      }, { cacheTtlMs: 600000, signal });
+      if (!Array.isArray(data)) break;
+      versions.push(...data);
+      if (!allPages || data.length < size) break;
+    }
+    return versions;
   } catch (err) {
     throw err instanceof Error ? err : new Error(`Failed to fetch Spigot versions for ${resourceId}`);
   }
@@ -137,8 +134,8 @@ export function getSpigetIconUrl(resource: SpigetResource): string | null {
 /**
  * Constructs direct download URL for a Spigot resource jar.
  */
-export function getSpigetDownloadUrl(resourceId: number): string {
-  return `https://cdn.spiget.org/file/spiget-resources/${resourceId}.jar`;
+export function getSpigetDownloadUrl(resourceId: number, versionId: number): string {
+  return `${SPIGET_API_BASE}/resources/${resourceId}/versions/${versionId}/download`;
 }
 
 /**

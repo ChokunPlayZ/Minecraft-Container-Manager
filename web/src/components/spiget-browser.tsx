@@ -1,3 +1,5 @@
+import { canSwitchModChannel, modChannelLabel, normalizeModChannel, RELEASE_CHANNEL, spigetChannel } from '../api/mod-channels';
+import { ModChannelBadge, ModChannelFilter } from './mod-channel-filter';
 import { Select } from './ui/select';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -47,6 +49,16 @@ interface SpigetBrowserProps {
   onModDeleted?: (modName: string) => void;
 }
 
+function buildChannel(ver: SpigetVersion) {
+  return spigetChannel(ver.name);
+}
+
+function installedChannel(mod: Mod | undefined, versions: SpigetVersion[]): string {
+  if (mod?.release_type) return normalizeModChannel(mod.release_type);
+  const current = mod && versions.find((ver) => mod.catalog_version_id ? mod.catalog_version_id === String(ver.id) : mod.version === ver.name);
+  return current ? buildChannel(current) : spigetChannel(mod?.version);
+}
+
 export function SpigetBrowser({
   server,
   installedMods,
@@ -71,6 +83,7 @@ export function SpigetBrowser({
   // Version picker dialog
   const [selectedResource, setSelectedResource] = useState<SpigetResource | null>(null);
   const [versions, setVersions] = useState<SpigetVersion[]>([]);
+  const [channelFilter, setChannelFilter] = useState<string>();
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [versionError, setVersionError] = useState<string | null>(null);
 
@@ -150,11 +163,12 @@ export function SpigetBrowser({
       return;
     }
 
+    const controller = new AbortController();
     let isMounted = true;
     setLoadingVersions(true);
     setVersionError(null);
 
-    getSpigetVersions(selectedResource.id)
+    getSpigetVersions(selectedResource.id, controller.signal, true)
       .then((vers) => {
         if (!isMounted) return;
         setVersions(vers);
@@ -169,8 +183,19 @@ export function SpigetBrowser({
 
     return () => {
       isMounted = false;
+      controller.abort();
     };
   }, [selectedResource]);
+
+  useEffect(() => {
+    setChannelFilter(undefined);
+  }, [selectedResource]);
+
+  const selectedInstalled = selectedResource ? findInstalledSpigetResource(selectedResource, installedMods) : undefined;
+  const currentChannel = !selectedInstalled && versions.some((build) => buildChannel(build) === RELEASE_CHANNEL)
+    ? RELEASE_CHANNEL : installedChannel(selectedInstalled, versions);
+  const visibleChannel = channelFilter ?? currentChannel;
+  const visibleBuilds = versions.filter((version) => visibleChannel === 'all' || buildChannel(version) === visibleChannel);
 
   const { confirm, dialog } = useModal();
   const [updatePrompt, setUpdatePrompt] = useState<{
@@ -178,6 +203,7 @@ export function SpigetBrowser({
     existingMod: Mod;
     targetUrl: string;
     targetFilename: string;
+    build: { releaseType: string; versionId: string; allowChannelSwitch?: boolean };
     resourceId?: number;
   } | null>(null);
 
@@ -210,19 +236,21 @@ export function SpigetBrowser({
     filename: string,
     title: string,
     resourceId?: number,
+    build?: { releaseType: string; versionId: string; allowChannelSwitch?: boolean },
     deleteOldMod?: Mod,
   ) {
     setInstallingId(resourceId ?? 0);
     setError(null);
 
     try {
-      const mod = await api.downloadMod(server.id, url, filename, deleteOldMod?.name, {
+      const mod = await api.downloadMod(server.id, url, filename, deleteOldMod?.file, {
         projectId: resourceId !== undefined ? String(resourceId) : undefined,
         projectSlug: title,
         provider: 'spiget',
+          ...build,
       });
       onModInstalled(mod);
-      if (deleteOldMod) {
+      if (deleteOldMod && deleteOldMod.file !== mod.file) {
         onModDeleted?.(deleteOldMod.name);
       }
 
@@ -280,23 +308,39 @@ export function SpigetBrowser({
     }
   }
 
-  async function handleInstallResource(resource: SpigetResource, versionName?: string) {
-    const filename = getSpigetSafeFilename(resource.name, versionName);
-    const downloadUrl = getSpigetDownloadUrl(resource.id);
+  async function handleInstallResource(resource: SpigetResource, version?: SpigetVersion) {
+    try {
+      const builds = version ? versions : await getSpigetVersions(resource.id);
+      const installed = findInstalledSpigetResource(resource, installedMods);
+      const channel = installedChannel(installed, builds);
+      const target = version
+        ?? (!installed ? builds.find((candidate) => buildChannel(candidate) === RELEASE_CHANNEL) : undefined)
+        ?? builds.find((candidate) => buildChannel(candidate) === channel);
+      if (!target) {
+        setSelectedResource(resource);
+        return;
+      }
+      const releaseType = buildChannel(target);
+      const switching = Boolean(installed && releaseType !== channel);
+      if (switching && (!canSwitchModChannel(channel, releaseType) || !(await confirm(
+        `Switch ${resource.name} from ${modChannelLabel(channel)} to ${modChannelLabel(releaseType)}? Future updates will stay on ${modChannelLabel(releaseType)}.`,
+        { title: 'Switch Release Channel', confirmLabel: `Switch to ${modChannelLabel(releaseType)}` },
+      )))) return;
 
-    const existingMod = findExistingOldJar(filename, resource);
-    if (existingMod) {
-      setUpdatePrompt({
-        projectTitle: resource.name,
-        existingMod,
-        targetUrl: downloadUrl,
-        targetFilename: filename,
-        resourceId: resource.id,
-      });
-      return;
+      const filename = getSpigetSafeFilename(resource.name, version?.name);
+      const downloadUrl = getSpigetDownloadUrl(resource.id, target.id);
+      const build = { releaseType, versionId: String(target.id), allowChannelSwitch: switching };
+      const existingMod = findExistingOldJar(filename, resource);
+      if (existingMod && !switching) {
+        setUpdatePrompt({
+          projectTitle: resource.name, existingMod, targetUrl: downloadUrl, targetFilename: filename, resourceId: resource.id, build,
+        });
+        return;
+      }
+      await executeInstall(downloadUrl, filename, resource.name, resource.id, build, switching ? installed : undefined);
+    } catch (err: unknown) {
+      setNotification({ type: 'error', text: err instanceof Error ? err.message : 'Download failed' });
     }
-
-    await executeInstall(downloadUrl, filename, resource.name, resource.id);
   }
 
   function checkInstalled(resource: SpigetResource): boolean {
@@ -323,6 +367,7 @@ export function SpigetBrowser({
               updatePrompt.targetFilename,
               updatePrompt.projectTitle,
               updatePrompt.resourceId,
+              updatePrompt.build,
               updatePrompt.existingMod,
             )
           }
@@ -332,6 +377,7 @@ export function SpigetBrowser({
               updatePrompt.targetFilename,
               updatePrompt.projectTitle,
               updatePrompt.resourceId,
+              updatePrompt.build,
             )
           }
           onDeleteOldOnly={() => {
@@ -596,6 +642,7 @@ export function SpigetBrowser({
             })()}
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
+              <ModChannelFilter value={visibleChannel} channels={versions.map(buildChannel)} onChange={setChannelFilter} />
               {loadingVersions && (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-6 w-6 animate-spin text-amber-600" />
@@ -609,19 +656,23 @@ export function SpigetBrowser({
                 </div>
               )}
 
-              {!loadingVersions && versions.length === 0 && !versionError && (
+              {!loadingVersions && visibleBuilds.length === 0 && !versionError && (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  No previous versions listed for this resource.
+                  No builds match this channel.
                 </p>
               )}
 
               {!loadingVersions &&
-                versions.map((ver) => {
+                visibleBuilds.map((ver) => {
+                  const channel = buildChannel(ver);
+                  const switching = Boolean(selectedInstalled && currentChannel !== channel);
+                  const locked = switching && !canSwitchModChannel(currentChannel, channel);
+
                   const verFilename = getSpigetSafeFilename(selectedResource.name, ver.name);
                   const matchingMod = installedMods.find(
-                    (m) =>
-                      m.file.toLowerCase() === verFilename.toLowerCase() ||
-                      m.file.toLowerCase() === `${verFilename.toLowerCase()}.disabled`,
+                    (m) => m.catalog_version_id
+                      ? m.project_id === String(selectedResource.id) && m.catalog_version_id === String(ver.id)
+                      : m.file.toLowerCase().replace(/\.disabled$/, '') === verFilename.toLowerCase(),
                   );
                   const isThisInstalled = Boolean(matchingMod);
 
@@ -633,6 +684,7 @@ export function SpigetBrowser({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-foreground">{ver.name}</span>
+                          <ModChannelBadge channel={channel} />
                           {isThisInstalled && (
                             <Badge
                               variant="secondary"
@@ -653,8 +705,8 @@ export function SpigetBrowser({
                       <div className="flex items-center gap-1 shrink-0">
                         <Button
                           size="sm"
-                          onClick={() => void handleInstallResource(selectedResource, ver.name)}
-                          disabled={installingId === selectedResource.id}
+                          onClick={() => void handleInstallResource(selectedResource, ver)}
+                          disabled={installingId === selectedResource.id || locked}
                           className={`h-8 gap-1.5 text-xs ${
                             isThisInstalled
                               ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
@@ -662,7 +714,7 @@ export function SpigetBrowser({
                           }`}
                         >
                           <Download className="h-3.5 w-3.5" />
-                          {isThisInstalled ? 'Reinstall' : `Install ${ver.name}`}
+                          {locked ? 'Channel locked' : switching ? `Switch to ${modChannelLabel(channel)}` : isThisInstalled ? 'Reinstall' : `Install ${ver.name}`}
                         </Button>
 
                         {matchingMod && (

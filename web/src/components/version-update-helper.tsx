@@ -362,7 +362,7 @@ export function VersionUpdateHelper({
     try {
       await api.updateModVersion(
         server.id,
-        item.mod_name,
+        item.mod_file,
         item.download_url,
         item.compatible_jar,
         {
@@ -370,6 +370,9 @@ export function VersionUpdateHelper({
           projectId: item.project_id,
           projectSlug: item.project_slug,
           provider: item.provider,
+          releaseType: item.release_type,
+          versionId: item.catalog_version_id,
+          hashes: item.hashes,
         },
       );
       onRefreshInstalled?.();

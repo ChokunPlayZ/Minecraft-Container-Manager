@@ -4,10 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +24,9 @@ func cleanVersionString(v string) string {
 type AvailableModJar struct {
 	Hashes        map[string]string `json:"hashes,omitempty"`
 	VersionID     string            `json:"version_id"`
+	Provider      string            `json:"provider,omitempty"`
+	ProjectID     string            `json:"project_id,omitempty"`
+	ProjectSlug   string            `json:"project_slug,omitempty"`
 	VersionName   string            `json:"version_name"`
 	VersionNumber string            `json:"version_number"`
 	Filename      string            `json:"filename"`
@@ -52,6 +52,7 @@ type ModUpdateInfo struct {
 	LatestVersion     string            `json:"latest_version"`
 	LatestJar         string            `json:"latest_jar"`
 	LatestDownloadURL string            `json:"latest_download_url,omitempty"`
+	CatalogVersionID  string            `json:"catalog_version_id,omitempty"`
 	LatestReleaseType string            `json:"latest_release_type,omitempty"`
 	LatestReleaseDate string            `json:"latest_release_date,omitempty"`
 	Changelog         string            `json:"changelog,omitempty"`
@@ -100,9 +101,11 @@ type hangarVersionDownload struct {
 }
 
 type hangarVersion struct {
-	Name      string                           `json:"name"`
-	CreatedAt string                           `json:"createdAt"`
-	Downloads map[string]hangarVersionDownload `json:"downloads"`
+	Channel              struct{ Name string }            `json:"channel"`
+	PlatformDependencies map[string][]string              `json:"platformDependencies"`
+	Name                 string                           `json:"name"`
+	CreatedAt            string                           `json:"createdAt"`
+	Downloads            map[string]hangarVersionDownload `json:"downloads"`
 }
 
 // Spiget API structs
@@ -130,7 +133,8 @@ type curseForgeFile struct {
 }
 
 type curseForgeFilesResponse struct {
-	Data []curseForgeFile `json:"data"`
+	Data       []curseForgeFile         `json:"data"`
+	Pagination struct{ TotalCount int } `json:"pagination"`
 }
 
 func serverLoadersForType(serverType string) []string {
@@ -203,6 +207,7 @@ type ModTargetCompatibility struct {
 	CompatibleVersion string                 `json:"compatible_version,omitempty"`
 	CompatibleJar     string                 `json:"compatible_jar,omitempty"`
 	DownloadURL       string                 `json:"download_url,omitempty"`
+	CatalogVersionID  string                 `json:"catalog_version_id,omitempty"`
 	ReleaseType       string                 `json:"release_type,omitempty"`
 	ReleaseDate       string                 `json:"release_date,omitempty"`
 	Changelog         string                 `json:"changelog,omitempty"`
@@ -388,367 +393,46 @@ func (s *Store) CheckModUpdates(ctx context.Context, serverID string, force bool
 	}
 
 	updates := make(map[string]ModUpdateInfo)
-	checkedModrinthHashes := make(map[string]bool)
-	serverLoaders := serverLoadersForType(srv.ServerType)
-	serverVersion := strings.TrimSpace(srv.Version)
 	px := s.getProxy()
-	var upstreamErrors []string
-	fetch := func(ctx context.Context, method, target string, body []byte, headers http.Header, force bool) (*proxy.ProxyResponse, error) {
-		resp, err := px.Do(ctx, method, target, body, headers, force)
-		if err == nil && (resp.StatusCode != http.StatusOK || resp.CacheStatus == "STALE" || !json.Valid(resp.Body)) {
-			err = fmt.Errorf("%s returned an unavailable or invalid response", target)
-		}
-		if err != nil {
-			upstreamErrors = append(upstreamErrors, err.Error())
-		}
-		return resp, err
+	gameVersion := strings.TrimSpace(srv.Version)
+	installedVersions := modrinthInstalledVersions(ctx, px, installedMods, force)
+	for i, mod := range installedMods {
+		installedMods[i] = withInstalledModrinthVersion(mod, installedVersions[mod.SHA1])
 	}
-	decode := func(body []byte, value any) error {
-		err := json.Unmarshal(body, value)
-		if err != nil {
-			upstreamErrors = append(upstreamErrors, "Could not decode catalog response: "+err.Error())
-		}
-		return err
-	}
-
-	// 3. Batch check via Modrinth for all mods with SHA1 hashes
-	var modsWithSha1 []Mod
-	var hashes []string
-	for _, m := range installedMods {
-		if m.SHA1 != "" && (m.Provider == "modrinth" || m.Provider == "") {
-			modsWithSha1 = append(modsWithSha1, m)
-			hashes = append(hashes, m.SHA1)
-		}
-	}
-
-	if len(hashes) > 0 {
-		payload := map[string]any{
-			"hashes":    hashes,
-			"algorithm": "sha1",
-		}
-		if len(serverLoaders) > 0 {
-			payload["loaders"] = serverLoaders
-		}
-		if serverVersion != "" {
-			payload["game_versions"] = []string{serverVersion}
-		}
-
-		modrinthUpdates, err := fetchModrinthHashUpdates(ctx, px, payload, force)
-		if err != nil {
-			upstreamErrors = append(upstreamErrors, err.Error())
-		}
-		if err == nil {
-			{
-				for _, mod := range modsWithSha1 {
-					ver, exists := modrinthUpdates[mod.SHA1]
-					if !exists || len(ver.Files) == 0 {
-						continue
-					}
-					checkedModrinthHashes[mod.SHA1] = true
-
-					var primaryFile *modrinthVersionFile
-					for i := range ver.Files {
-						if ver.Files[i].Primary {
-							primaryFile = &ver.Files[i]
-							break
-						}
-					}
-					if primaryFile == nil {
-						primaryFile = &ver.Files[0]
-					}
-
-					isSameHash := primaryFile.Hashes["sha1"] != "" &&
-						strings.EqualFold(primaryFile.Hashes["sha1"], mod.SHA1)
-					isSameFile := strings.EqualFold(primaryFile.Filename, mod.File) ||
-						strings.EqualFold(primaryFile.Filename+".disabled", mod.File) ||
-						strings.EqualFold(primaryFile.Filename, strings.TrimSuffix(mod.File, ".disabled"))
-
-					if isSameHash || (primaryFile.Hashes["sha1"] == "" && isSameFile) {
-						continue
-					}
-
-					// Persist metadata if it was not tracked before
-					if modDir, _, err := s.modsPath(serverID, srv.ServerType); err == nil && (mod.Provider == "" || mod.ProjectID == "") {
-						writeModMeta(modDir, mod.File, ModDownloadMeta{
-							Provider:    "modrinth",
-							ProjectID:   ver.ProjectID,
-							ProjectSlug: mod.ProjectSlug,
-						}, mod.ModID)
-					}
-
-					updates[mod.Name] = ModUpdateInfo{
-						ModName:           mod.Name,
-						ModFile:           mod.File,
-						Provider:          "modrinth",
-						ProjectID:         ver.ProjectID,
-						ProjectSlug:       mod.ProjectSlug,
-						Title:             mod.Title,
-						CurrentVersion:    mod.Version,
-						LatestVersion:     ver.VersionNumber,
-						LatestJar:         primaryFile.Filename,
-						LatestDownloadURL: primaryFile.URL,
-						Hashes:            primaryFile.Hashes,
-						LatestReleaseType: ver.VersionType,
-						LatestReleaseDate: ver.DatePublished,
-						Changelog:         ver.Changelog,
-					}
-					if updates[mod.Name].Title == "" {
-						u := updates[mod.Name]
-						u.Title = mod.Name
-						updates[mod.Name] = u
-					}
-					if updates[mod.Name].LatestVersion == "" {
-						u := updates[mod.Name]
-						u.LatestVersion = ver.Name
-						updates[mod.Name] = u
-					}
-				}
-			}
-		}
-	}
-
-	// 4. Check remaining mods not updated by Modrinth batch check
+	hashUpdates, upstreamErrors := modrinthUpdatesForChannels(ctx, px, installedMods, serverLoadersForType(srv.ServerType), gameVersion, force)
 	for _, mod := range installedMods {
-		if _, ok := updates[mod.Name]; ok {
+		catalog := modCatalog{Provider: "modrinth", ProjectSlug: mod.ProjectSlug, ProjectID: mod.ProjectID}
+		build, found := hashUpdates[mod.File]
+		// A project listing can recover a legacy channel when the hash lookup
+		// did not identify the installed jar.
+		if !found || (mod.ReleaseType == "" && modrinthProject(mod) != "") {
+			resolved, err := fetchModCatalog(ctx, px, mod, srv.ServerType, gameVersion, cfKey, force, false)
+			if err != nil {
+				if !found {
+					upstreamErrors = append(upstreamErrors, err.Error())
+				}
+			} else if choice, ok := selectModBuild(resolved.Builds, installedModChannel(mod, resolved.Builds)); ok {
+				catalog, build, found = resolved, choice, true
+			} else if len(resolved.Builds) > 0 {
+				found = false
+			}
+		}
+		if !found || build.IsCurrent || build.DownloadURL == "" || build.Filename == "" {
 			continue
 		}
-		if checkedModrinthHashes[mod.SHA1] {
-			continue
+		if build.ProjectID != "" {
+			catalog.ProjectID = build.ProjectID
 		}
-
-		// Hangar provider
-		if mod.Provider == "hangar" && (mod.ProjectSlug != "" || mod.ProjectID != "") {
-			slug := mod.ProjectSlug
-			if slug == "" {
-				slug = mod.ProjectID
-			}
-			hangarURL := fmt.Sprintf("https://hangar.papermc.io/api/v1/projects/%s/versions?limit=5", url.PathEscape(slug))
-			resp, err := fetch(ctx, http.MethodGet, hangarURL, nil, nil, force)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var vers struct {
-					Result []hangarVersion `json:"result"`
-				}
-				if decode(resp.Body, &vers) == nil && len(vers.Result) > 0 {
-					latest := vers.Result[0]
-					var dl hangarVersionDownload
-					if pDl, ok := latest.Downloads["PAPER"]; ok && pDl.FileInfo != nil {
-						dl = pDl
-					} else {
-						for _, anyDl := range latest.Downloads {
-							if anyDl.FileInfo != nil && anyDl.FileInfo.Name != "" {
-								dl = anyDl
-								break
-							}
-						}
-					}
-					if dl.FileInfo != nil && dl.FileInfo.Name != "" {
-						isSame := strings.EqualFold(dl.FileInfo.Name, mod.File) ||
-							strings.EqualFold(dl.FileInfo.Name+".disabled", mod.File) ||
-							(mod.Version != "" && cleanVersionString(mod.Version) == cleanVersionString(latest.Name))
-						if !isSame {
-							title := mod.Title
-							if title == "" {
-								title = mod.Name
-							}
-							updates[mod.Name] = ModUpdateInfo{
-								ModName:           mod.Name,
-								ModFile:           mod.File,
-								Provider:          "hangar",
-								ProjectSlug:       slug,
-								ProjectID:         mod.ProjectID,
-								Title:             title,
-								CurrentVersion:    mod.Version,
-								LatestVersion:     latest.Name,
-								LatestJar:         dl.FileInfo.Name,
-								LatestDownloadURL: dl.DownloadURL,
-								Hashes:            map[string]string{"sha256": dl.FileInfo.SHA256},
-								LatestReleaseDate: latest.CreatedAt,
-							}
-						}
-					}
-				}
-			}
-			continue
+		title := mod.Title
+		if title == "" {
+			title = mod.Name
 		}
-
-		// Spiget provider
-		if mod.Provider == "spiget" && mod.ProjectID != "" {
-			if resID, err := strconv.Atoi(mod.ProjectID); err == nil {
-				spigetURL := fmt.Sprintf("https://api.spiget.org/v2/resources/%d/versions?size=5&sort=-releaseDate", resID)
-				resp, err := fetch(ctx, http.MethodGet, spigetURL, nil, nil, force)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					var vers []spigetVersion
-					if decode(resp.Body, &vers) == nil && len(vers) > 0 {
-						latest := vers[0]
-						currVer := cleanVersionString(mod.Version)
-						latestVer := cleanVersionString(latest.Name)
-						if currVer == "" || (latestVer != "" && !strings.EqualFold(currVer, latestVer)) {
-							title := mod.Title
-							if title == "" {
-								title = mod.Name
-							}
-							var relDate string
-							if latest.ReleaseDate > 0 {
-								relDate = time.Unix(latest.ReleaseDate, 0).UTC().Format(time.RFC3339)
-							}
-							updates[mod.Name] = ModUpdateInfo{
-								ModName:           mod.Name,
-								ModFile:           mod.File,
-								Provider:          "spiget",
-								ProjectID:         strconv.Itoa(resID),
-								ProjectSlug:       mod.ProjectSlug,
-								Title:             title,
-								CurrentVersion:    mod.Version,
-								LatestVersion:     latest.Name,
-								LatestJar:         fmt.Sprintf("%s.jar", mod.Name),
-								LatestDownloadURL: fmt.Sprintf("https://cdn.spiget.org/file/spiget-resources/%d.jar", resID),
-								LatestReleaseDate: relDate,
-							}
-						}
-					}
-				}
-			}
-			continue
-		}
-
-		// CurseForge provider
-		if mod.Provider == "curseforge" && mod.ProjectID != "" {
-			if cfKey != "" {
-				if modID, err := strconv.Atoi(mod.ProjectID); err == nil {
-					cfURL := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?pageSize=5", modID)
-					if serverVersion != "" {
-						cfURL += fmt.Sprintf("&gameVersion=%s", url.QueryEscape(serverVersion))
-					}
-					hdr := http.Header{}
-					hdr.Set("x-api-key", cfKey)
-					resp, err := fetch(ctx, http.MethodGet, cfURL, nil, hdr, force)
-					if err == nil && resp.StatusCode == http.StatusOK {
-						var cfRes curseForgeFilesResponse
-						if decode(resp.Body, &cfRes) == nil && len(cfRes.Data) > 0 {
-							latest := cfRes.Data[0]
-							isSame := strings.EqualFold(latest.FileName, mod.File) ||
-								strings.EqualFold(latest.FileName+".disabled", mod.File) ||
-								(mod.Version != "" && cleanVersionString(mod.Version) == cleanVersionString(latest.DisplayName))
-							dlURL := latest.DownloadURL
-							if dlURL == "" && latest.ID > 0 && latest.FileName != "" {
-								dlURL = fmt.Sprintf("https://edge.forgecdn.net/files/%d/%d/%s", latest.ID/1000, latest.ID%1000, latest.FileName)
-							}
-							if !isSame && dlURL != "" {
-								title := mod.Title
-								if title == "" {
-									title = mod.Name
-								}
-								latestVer := latest.DisplayName
-								if latestVer == "" {
-									latestVer = latest.FileName
-								}
-								updates[mod.Name] = ModUpdateInfo{
-									ModName:           mod.Name,
-									ModFile:           mod.File,
-									Provider:          "curseforge",
-									ProjectID:         strconv.Itoa(modID),
-									ProjectSlug:       mod.ProjectSlug,
-									Title:             title,
-									CurrentVersion:    mod.Version,
-									LatestVersion:     latestVer,
-									LatestJar:         latest.FileName,
-									LatestDownloadURL: dlURL,
-									Hashes:            curseForgeHashes(latest.Hashes),
-									LatestReleaseDate: latest.FileDate,
-								}
-							}
-						}
-					}
-				}
-			} else {
-				upstreamErrors = append(upstreamErrors, "CurseForge checks require a shared API key in App Settings or CURSEFORGE_API_KEY on the panel")
-			}
-			continue
-		}
-
-		// Fallback: Modrinth project lookup by slug/id/mod_id
-		slugOrID := mod.ProjectSlug
-		if slugOrID == "" {
-			slugOrID = mod.ProjectID
-		}
-		if slugOrID == "" {
-			slugOrID = mod.ModID
-		}
-		if slugOrID != "" && (mod.Provider == "modrinth" || mod.Provider == "") {
-			reqURL := fmt.Sprintf("https://api.modrinth.com/v2/project/%s/version", url.PathEscape(slugOrID))
-			q := url.Values{}
-			if len(serverLoaders) > 0 {
-				loadersJSON, _ := json.Marshal(serverLoaders)
-				q.Set("loaders", string(loadersJSON))
-			}
-			if serverVersion != "" {
-				versionsJSON, _ := json.Marshal([]string{serverVersion})
-				q.Set("game_versions", string(versionsJSON))
-			}
-			if enc := q.Encode(); enc != "" {
-				reqURL += "?" + enc
-			}
-
-			resp, err := fetch(ctx, http.MethodGet, reqURL, nil, nil, force)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var vers []modrinthVersion
-				if decode(resp.Body, &vers) == nil && len(vers) > 0 {
-					latest := vers[0]
-					if len(latest.Files) > 0 {
-						var primaryFile *modrinthVersionFile
-						for i := range latest.Files {
-							if latest.Files[i].Primary {
-								primaryFile = &latest.Files[i]
-								break
-							}
-						}
-						if primaryFile == nil {
-							primaryFile = &latest.Files[0]
-						}
-
-						isSameFile := strings.EqualFold(primaryFile.Filename, mod.File) ||
-							strings.EqualFold(primaryFile.Filename+".disabled", mod.File)
-						isSameHash := mod.SHA1 != "" && primaryFile.Hashes["sha1"] != "" &&
-							strings.EqualFold(primaryFile.Hashes["sha1"], mod.SHA1)
-
-						if !isSameHash && (!isSameFile || (mod.SHA1 != "" && primaryFile.Hashes["sha1"] != "")) {
-							// Persist metadata if it was not tracked before
-							if modDir, _, err := s.modsPath(serverID, srv.ServerType); err == nil && (mod.Provider == "" || mod.ProjectID == "") {
-								writeModMeta(modDir, mod.File, ModDownloadMeta{
-									Provider:    "modrinth",
-									ProjectID:   latest.ProjectID,
-									ProjectSlug: mod.ProjectSlug,
-								}, mod.ModID)
-							}
-
-							title := mod.Title
-							if title == "" {
-								title = mod.Name
-							}
-							latestVer := latest.VersionNumber
-							if latestVer == "" {
-								latestVer = latest.Name
-							}
-							updates[mod.Name] = ModUpdateInfo{
-								ModName:           mod.Name,
-								ModFile:           mod.File,
-								Provider:          "modrinth",
-								ProjectID:         latest.ProjectID,
-								ProjectSlug:       mod.ProjectSlug,
-								Title:             title,
-								CurrentVersion:    mod.Version,
-								LatestVersion:     latestVer,
-								LatestJar:         primaryFile.Filename,
-								LatestDownloadURL: primaryFile.URL,
-								Hashes:            primaryFile.Hashes,
-								LatestReleaseType: latest.VersionType,
-								LatestReleaseDate: latest.DatePublished,
-								Changelog:         latest.Changelog,
-							}
-						}
-					}
-				}
-			}
+		updates[mod.Name] = ModUpdateInfo{
+			ModName: mod.Name, ModFile: mod.File, Provider: catalog.Provider,
+			ProjectID: catalog.ProjectID, ProjectSlug: catalog.ProjectSlug, Title: title,
+			CurrentVersion: mod.Version, LatestVersion: build.VersionNumber, LatestJar: build.Filename,
+			LatestDownloadURL: build.DownloadURL, Hashes: build.Hashes, LatestReleaseType: build.ReleaseType,
+			LatestReleaseDate: build.DatePublished, Changelog: build.Changelog, CatalogVersionID: build.VersionID,
 		}
 	}
 
@@ -776,214 +460,26 @@ func (s *Store) GetModAvailableJars(ctx context.Context, serverID, modName strin
 		return nil, fmt.Errorf("read CurseForge settings: %w", err)
 	}
 
-	listRes, err := s.ListMods(ctx, serverID)
+	mod, err := s.GetMod(ctx, serverID, modName)
 	if err != nil {
 		return nil, err
 	}
-
-	var targetMod *Mod
-	for i := range listRes.Items {
-		m := &listRes.Items[i]
-		if m.Name == modName || m.File == modName || modDisplayBase(m.File) == modName {
-			targetMod = m
-			break
-		}
-	}
-	if targetMod == nil {
-		return nil, fmt.Errorf("mod not found: %s", modName)
-	}
-
-	serverLoaders := serverLoadersForType(srv.ServerType)
-	serverVersion := strings.TrimSpace(srv.Version)
 	px := s.getProxy()
-
-	var jars []AvailableModJar
-
-	// 1. Modrinth resolution
-	slugOrID := targetMod.ProjectSlug
-	if slugOrID == "" {
-		slugOrID = targetMod.ProjectID
+	installed := modrinthInstalledVersions(ctx, px, []Mod{mod}, false)
+	mod = withInstalledModrinthVersion(mod, installed[mod.SHA1])
+	catalog, err := fetchModCatalog(ctx, px, mod, srv.ServerType, strings.TrimSpace(srv.Version), cfKey, false, true)
+	if err != nil {
+		return nil, err
 	}
-	if slugOrID == "" {
-		slugOrID = targetMod.ModID
+	jars := make([]AvailableModJar, 0, len(catalog.Builds))
+	for _, build := range catalog.Builds {
+		jar := build.AvailableModJar
+		jar.Provider, jar.ProjectID, jar.ProjectSlug = catalog.Provider, catalog.ProjectID, catalog.ProjectSlug
+		if build.ProjectID != "" {
+			jar.ProjectID = build.ProjectID
+		}
+		jars = append(jars, jar)
 	}
-
-	if targetMod.Provider == "modrinth" || (targetMod.Provider == "" && slugOrID != "") {
-		reqURL := fmt.Sprintf("https://api.modrinth.com/v2/project/%s/version", url.PathEscape(slugOrID))
-		q := url.Values{}
-		if len(serverLoaders) > 0 {
-			loadersJSON, _ := json.Marshal(serverLoaders)
-			q.Set("loaders", string(loadersJSON))
-		}
-		if serverVersion != "" {
-			versionsJSON, _ := json.Marshal([]string{serverVersion})
-			q.Set("game_versions", string(versionsJSON))
-		}
-		if enc := q.Encode(); enc != "" {
-			reqURL += "?" + enc
-		}
-
-		resp, err := px.Do(ctx, http.MethodGet, reqURL, nil, nil, false)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			var vers []modrinthVersion
-			if json.Unmarshal(resp.Body, &vers) == nil {
-				for _, v := range vers {
-					for _, f := range v.Files {
-						isCur := (targetMod.SHA1 != "" && f.Hashes["sha1"] != "" && strings.EqualFold(targetMod.SHA1, f.Hashes["sha1"])) ||
-							strings.EqualFold(f.Filename, targetMod.File) ||
-							strings.EqualFold(f.Filename+".disabled", targetMod.File)
-						jars = append(jars, AvailableModJar{
-							VersionID:     v.ID,
-							VersionName:   v.Name,
-							VersionNumber: v.VersionNumber,
-							Filename:      f.Filename,
-							DownloadURL:   f.URL,
-							Hashes:        f.Hashes,
-							SizeBytes:     f.Size,
-							ReleaseType:   v.VersionType,
-							GameVersions:  v.GameVersions,
-							Loaders:       v.Loaders,
-							DatePublished: v.DatePublished,
-							IsCurrent:     isCur,
-						})
-					}
-				}
-				if len(jars) > 0 {
-					return jars, nil
-				}
-			}
-		}
-	}
-
-	// 2. Hangar resolution
-	if targetMod.Provider == "hangar" {
-		slug := targetMod.ProjectSlug
-		if slug == "" {
-			slug = targetMod.ProjectID
-		}
-		if slug != "" {
-			hURL := fmt.Sprintf("https://hangar.papermc.io/api/v1/projects/%s/versions?limit=25", url.PathEscape(slug))
-			resp, err := px.Do(ctx, http.MethodGet, hURL, nil, nil, false)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var vers struct {
-					Result []hangarVersion `json:"result"`
-				}
-				if json.Unmarshal(resp.Body, &vers) == nil {
-					for _, v := range vers.Result {
-						var dl hangarVersionDownload
-						if pDl, ok := v.Downloads["PAPER"]; ok && pDl.FileInfo != nil {
-							dl = pDl
-						} else {
-							for _, anyDl := range v.Downloads {
-								if anyDl.FileInfo != nil && anyDl.FileInfo.Name != "" {
-									dl = anyDl
-									break
-								}
-							}
-						}
-						if dl.FileInfo != nil && dl.FileInfo.Name != "" {
-							isCur := strings.EqualFold(dl.FileInfo.Name, targetMod.File) ||
-								strings.EqualFold(dl.FileInfo.Name+".disabled", targetMod.File)
-							jars = append(jars, AvailableModJar{
-								VersionID:     v.Name,
-								VersionName:   v.Name,
-								VersionNumber: v.Name,
-								Filename:      dl.FileInfo.Name,
-								DownloadURL:   dl.DownloadURL,
-								Hashes:        map[string]string{"sha256": dl.FileInfo.SHA256},
-								SizeBytes:     dl.FileInfo.SizeBytes,
-								DatePublished: v.CreatedAt,
-								IsCurrent:     isCur,
-							})
-						}
-					}
-					if len(jars) > 0 {
-						return jars, nil
-					}
-				}
-			}
-		}
-	}
-
-	// 3. Spiget resolution
-	if targetMod.Provider == "spiget" && targetMod.ProjectID != "" {
-		if resID, err := strconv.Atoi(targetMod.ProjectID); err == nil {
-			sURL := fmt.Sprintf("https://api.spiget.org/v2/resources/%d/versions?size=25&sort=-releaseDate", resID)
-			resp, err := px.Do(ctx, http.MethodGet, sURL, nil, nil, false)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var vers []spigetVersion
-				if json.Unmarshal(resp.Body, &vers) == nil {
-					for _, v := range vers {
-						isCur := targetMod.Version != "" && strings.EqualFold(targetMod.Version, v.Name)
-						var relDate string
-						if v.ReleaseDate > 0 {
-							relDate = time.Unix(v.ReleaseDate, 0).UTC().Format(time.RFC3339)
-						}
-						jars = append(jars, AvailableModJar{
-							VersionID:     strconv.Itoa(v.ID),
-							VersionName:   v.Name,
-							VersionNumber: v.Name,
-							Filename:      fmt.Sprintf("%s-%s.jar", targetMod.Name, v.Name),
-							DownloadURL:   fmt.Sprintf("https://cdn.spiget.org/file/spiget-resources/%d.jar", resID),
-							DatePublished: relDate,
-							IsCurrent:     isCur,
-						})
-					}
-					if len(jars) > 0 {
-						return jars, nil
-					}
-				}
-			}
-		}
-	}
-
-	// 4. CurseForge resolution
-	if targetMod.Provider == "curseforge" && targetMod.ProjectID != "" {
-		if modID, err := strconv.Atoi(targetMod.ProjectID); err == nil {
-			cfURL := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?pageSize=25", modID)
-			if serverVersion != "" {
-				cfURL += fmt.Sprintf("&gameVersion=%s", url.QueryEscape(serverVersion))
-			}
-			var hdr http.Header
-			if cfKey != "" {
-				hdr = make(http.Header)
-				hdr.Set("x-api-key", cfKey)
-			}
-			resp, err := px.Do(ctx, http.MethodGet, cfURL, nil, hdr, false)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var cfRes curseForgeFilesResponse
-				if json.Unmarshal(resp.Body, &cfRes) == nil {
-					for _, f := range cfRes.Data {
-						isCur := strings.EqualFold(f.FileName, targetMod.File) ||
-							strings.EqualFold(f.FileName+".disabled", targetMod.File)
-						relType := "release"
-						if f.ReleaseType == 2 {
-							relType = "beta"
-						} else if f.ReleaseType == 3 {
-							relType = "alpha"
-						}
-						jars = append(jars, AvailableModJar{
-							VersionID:     strconv.Itoa(f.ID),
-							VersionName:   f.DisplayName,
-							VersionNumber: f.DisplayName,
-							Filename:      f.FileName,
-							DownloadURL:   f.DownloadURL,
-							Hashes:        curseForgeHashes(f.Hashes),
-							SizeBytes:     f.FileLength,
-							ReleaseType:   relType,
-							GameVersions:  f.GameVersions,
-							DatePublished: f.FileDate,
-							IsCurrent:     isCur,
-						})
-					}
-					if len(jars) > 0 {
-						return jars, nil
-					}
-				}
-			}
-		}
-	}
-
 	return jars, nil
 }
 
@@ -1088,406 +584,58 @@ func (s *Store) CheckTargetVersionCompatibility(ctx context.Context, serverID, t
 	}
 
 	modsResult := make(map[string]ModTargetCompatibility)
-	serverLoaders := serverLoadersForType(srv.ServerType)
 	px := s.getProxy()
-
-	// 4. Batch check via Modrinth for all mods with SHA1 hashes
-	var modsWithSha1 []Mod
-	var hashes []string
-	for _, m := range installedMods {
-		if m.SHA1 != "" && (m.Provider == "modrinth" || m.Provider == "") {
-			modsWithSha1 = append(modsWithSha1, m)
-			hashes = append(hashes, m.SHA1)
-		}
+	installedVersions := modrinthInstalledVersions(ctx, px, installedMods, force)
+	for i, mod := range installedMods {
+		installedMods[i] = withInstalledModrinthVersion(mod, installedVersions[mod.SHA1])
 	}
-
-	if len(hashes) > 0 {
-		payload := map[string]any{
-			"hashes":    hashes,
-			"algorithm": "sha1",
-		}
-		if len(serverLoaders) > 0 {
-			payload["loaders"] = serverLoaders
-		}
-		if targetVersion != "" {
-			payload["game_versions"] = []string{targetVersion}
-		}
-
-		bodyBytes, _ := json.Marshal(payload)
-		resp, err := px.Do(ctx, http.MethodPost, "https://api.modrinth.com/v2/version_files/update", bodyBytes, nil, force)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			var modrinthUpdates map[string]modrinthVersion
-			if json.Unmarshal(resp.Body, &modrinthUpdates) == nil {
-				for _, mod := range modsWithSha1 {
-					ver, exists := modrinthUpdates[mod.SHA1]
-					if !exists || len(ver.Files) == 0 {
-						continue
-					}
-
-					var primaryFile *modrinthVersionFile
-					for i := range ver.Files {
-						if ver.Files[i].Primary {
-							primaryFile = &ver.Files[i]
-							break
-						}
-					}
-					if primaryFile == nil {
-						primaryFile = &ver.Files[0]
-					}
-
-					isSameHash := primaryFile.Hashes["sha1"] != "" &&
-						strings.EqualFold(primaryFile.Hashes["sha1"], mod.SHA1)
-					isSameFile := strings.EqualFold(primaryFile.Filename, mod.File) ||
-						strings.EqualFold(primaryFile.Filename+".disabled", mod.File) ||
-						strings.EqualFold(primaryFile.Filename, strings.TrimSuffix(mod.File, ".disabled"))
-
-					title := mod.Title
-					if title == "" {
-						title = mod.Name
-					}
-
-					// Persist metadata if it was not tracked before
-					if modDir, _, err := s.modsPath(serverID, srv.ServerType); err == nil && (mod.Provider == "" || mod.ProjectID == "") {
-						writeModMeta(modDir, mod.File, ModDownloadMeta{
-							Provider:    "modrinth",
-							ProjectID:   ver.ProjectID,
-							ProjectSlug: mod.ProjectSlug,
-						}, mod.ModID)
-					}
-
-					status := ModCompatUpdateAvailable
-					if isSameHash && isSameFile {
-						status = ModCompatAlreadyCompatible
-					}
-
-					verNum := ver.VersionNumber
-					if verNum == "" {
-						verNum = ver.Name
-					}
-
-					modsResult[mod.Name] = ModTargetCompatibility{
-						ModName:           mod.Name,
-						ModFile:           mod.File,
-						Title:             title,
-						Provider:          "modrinth",
-						ProjectID:         ver.ProjectID,
-						ProjectSlug:       mod.ProjectSlug,
-						CurrentVersion:    mod.Version,
-						Status:            status,
-						CompatibleVersion: verNum,
-						CompatibleJar:     primaryFile.Filename,
-						DownloadURL:       primaryFile.URL,
-						Hashes:            primaryFile.Hashes,
-						ReleaseType:       ver.VersionType,
-						ReleaseDate:       ver.DatePublished,
-						Changelog:         ver.Changelog,
-					}
-				}
-			}
-		}
-	}
-
-	// 5. Inspect remaining mods not resolved in batch
+	hashUpdates, _ := modrinthUpdatesForChannels(ctx, px, installedMods, serverLoadersForType(srv.ServerType), targetVersion, force)
 	for _, mod := range installedMods {
-		if _, ok := modsResult[mod.Name]; ok {
-			continue
-		}
-
 		title := mod.Title
 		if title == "" {
 			title = mod.Name
 		}
-
-		// Hangar provider
-		if mod.Provider == "hangar" && (mod.ProjectSlug != "" || mod.ProjectID != "") {
-			slug := mod.ProjectSlug
-			if slug == "" {
-				slug = mod.ProjectID
-			}
-			hangarURL := fmt.Sprintf("https://hangar.papermc.io/api/v1/projects/%s/versions?limit=15", url.PathEscape(slug))
-			resp, err := px.Do(ctx, http.MethodGet, hangarURL, nil, nil, force)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var vers struct {
-					Result []hangarVersion `json:"result"`
-				}
-				if json.Unmarshal(resp.Body, &vers) == nil && len(vers.Result) > 0 {
-					var foundMatch bool
-					for _, v := range vers.Result {
-						var dl hangarVersionDownload
-						if pDl, ok := v.Downloads["PAPER"]; ok && pDl.FileInfo != nil {
-							dl = pDl
-						} else {
-							for _, anyDl := range v.Downloads {
-								if anyDl.FileInfo != nil && anyDl.FileInfo.Name != "" {
-									dl = anyDl
-									break
-								}
-							}
-						}
-						if dl.FileInfo != nil && dl.FileInfo.Name != "" {
-							isSame := strings.EqualFold(dl.FileInfo.Name, mod.File) ||
-								strings.EqualFold(dl.FileInfo.Name+".disabled", mod.File) ||
-								(mod.Version != "" && cleanVersionString(mod.Version) == cleanVersionString(v.Name))
-
-							status := ModCompatUpdateAvailable
-							if isSame {
-								status = ModCompatAlreadyCompatible
-							}
-							modsResult[mod.Name] = ModTargetCompatibility{
-								ModName:           mod.Name,
-								ModFile:           mod.File,
-								Title:             title,
-								Provider:          "hangar",
-								ProjectSlug:       slug,
-								ProjectID:         mod.ProjectID,
-								CurrentVersion:    mod.Version,
-								Status:            status,
-								CompatibleVersion: v.Name,
-								CompatibleJar:     dl.FileInfo.Name,
-								DownloadURL:       dl.DownloadURL,
-								Hashes:            map[string]string{"sha256": dl.FileInfo.SHA256},
-								ReleaseDate:       v.CreatedAt,
-							}
-							foundMatch = true
-							break
-						}
-					}
-					if foundMatch {
-						continue
+		item := ModTargetCompatibility{
+			ModName: mod.Name, ModFile: mod.File, Title: title, Provider: mod.Provider,
+			ProjectID: mod.ProjectID, ProjectSlug: mod.ProjectSlug, CurrentVersion: mod.Version, Status: ModCompatUntracked,
+		}
+		build, found := hashUpdates[mod.File]
+		if found {
+			item.Provider = "modrinth"
+		}
+		if !found || (mod.ReleaseType == "" && modrinthProject(mod) != "") {
+			catalog, err := fetchModCatalog(ctx, px, mod, srv.ServerType, targetVersion, cfKey, force, false)
+			if err == nil && catalog.Provider != "" {
+				item.Provider, item.ProjectID, item.ProjectSlug = catalog.Provider, catalog.ProjectID, catalog.ProjectSlug
+				channel := installedModChannel(mod, catalog.Builds)
+				if mod.ReleaseType == "" && len(catalog.Builds) > 0 && targetVersion != srv.Version && mod.Provider != "spiget" {
+					current, err := fetchModCatalog(ctx, px, mod, srv.ServerType, srv.Version, cfKey, false, false)
+					if err == nil {
+						channel = installedModChannel(mod, append(current.Builds, catalog.Builds...))
 					}
 				}
-			}
-			modsResult[mod.Name] = ModTargetCompatibility{
-				ModName:        mod.Name,
-				ModFile:        mod.File,
-				Title:          title,
-				Provider:       "hangar",
-				ProjectSlug:    slug,
-				CurrentVersion: mod.Version,
-				Status:         ModCompatNotAvailable,
-			}
-			continue
-		}
-
-		// CurseForge provider
-		if mod.Provider == "curseforge" && mod.ProjectID != "" {
-			if cfKey != "" {
-				if modID, err := strconv.Atoi(mod.ProjectID); err == nil {
-					cfURL := fmt.Sprintf("https://api.curseforge.com/v1/mods/%d/files?pageSize=10", modID)
-					if targetVersion != "" {
-						cfURL += fmt.Sprintf("&gameVersion=%s", url.QueryEscape(targetVersion))
-					}
-					hdr := make(http.Header)
-					hdr.Set("x-api-key", cfKey)
-					resp, err := px.Do(ctx, http.MethodGet, cfURL, nil, hdr, force)
-					if err == nil && resp.StatusCode == http.StatusOK {
-						var cfRes curseForgeFilesResponse
-						if json.Unmarshal(resp.Body, &cfRes) == nil && len(cfRes.Data) > 0 {
-							latest := cfRes.Data[0]
-							isSame := strings.EqualFold(latest.FileName, mod.File) ||
-								strings.EqualFold(latest.FileName+".disabled", mod.File) ||
-								(mod.Version != "" && cleanVersionString(mod.Version) == cleanVersionString(latest.DisplayName))
-
-							status := ModCompatUpdateAvailable
-							if isSame {
-								status = ModCompatAlreadyCompatible
-							}
-							latestVer := latest.DisplayName
-							if latestVer == "" {
-								latestVer = latest.FileName
-							}
-							dlURL := latest.DownloadURL
-							if dlURL == "" && latest.ID > 0 && latest.FileName != "" {
-								dlURL = fmt.Sprintf("https://edge.forgecdn.net/files/%d/%d/%s", latest.ID/1000, latest.ID%1000, latest.FileName)
-							}
-							modsResult[mod.Name] = ModTargetCompatibility{
-								ModName:           mod.Name,
-								ModFile:           mod.File,
-								Title:             title,
-								Provider:          "curseforge",
-								ProjectID:         strconv.Itoa(modID),
-								ProjectSlug:       mod.ProjectSlug,
-								CurrentVersion:    mod.Version,
-								Status:            status,
-								CompatibleVersion: latestVer,
-								CompatibleJar:     latest.FileName,
-								DownloadURL:       dlURL,
-								Hashes:            curseForgeHashes(latest.Hashes),
-								ReleaseDate:       latest.FileDate,
-							}
-							continue
-						}
-					}
+				if choice, ok := selectModBuild(catalog.Builds, channel); ok || len(catalog.Builds) > 0 {
+					build, found = choice, ok
 				}
 			}
-			modsResult[mod.Name] = ModTargetCompatibility{
-				ModName:        mod.Name,
-				ModFile:        mod.File,
-				Title:          title,
-				Provider:       "curseforge",
-				ProjectID:      mod.ProjectID,
-				CurrentVersion: mod.Version,
-				Status:         ModCompatNotAvailable,
-			}
-			continue
 		}
-
-		// Spiget provider
-		if mod.Provider == "spiget" && mod.ProjectID != "" {
-			if resID, err := strconv.Atoi(mod.ProjectID); err == nil {
-				spigetURL := fmt.Sprintf("https://api.spiget.org/v2/resources/%d/versions?size=5&sort=-releaseDate", resID)
-				resp, err := px.Do(ctx, http.MethodGet, spigetURL, nil, nil, force)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					var vers []spigetVersion
-					if json.Unmarshal(resp.Body, &vers) == nil && len(vers) > 0 {
-						latest := vers[0]
-						currVer := cleanVersionString(mod.Version)
-						latestVer := cleanVersionString(latest.Name)
-						isSame := currVer != "" && strings.EqualFold(currVer, latestVer)
-						status := ModCompatUpdateAvailable
-						if isSame {
-							status = ModCompatAlreadyCompatible
-						}
-						var relDate string
-						if latest.ReleaseDate > 0 {
-							relDate = time.Unix(latest.ReleaseDate, 0).UTC().Format(time.RFC3339)
-						}
-						modsResult[mod.Name] = ModTargetCompatibility{
-							ModName:           mod.Name,
-							ModFile:           mod.File,
-							Title:             title,
-							Provider:          "spiget",
-							ProjectID:         strconv.Itoa(resID),
-							CurrentVersion:    mod.Version,
-							Status:            status,
-							CompatibleVersion: latest.Name,
-							CompatibleJar:     fmt.Sprintf("%s.jar", mod.Name),
-							DownloadURL:       fmt.Sprintf("https://cdn.spiget.org/file/spiget-resources/%d.jar", resID),
-							ReleaseDate:       relDate,
-						}
-						continue
-					}
-				}
-			}
-			modsResult[mod.Name] = ModTargetCompatibility{
-				ModName:        mod.Name,
-				ModFile:        mod.File,
-				Title:          title,
-				Provider:       "spiget",
-				ProjectID:      mod.ProjectID,
-				CurrentVersion: mod.Version,
-				Status:         ModCompatNotAvailable,
-			}
-			continue
+		if item.Provider != "" {
+			item.Status = ModCompatNotAvailable
 		}
-
-		// Modrinth lookup by project slug / project ID / mod ID
-		slugOrID := mod.ProjectSlug
-		if slugOrID == "" {
-			slugOrID = mod.ProjectID
-		}
-		if slugOrID == "" {
-			slugOrID = mod.ModID
-		}
-		if slugOrID != "" && (mod.Provider == "modrinth" || mod.Provider == "") {
-			reqURL := fmt.Sprintf("https://api.modrinth.com/v2/project/%s/version", url.PathEscape(slugOrID))
-			q := url.Values{}
-			if len(serverLoaders) > 0 {
-				loadersJSON, _ := json.Marshal(serverLoaders)
-				q.Set("loaders", string(loadersJSON))
+		if found {
+			item.Status = ModCompatUpdateAvailable
+			if build.IsCurrent {
+				item.Status = ModCompatAlreadyCompatible
 			}
-			if targetVersion != "" {
-				versionsJSON, _ := json.Marshal([]string{targetVersion})
-				q.Set("game_versions", string(versionsJSON))
+			if build.ProjectID != "" {
+				item.ProjectID = build.ProjectID
 			}
-			if enc := q.Encode(); enc != "" {
-				reqURL += "?" + enc
-			}
-
-			resp, err := px.Do(ctx, http.MethodGet, reqURL, nil, nil, force)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var vers []modrinthVersion
-				if json.Unmarshal(resp.Body, &vers) == nil && len(vers) > 0 {
-					latest := vers[0]
-					if len(latest.Files) > 0 {
-						var primaryFile *modrinthVersionFile
-						for i := range latest.Files {
-							if latest.Files[i].Primary {
-								primaryFile = &latest.Files[i]
-								break
-							}
-						}
-						if primaryFile == nil {
-							primaryFile = &latest.Files[0]
-						}
-
-						isSameFile := strings.EqualFold(primaryFile.Filename, mod.File) ||
-							strings.EqualFold(primaryFile.Filename+".disabled", mod.File)
-						isSameHash := mod.SHA1 != "" && primaryFile.Hashes["sha1"] != "" &&
-							strings.EqualFold(primaryFile.Hashes["sha1"], mod.SHA1)
-
-						status := ModCompatUpdateAvailable
-						if isSameFile || isSameHash {
-							status = ModCompatAlreadyCompatible
-						}
-
-						// Persist metadata
-						if modDir, _, err := s.modsPath(serverID, srv.ServerType); err == nil && (mod.Provider == "" || mod.ProjectID == "") {
-							writeModMeta(modDir, mod.File, ModDownloadMeta{
-								Provider:    "modrinth",
-								ProjectID:   latest.ProjectID,
-								ProjectSlug: mod.ProjectSlug,
-							}, mod.ModID)
-						}
-
-						verNum := latest.VersionNumber
-						if verNum == "" {
-							verNum = latest.Name
-						}
-
-						modsResult[mod.Name] = ModTargetCompatibility{
-							ModName:           mod.Name,
-							ModFile:           mod.File,
-							Title:             title,
-							Provider:          "modrinth",
-							ProjectID:         latest.ProjectID,
-							ProjectSlug:       mod.ProjectSlug,
-							CurrentVersion:    mod.Version,
-							Status:            status,
-							CompatibleVersion: verNum,
-							CompatibleJar:     primaryFile.Filename,
-							DownloadURL:       primaryFile.URL,
-							Hashes:            primaryFile.Hashes,
-							ReleaseType:       latest.VersionType,
-							ReleaseDate:       latest.DatePublished,
-							Changelog:         latest.Changelog,
-						}
-						continue
-					}
-				}
-				// The project is on Modrinth, but has no version for targetVersion
-				modsResult[mod.Name] = ModTargetCompatibility{
-					ModName:        mod.Name,
-					ModFile:        mod.File,
-					Title:          title,
-					Provider:       "modrinth",
-					ProjectSlug:    mod.ProjectSlug,
-					ProjectID:      mod.ProjectID,
-					CurrentVersion: mod.Version,
-					Status:         ModCompatNotAvailable,
-				}
-				continue
-			}
+			item.CompatibleVersion, item.CompatibleJar = build.VersionNumber, build.Filename
+			item.DownloadURL, item.Hashes = build.DownloadURL, build.Hashes
+			item.ReleaseType, item.ReleaseDate = build.ReleaseType, build.DatePublished
+			item.CatalogVersionID, item.Changelog = build.VersionID, build.Changelog
 		}
-
-		// If no provider and no match was found:
-		modsResult[mod.Name] = ModTargetCompatibility{
-			ModName:        mod.Name,
-			ModFile:        mod.File,
-			Title:          title,
-			CurrentVersion: mod.Version,
-			Status:         ModCompatUntracked,
-		}
+		modsResult[mod.Name] = item
 	}
 
 	// 6. Aggregate report metrics
@@ -1588,14 +736,16 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 		})
 
 		meta := ModDownloadMeta{
-			Hashes:      item.Hashes,
-			ProjectID:   item.ProjectID,
-			ProjectSlug: item.ProjectSlug,
-			Provider:    item.Provider,
+			Hashes:           item.Hashes,
+			ProjectID:        item.ProjectID,
+			ProjectSlug:      item.ProjectSlug,
+			Provider:         item.Provider,
+			CatalogVersionID: item.CatalogVersionID,
+			ReleaseType:      item.ReleaseType,
 		}
 
 		// Download new jar first to prevent losing the existing jar if download fails
-		_, downErr := s.DownloadMod(ctx, serverID, item.CompatibleJar, item.DownloadURL, meta)
+		_, downErr := s.ReplaceModFromURL(ctx, serverID, item.CompatibleJar, item.DownloadURL, item.ModFile, false, meta)
 		if downErr != nil {
 			res.Failed++
 			res.Items = append(res.Items, BatchUpdateModItem{
@@ -1606,14 +756,6 @@ func (s *Store) BatchUpdateTargetMods(ctx context.Context, serverID, targetVersi
 				Error:    downErr.Error(),
 			})
 		} else {
-			// Download succeeded! Only delete old mod jar if filename is different from new jar
-			if !strings.EqualFold(item.ModFile, item.CompatibleJar) {
-				if deleteErr := s.DeleteMod(ctx, serverID, item.ModFile); deleteErr != nil {
-					res.Failed++
-					res.Items = append(res.Items, BatchUpdateModItem{ModName: item.ModName, Original: item.ModFile, Success: false, Error: "replacement saved but old artifact could not be removed: " + deleteErr.Error()})
-					continue
-				}
-			}
 			res.Updated++
 			res.Items = append(res.Items, BatchUpdateModItem{
 				ModName:  item.ModName,
@@ -1697,14 +839,16 @@ func (s *Store) BatchUpdateMods(ctx context.Context, serverID string, modNames [
 		})
 
 		meta := ModDownloadMeta{
-			Hashes:      item.Hashes,
-			ProjectID:   item.ProjectID,
-			ProjectSlug: item.ProjectSlug,
-			Provider:    item.Provider,
+			Hashes:           item.Hashes,
+			ProjectID:        item.ProjectID,
+			ProjectSlug:      item.ProjectSlug,
+			Provider:         item.Provider,
+			CatalogVersionID: item.CatalogVersionID,
+			ReleaseType:      item.LatestReleaseType,
 		}
 
 		// Download new jar first to prevent losing the existing jar if download fails
-		_, downErr := s.DownloadMod(ctx, serverID, item.LatestJar, item.LatestDownloadURL, meta)
+		_, downErr := s.ReplaceModFromURL(ctx, serverID, item.LatestJar, item.LatestDownloadURL, item.ModFile, false, meta)
 		if downErr != nil {
 			res.Failed++
 			res.Items = append(res.Items, BatchUpdateModItem{
@@ -1715,14 +859,6 @@ func (s *Store) BatchUpdateMods(ctx context.Context, serverID string, modNames [
 				Error:    downErr.Error(),
 			})
 		} else {
-			// Download succeeded! Only delete old mod jar if filename is different from new jar
-			if !strings.EqualFold(item.ModFile, item.LatestJar) {
-				if deleteErr := s.DeleteMod(ctx, serverID, item.ModFile); deleteErr != nil {
-					res.Failed++
-					res.Items = append(res.Items, BatchUpdateModItem{ModName: item.ModName, Original: item.ModFile, Success: false, Error: "replacement saved but old artifact could not be removed: " + deleteErr.Error()})
-					continue
-				}
-			}
 			res.Updated++
 			res.Items = append(res.Items, BatchUpdateModItem{
 				ModName:  item.ModName,

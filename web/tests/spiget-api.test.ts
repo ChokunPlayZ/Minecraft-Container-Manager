@@ -102,8 +102,8 @@ describe('Spiget (SpigotMC) API client', () => {
     expect(getSpigetIconUrl(baseRes)).toBeNull();
   });
 
-  it('getSpigetDownloadUrl generates direct CDN link', () => {
-    expect(getSpigetDownloadUrl(28140)).toBe('https://cdn.spiget.org/file/spiget-resources/28140.jar');
+  it('getSpigetDownloadUrl pins the requested version', () => {
+    expect(getSpigetDownloadUrl(28140, 231)).toBe('https://api.spiget.org/v2/resources/28140/versions/231/download');
   });
 
   it('getSpigetSafeFilename produces filesystem safe jar names', () => {

@@ -1,3 +1,5 @@
+import { canSwitchModChannel, modChannelLabel, normalizeModChannel } from '../api/mod-channels';
+import { ModChannelBadge, ModChannelFilter } from './mod-channel-filter';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useEffect, useState } from 'react';
 import {
@@ -49,6 +51,7 @@ export function ModJarPickerDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFilter, setSearchFilter] = useState('');
+  const [channelFilter, setChannelFilter] = useState<string>();
   const [selectedJarUrl, setSelectedJarUrl] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -66,6 +69,7 @@ export function ModJarPickerDialog({
       return;
     }
 
+    setChannelFilter(undefined);
     let isMounted = true;
     const controller = new AbortController();
 
@@ -90,6 +94,9 @@ export function ModJarPickerDialog({
             downloadUrl: j.download_url,
             sizeBytes: j.size_bytes,
             releaseType: j.release_type,
+            provider: j.provider,
+            projectId: j.project_id,
+            projectSlug: j.project_slug,
             gameVersions: j.game_versions,
             loaders: j.loaders,
             datePublished: j.date_published,
@@ -155,12 +162,23 @@ export function ModJarPickerDialog({
 
   if (!isOpen) return null;
 
+  const currentChannel = normalizeModChannel(mod.release_type || jars.find((jar) => jar.isCurrent)?.releaseType
+    || (mod.provider === 'spiget' ? undefined : 'release'));
+  const visibleChannel = channelFilter ?? currentChannel;
+  const viewingChannelSwitch = activeTab === 'catalog' && canSwitchModChannel(currentChannel, visibleChannel);
+  const switchChannels = [...new Set(jars
+    .filter((jar) => jar.downloadUrl && canSwitchModChannel(currentChannel, normalizeModChannel(jar.releaseType)))
+    .map((jar) => normalizeModChannel(jar.releaseType)))];
+
   async function handlePickJar(jar: AvailableModJar) {
+    const nextChannel = normalizeModChannel(jar.releaseType);
+    const switching = nextChannel !== currentChannel;
+    if (switching && !canSwitchModChannel(currentChannel, nextChannel)) return;
     setIsUpdating(true);
     setError(null);
     setSelectedJarUrl(jar.downloadUrl);
 
-    const oldName = deleteOldJar ? mod.name : undefined;
+    const oldName = deleteOldJar || switching ? mod.file : undefined;
 
     try {
       const updated = await api.downloadMod(
@@ -169,10 +187,13 @@ export function ModJarPickerDialog({
         jar.filename,
         oldName,
         {
-          projectId: updateInfo?.projectId || mod.project_id,
-          projectSlug: updateInfo?.projectSlug || mod.project_slug,
-          provider: updateInfo?.provider || mod.provider,
- hashes:jar.hashes,
+          projectId: jar.projectId || updateInfo?.projectId || mod.project_id,
+          projectSlug: jar.projectSlug || updateInfo?.projectSlug || mod.project_slug,
+          provider: jar.provider || updateInfo?.provider || mod.provider,
+          hashes: jar.hashes,
+          releaseType: nextChannel,
+          versionId: jar.versionId,
+          allowChannelSwitch: switching,
         },
       );
       onUpdated(updated);
@@ -217,6 +238,7 @@ export function ModJarPickerDialog({
   }
 
   const filteredJars = jars.filter((j) => {
+    if (visibleChannel !== 'all' && normalizeModChannel(j.releaseType) !== visibleChannel) return false;
     if (!searchFilter.trim()) return true;
     const q = searchFilter.toLowerCase();
     return (
@@ -288,6 +310,7 @@ export function ModJarPickerDialog({
               <span className="font-mono font-medium text-destructive dark:text-red-400 truncate" title={mod.file}>
                 {mod.file}
               </span>
+              <ModChannelBadge channel={currentChannel} />
               {mod.version && (
                 <Badge variant="secondary" className="text-[11px] px-1.5 py-0 font-mono shrink-0">
                   v{mod.version}
@@ -295,7 +318,8 @@ export function ModJarPickerDialog({
               )}
             </div>
 
-            {updateInfo?.latestJar && updateInfo.latestJar !== mod.file && (
+            {updateInfo?.latestJar && updateInfo.latestJar !== mod.file &&
+              (!updateInfo.latestReleaseType || normalizeModChannel(updateInfo.latestReleaseType) === currentChannel) && (
               <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 font-semibold shrink-0">
                 <ArrowRight className="h-3.5 w-3.5" />
                 <span>Latest: {updateInfo.latestVersion}</span>
@@ -376,6 +400,15 @@ export function ModJarPickerDialog({
                 </div>
               ) : (
                 <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ModChannelFilter value={visibleChannel} channels={jars.map((jar) => normalizeModChannel(jar.releaseType))} onChange={setChannelFilter} />
+                    {switchChannels.filter((channel) => channel !== visibleChannel && visibleChannel !== 'all').map((channel) => (
+                      <Button key={channel} variant="outline" size="sm" onClick={() => setChannelFilter(channel)}>
+                        View {modChannelLabel(channel)} builds
+                      </Button>
+                    ))}
+                  </div>
+                  {filteredJars.length === 0 && <p className="py-4 text-xs text-muted-foreground">No builds match these filters.</p>}
                   {jars.length > 4 && (
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -392,6 +425,9 @@ export function ModJarPickerDialog({
                     {filteredJars.map((j) => {
                       const isPickingThis = isUpdating && selectedJarUrl === j.downloadUrl;
                       const isAlreadyInstalled = j.isCurrent;
+                      const channel = normalizeModChannel(j.releaseType);
+                      const switching = currentChannel !== channel;
+                      const locked = switching && !canSwitchModChannel(currentChannel, channel);
 
                       return (
                         <div
@@ -407,14 +443,7 @@ export function ModJarPickerDialog({
                               <span className="font-semibold text-foreground truncate">
                                 {j.versionName || j.versionNumber}
                               </span>
-                              {j.releaseType && (
-                                <Badge
-                                  variant={j.releaseType === 'release' ? 'default' : 'secondary'}
-                                  className="text-[11px] px-1.5 py-0 uppercase"
-                                >
-                                  {j.releaseType}
-                                </Badge>
-                              )}
+                              <ModChannelBadge channel={channel} />
                               {isAlreadyInstalled && (
                                 <Badge
                                   variant="outline"
@@ -452,14 +481,14 @@ export function ModJarPickerDialog({
                           <div className="flex items-center gap-2 shrink-0">
                             <Button
                               size="sm"
-                              disabled={isUpdating}
+                              disabled={isUpdating || locked || !j.downloadUrl}
                               onClick={() => void handlePickJar(j)}
                               className={`h-8 gap-1.5 text-xs ${
                                 isAlreadyInstalled
                                   ? 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
                                   : 'bg-primary hover:bg-primary/90 text-primary-foreground'
                               }`}
-                              title={isAlreadyInstalled ? 'Reinstall this jar version' : 'Select and install this jar'}
+                              title={locked ? 'Outside the installed release channel' : undefined}
                             >
                               {isPickingThis ? (
                                 <>
@@ -474,7 +503,7 @@ export function ModJarPickerDialog({
                               ) : (
                                 <>
                                   <Download className="h-3.5 w-3.5" />
-                                  Pick &amp; Update
+                                  {locked ? 'Channel locked' : switching ? `Switch to ${modChannelLabel(channel)}` : 'Pick & Update'}
                                 </>
                               )}
                             </Button>
@@ -540,9 +569,9 @@ export function ModJarPickerDialog({
           <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-muted-foreground">
             <input
               type="checkbox"
-              checked={deleteOldJar}
+              checked={deleteOldJar || viewingChannelSwitch}
               onChange={(e) => setDeleteOldJar(e.target.checked)}
-              disabled={isUpdating}
+              disabled={isUpdating || viewingChannelSwitch}
               className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
             />
             <span className="flex items-center gap-1">

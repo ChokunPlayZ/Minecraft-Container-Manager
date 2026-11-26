@@ -1,3 +1,5 @@
+import { canSwitchModChannel, modChannelLabel, normalizeModChannel, RELEASE_CHANNEL, matchesInstalledArtifact } from '../api/mod-channels';
+import { ModChannelBadge, ModChannelFilter } from './mod-channel-filter';
 import { Select } from './ui/select';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -83,6 +85,16 @@ interface ModrinthBrowserProps {
   onModDeleted?: (modName: string) => void;
 }
 
+function buildChannel(ver: ModrinthVersion) {
+  return normalizeModChannel(ver.version_type || RELEASE_CHANNEL);
+}
+
+function installedChannel(mod: Mod | undefined, versions: ModrinthVersion[]): string {
+  if (mod?.release_type) return normalizeModChannel(mod.release_type);
+  const current = mod && versions.find((ver) => ver.files.some((file) => matchesInstalledArtifact(mod, file.filename, file.hashes?.sha1)));
+  return current ? buildChannel(current) : RELEASE_CHANNEL;
+}
+
 export function ModrinthBrowser({
   server,
   installedMods,
@@ -153,6 +165,7 @@ export function ModrinthBrowser({
   // Project details & versions dialog
   const [selectedProject, setSelectedProject] = useState<ModrinthSearchHit | null>(null);
   const [versions, setVersions] = useState<ModrinthVersion[]>([]);
+  const [channelFilter, setChannelFilter] = useState<string>();
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [versionError, setVersionError] = useState<string | null>(null);
 
@@ -309,12 +322,22 @@ export function ModrinthBrowser({
     };
   }, [selectedProject, activeLoaders, activeVersion]);
 
+  useEffect(() => {
+    setChannelFilter(undefined);
+  }, [selectedProject]);
+
+  const selectedInstalled = selectedProject ? findInstalledMod(selectedProject, installedMods, hashProjectMap) : undefined;
+  const currentChannel = installedChannel(selectedInstalled, versions);
+  const visibleChannel = channelFilter ?? currentChannel;
+  const visibleBuilds = versions.filter((version) => visibleChannel === 'all' || buildChannel(version) === visibleChannel);
+
   const { confirm, dialog } = useModal();
   const [updatePrompt, setUpdatePrompt] = useState<{
     projectTitle: string;
     existingMod: Mod;
     targetUrl: string;
     targetFilename: string;
+    build: { releaseType: string; versionId: string; allowChannelSwitch?: boolean };
     projectId?: string;
     projectSlug?: string;
   } | null>(null);
@@ -326,6 +349,8 @@ export function ModrinthBrowser({
       filename: string;
       iconUrl?: string | null;
       url: string;
+      build: { releaseType: string; versionId: string; allowChannelSwitch?: boolean };
+      existingMod?: Mod;
       projectId?: string;
       projectSlug?: string;
     };
@@ -372,29 +397,18 @@ export function ModrinthBrowser({
     title: string,
     projectId?: string,
     projectSlug?: string,
+    build?: { releaseType: string; versionId: string; allowChannelSwitch?: boolean },
     deleteOldMod?: Mod,
   ) {
     setInstallingId(projectId || url);
     setError(null);
 
     try {
-      const mod = deleteOldMod
-        ? await api.downloadMod(
-            server.id,
-            url,
-            filename,
-            deleteOldMod.name,
-            { projectId, projectSlug, provider: 'modrinth' },
-          )
-        : await api.downloadMod(
-            server.id,
-            url,
-            filename,
-            undefined,
-            { projectId, projectSlug, provider: 'modrinth' },
-          );
+      const mod = await api.downloadMod(server.id, url, filename, deleteOldMod?.file, {
+        projectId, projectSlug, provider: 'modrinth', ...build,
+      });
       onModInstalled(mod);
-      if (deleteOldMod) {
+      if (deleteOldMod && deleteOldMod.file !== mod.file) {
         onModDeleted?.(deleteOldMod.name);
         setInstalledFiles((prev) => {
           const next = new Set(prev);
@@ -488,7 +502,7 @@ export function ModrinthBrowser({
         currentName: primaryMod.title,
       });
 
-      const primaryExistingMod = findExistingOldJar(primaryMod.filename, {
+      const primaryExistingMod = primaryMod.existingMod ?? findExistingOldJar(primaryMod.filename, {
         slug: primaryMod.projectSlug || '',
         title: primaryMod.title,
         project_id: primaryMod.projectId,
@@ -499,19 +513,19 @@ export function ModrinthBrowser({
             server.id,
             primaryMod.url,
             primaryMod.filename,
-            primaryExistingMod.name,
-            { projectId: primaryMod.projectId, projectSlug: primaryMod.projectSlug, provider: 'modrinth' },
+            primaryExistingMod.file,
+            { projectId: primaryMod.projectId, projectSlug: primaryMod.projectSlug, provider: 'modrinth', ...primaryMod.build },
           )
         : await api.downloadMod(
             server.id,
             primaryMod.url,
             primaryMod.filename,
             undefined,
-            { projectId: primaryMod.projectId, projectSlug: primaryMod.projectSlug, provider: 'modrinth' },
+            { projectId: primaryMod.projectId, projectSlug: primaryMod.projectSlug, provider: 'modrinth', ...primaryMod.build },
           );
 
       onModInstalled(downloadedPrimary);
-      if (primaryExistingMod) {
+      if (primaryExistingMod && primaryExistingMod.file !== downloadedPrimary.file) {
         onModDeleted?.(primaryExistingMod.name);
         setInstalledFiles((prev) => {
           const next = new Set(prev);
@@ -553,19 +567,19 @@ export function ModrinthBrowser({
               server.id,
               dep.downloadUrl,
               dep.filename,
-              depExistingMod.name,
-              { projectId: dep.id, projectSlug: dep.slug, provider: 'modrinth' },
+              depExistingMod.file,
+              { projectId: dep.id, projectSlug: dep.slug, provider: 'modrinth', releaseType: dep.releaseType, versionId: dep.versionId },
             )
           : await api.downloadMod(
               server.id,
               dep.downloadUrl,
               dep.filename,
               undefined,
-              { projectId: dep.id, projectSlug: dep.slug, provider: 'modrinth' },
+              { projectId: dep.id, projectSlug: dep.slug, provider: 'modrinth', releaseType: dep.releaseType, versionId: dep.versionId },
             );
 
         onModInstalled(downloadedDep);
-        if (depExistingMod) {
+        if (depExistingMod && depExistingMod.file !== downloadedDep.file) {
           onModDeleted?.(depExistingMod.name);
           setInstalledFiles((prev) => {
             const next = new Set(prev);
@@ -616,18 +630,20 @@ export function ModrinthBrowser({
         gameVersions: activeVersion ? [activeVersion] : undefined,
       });
 
-      if (vers.length === 0) {
+      const channel = installedChannel(findInstalledMod(project, installedMods, hashProjectMap), vers);
+      const latest = vers.find((version) => buildChannel(version) === channel && version.files.length > 0);
+      if (!latest) {
         // If no strictly matching version, open modal to let user pick another version
         setSelectedProject(project);
         setNotification({
           type: 'error',
-          text: `No exact build found for ${loaderLabel} ${server.version}. Please select an alternate version below.`,
+          text: `No compatible ${modChannelLabel(channel)} build found. Choose a channel to see other builds.`,
         });
         setInstallingId(null);
         return;
       }
 
-      const latest = vers[0];
+      const build = { releaseType: buildChannel(latest), versionId: latest.id };
       const primaryFile = latest.files.find((f) => f.primary) || latest.files[0];
       if (!primaryFile) {
         throw new Error('No installable file found in release.');
@@ -655,6 +671,7 @@ export function ModrinthBrowser({
                 filename: primaryFile.filename,
                 iconUrl: project.icon_url,
                 url: primaryFile.url,
+                build,
                 projectId: project.project_id,
                 projectSlug: project.slug,
               },
@@ -674,6 +691,7 @@ export function ModrinthBrowser({
           projectTitle: project.title,
           existingMod,
           targetUrl: primaryFile.url,
+          build,
           targetFilename: primaryFile.filename,
           projectId: project.project_id,
           projectSlug: project.slug,
@@ -687,6 +705,7 @@ export function ModrinthBrowser({
         project.title,
         project.project_id,
         project.slug,
+        build,
       );
     } catch (err: unknown) {
       setNotification({
@@ -698,7 +717,14 @@ export function ModrinthBrowser({
   }
 
   // Install a specific version file from the dialog
-  async function handleInstallVersion(file: ModrinthVersionFile, projectTitle: string, ver?: ModrinthVersion) {
+  async function handleInstallVersion(file: ModrinthVersionFile, projectTitle: string, ver: ModrinthVersion) {
+    const releaseType = buildChannel(ver);
+    const switching = Boolean(selectedInstalled && currentChannel !== releaseType);
+    if (switching && (!canSwitchModChannel(currentChannel, releaseType) || !(await confirm(
+      `Switch ${projectTitle} from ${modChannelLabel(currentChannel)} to ${modChannelLabel(releaseType)}? Future updates will stay on ${modChannelLabel(releaseType)}.`,
+      { title: 'Switch Release Channel', confirmLabel: `Switch to ${modChannelLabel(releaseType)}` },
+    )))) return;
+    const build = { releaseType, versionId: ver.id, allowChannelSwitch: switching };
     if (ver?.dependencies && ver.dependencies.length > 0) {
       try {
         const resolution = await resolveModrinthDependencies({
@@ -721,6 +747,8 @@ export function ModrinthBrowser({
               filename: file.filename,
               iconUrl: selectedProject?.icon_url,
               url: file.url,
+              build,
+              existingMod: switching ? selectedInstalled : undefined,
               projectId: selectedProject?.project_id,
               projectSlug: selectedProject?.slug,
             },
@@ -734,11 +762,12 @@ export function ModrinthBrowser({
     }
 
     const existingMod = findExistingOldJar(file.filename, selectedProject ?? undefined);
-    if (existingMod) {
+    if (existingMod && !switching) {
       setUpdatePrompt({
         projectTitle,
         existingMod,
         targetUrl: file.url,
+        build,
         targetFilename: file.filename,
         projectId: selectedProject?.project_id,
         projectSlug: selectedProject?.slug,
@@ -752,6 +781,8 @@ export function ModrinthBrowser({
       projectTitle,
       selectedProject?.project_id,
       selectedProject?.slug,
+      build,
+      switching ? selectedInstalled : undefined,
     );
   }
 
@@ -777,16 +808,17 @@ export function ModrinthBrowser({
           onSkipAndInstallPrimaryOnly={() => {
             const { primaryMod } = dependencyPrompt;
             setDependencyPrompt(null);
-            const existingMod = findExistingOldJar(primaryMod.filename, {
+            const existingMod = primaryMod.existingMod ?? findExistingOldJar(primaryMod.filename, {
               slug: primaryMod.projectSlug || '',
               title: primaryMod.title,
               project_id: primaryMod.projectId,
             });
-            if (existingMod) {
+            if (existingMod && !primaryMod.build.allowChannelSwitch) {
               setUpdatePrompt({
                 projectTitle: primaryMod.title,
                 existingMod,
                 targetUrl: primaryMod.url,
+                build: primaryMod.build,
                 targetFilename: primaryMod.filename,
                 projectId: primaryMod.projectId,
                 projectSlug: primaryMod.projectSlug,
@@ -799,6 +831,8 @@ export function ModrinthBrowser({
               primaryMod.title,
               primaryMod.projectId,
               primaryMod.projectSlug,
+              primaryMod.build,
+              existingMod,
             );
           }}
           onCancel={() => {
@@ -822,6 +856,7 @@ export function ModrinthBrowser({
               updatePrompt.projectTitle,
               updatePrompt.projectId,
               updatePrompt.projectSlug,
+              updatePrompt.build,
               updatePrompt.existingMod,
             )
           }
@@ -832,6 +867,7 @@ export function ModrinthBrowser({
               updatePrompt.projectTitle,
               updatePrompt.projectId,
               updatePrompt.projectSlug,
+              updatePrompt.build,
             )
           }
           onDeleteOldOnly={() => {
@@ -1340,26 +1376,31 @@ export function ModrinthBrowser({
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Available Releases ({versions.length})
+                    Available Builds ({visibleBuilds.length})
                   </h4>
                   <span className="text-xs text-muted-foreground">
                     Targeting {loaderLabel} {activeVersion ? `• MC ${activeVersion}` : ''}
                   </span>
                 </div>
 
+                <ModChannelFilter value={visibleChannel} channels={versions.map(buildChannel)} onChange={setChannelFilter} />
                 {loadingVersions ? (
                   <div className="flex items-center justify-center py-10">
                     <Loader2 className="h-6 w-6 animate-spin text-primary" />
                   </div>
                 ) : versionError ? (
                   <p className="text-xs text-destructive">{versionError}</p>
-                ) : versions.length === 0 ? (
+                ) : visibleBuilds.length === 0 ? (
                   <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
-                    No releases matching {loaderLabel} {activeVersion ? `and Minecraft ${activeVersion}` : ''}.
+                    No builds match this channel for {loaderLabel} {activeVersion ? `and Minecraft ${activeVersion}` : ''}.
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {versions.map((ver) => {
+                    {visibleBuilds.map((ver) => {
+                  const channel = buildChannel(ver);
+                  const switching = Boolean(selectedInstalled && currentChannel !== channel);
+                  const locked = switching && !canSwitchModChannel(currentChannel, channel);
+
                       const primaryFile = ver.files.find((f) => f.primary) || ver.files[0];
                       if (!primaryFile) return null;
                       const isDownloadingThis = installingId === primaryFile.url;
@@ -1381,12 +1422,7 @@ export function ModrinthBrowser({
                               <span className="font-semibold text-foreground truncate">
                                 {ver.name || ver.version_number}
                               </span>
-                              <Badge
-                                variant={ver.version_type === 'release' ? 'default' : 'secondary'}
-                                className="text-[11px] px-1.5 py-0 uppercase"
-                              >
-                                {ver.version_type}
-                              </Badge>
+                              <ModChannelBadge channel={channel} />
                               {isThisFileInstalled && (
                                 <Badge
                                   variant="outline"
@@ -1424,7 +1460,7 @@ export function ModrinthBrowser({
                               <Button
                                 size="sm"
                                 variant="outline"
-                                disabled={isDownloadingThis}
+                                disabled={isDownloadingThis || locked}
                                 onClick={() => void handleInstallVersion(primaryFile, selectedProject.title, ver)}
                                 className="h-8 gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300 text-xs"
                                 title="Reinstall this version"
@@ -1465,7 +1501,7 @@ export function ModrinthBrowser({
                           ) : (
                             <Button
                               size="sm"
-                              disabled={isDownloadingThis}
+                              disabled={isDownloadingThis || locked}
                               onClick={() => void handleInstallVersion(primaryFile, selectedProject.title, ver)}
                               className="shrink-0 gap-1.5"
                             >
@@ -1477,7 +1513,7 @@ export function ModrinthBrowser({
                               ) : (
                                 <>
                                   <Download className="h-3.5 w-3.5" />
-                                  Install
+                                  {locked ? 'Channel locked' : switching ? `Switch to ${modChannelLabel(channel)}` : 'Install'}
                                 </>
                               )}
                             </Button>

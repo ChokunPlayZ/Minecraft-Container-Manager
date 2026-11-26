@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/mcm-panel/mcm/internal/servers"
 )
@@ -64,15 +63,25 @@ func (s *Server) handleUploadMod(w http.ResponseWriter, r *http.Request) {
 
 // handleDownloadMod downloads a mod/plugin artifact from a remote URL.
 func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		URL           string            `json:"url"`
-		Filename      string            `json:"filename"`
-		DeleteOldName string            `json:"delete_old_name"`
-		ProjectID     string            `json:"project_id"`
-		ProjectSlug   string            `json:"project_slug"`
-		Provider      string            `json:"provider"`
-		Hashes        map[string]string `json:"hashes"`
-	}
+	s.downloadMod(w, r, http.StatusCreated)
+}
+
+type modDownloadRequest struct {
+	URL                string            `json:"url"`
+	Filename           string            `json:"filename"`
+	DeleteOld          bool              `json:"delete_old"`
+	DeleteOldName      string            `json:"delete_old_name"`
+	ProjectID          string            `json:"project_id"`
+	ProjectSlug        string            `json:"project_slug"`
+	Provider           string            `json:"provider"`
+	Hashes             map[string]string `json:"hashes"`
+	ReleaseType        string            `json:"release_type"`
+	CatalogVersionID   string            `json:"catalog_version_id"`
+	AllowChannelSwitch bool              `json:"allow_channel_switch"`
+}
+
+func (s *Server) downloadMod(w http.ResponseWriter, r *http.Request, status int) {
+	var in modDownloadRequest
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
 		return
@@ -81,40 +90,19 @@ func (s *Server) handleDownloadMod(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "url and filename are required")
 		return
 	}
-
-	meta := servers.ModDownloadMeta{
-		ProjectID:   in.ProjectID,
-		ProjectSlug: in.ProjectSlug,
-		Provider:    in.Provider,
-		Hashes:      in.Hashes,
+	oldName := in.DeleteOldName
+	if in.DeleteOld {
+		oldName = r.PathValue("name")
 	}
-
-	if in.DeleteOldName != "" {
-		if meta.Provider == "" && meta.ProjectID == "" {
-			if oldMod, err := s.servers.GetMod(r.Context(), r.PathValue("id"), in.DeleteOldName); err == nil {
-				meta.Provider = oldMod.Provider
-				meta.ProjectID = oldMod.ProjectID
-				meta.ProjectSlug = oldMod.ProjectSlug
-			}
-		}
-	}
-
-	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL, meta)
+	mod, err := s.servers.ReplaceModFromURL(r.Context(), r.PathValue("id"), in.Filename, in.URL, oldName, in.AllowChannelSwitch, servers.ModDownloadMeta{
+		ProjectID: in.ProjectID, ProjectSlug: in.ProjectSlug, Provider: in.Provider, Hashes: in.Hashes,
+		ReleaseType: in.ReleaseType, CatalogVersionID: in.CatalogVersionID,
+	})
 	if err != nil {
-		if errors.Is(err, servers.ErrDownloadFailed) {
-			writeError(w, http.StatusBadGateway, "download_failed", "Failed to download mod from remote URL.")
-			return
-		}
 		s.writeModErr(w, err)
 		return
 	}
-	if in.DeleteOldName != "" && in.DeleteOldName != mod.File && in.DeleteOldName != mod.Name {
-		if err := s.servers.DeleteMod(r.Context(), r.PathValue("id"), in.DeleteOldName); err != nil {
-			s.writeModErr(w, err)
-			return
-		}
-	}
-	writeJSON(w, http.StatusCreated, mod)
+	writeJSON(w, status, mod)
 }
 
 // handleSetModEnabled toggles a mod/plugin between enabled and disabled.
@@ -236,62 +224,15 @@ func (s *Server) handleGetModVersions(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateMod downloads and applies a new jar version, removing the old jar.
 func (s *Server) handleUpdateMod(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		URL         string            `json:"url"`
-		Filename    string            `json:"filename"`
-		DeleteOld   bool              `json:"delete_old"`
-		ProjectID   string            `json:"project_id"`
-		ProjectSlug string            `json:"project_slug"`
-		Provider    string            `json:"provider"`
-		Hashes      map[string]string `json:"hashes"`
-	}
-	if err := decodeJSON(w, r, &in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
-		return
-	}
-	if in.URL == "" || in.Filename == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "url and filename are required")
-		return
-	}
-
-	meta := servers.ModDownloadMeta{
-		ProjectID:   in.ProjectID,
-		ProjectSlug: in.ProjectSlug,
-		Provider:    in.Provider,
-		Hashes:      in.Hashes,
-	}
-
-	var oldName string
-	if in.DeleteOld {
-		oldName = r.PathValue("name")
-		if meta.Provider == "" && meta.ProjectID == "" && oldName != "" {
-			if oldMod, err := s.servers.GetMod(r.Context(), r.PathValue("id"), oldName); err == nil {
-				meta.Provider = oldMod.Provider
-				meta.ProjectID = oldMod.ProjectID
-				meta.ProjectSlug = oldMod.ProjectSlug
-			}
-		}
-	}
-
-	// Download first to ensure the new jar is valid before removing the old jar
-	mod, err := s.servers.DownloadMod(r.Context(), r.PathValue("id"), in.Filename, in.URL, meta)
-	if err != nil {
-		if errors.Is(err, servers.ErrDownloadFailed) {
-			writeError(w, http.StatusBadGateway, "download_failed", "Failed to download mod from remote URL.")
-			return
-		}
-		s.writeModErr(w, err)
-		return
-	}
-
-	if in.DeleteOld && oldName != "" && !strings.EqualFold(oldName, in.Filename) {
-	}
-
-	writeJSON(w, http.StatusOK, mod)
+	s.downloadMod(w, r, http.StatusOK)
 }
 
 func (s *Server) writeModErr(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, servers.ErrModChannel):
+		writeError(w, http.StatusConflict, "mod_channel_locked", "Choose a build in the installed channel or explicitly switch to a more stable channel.")
+	case errors.Is(err, servers.ErrDownloadFailed):
+		writeError(w, http.StatusBadGateway, "download_failed", "Failed to download mod from remote URL.")
 	case errors.Is(err, servers.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "server not found")
 	case errors.Is(err, servers.ErrInvalidModName):

@@ -101,7 +101,7 @@ describe('CatalogBrowser multi-provider component', () => {
               externalUrl: null,
             },
           },
-          platformDependencies: { PAPER: ['1.21'] },
+          platformDependencies: { PAPER: [mockServer.version] },
           createdAt: '2026-08-01T00:00:00Z',
         },
       ],
@@ -177,7 +177,11 @@ describe('CatalogBrowser multi-provider component', () => {
       },
     ];
 
-    global.fetch=vi.fn(async(input:RequestInfo|URL)=>catalogTarget(input).includes('api.spiget.org')?jsonResponse(mockSpigotResources):emptyCatalog(input));
+    global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const target = catalogTarget(input);
+      if (target.includes('/28140/versions')) return jsonResponse([{ id: 123, name: '5.4', releaseDate: 123456 }]);
+      return target.includes('api.spiget.org') ? jsonResponse(mockSpigotResources) : emptyCatalog(input);
+    });
 
     vi.spyOn(api, 'downloadMod').mockResolvedValue({
       name: 'LuckPerms',
@@ -211,7 +215,7 @@ describe('CatalogBrowser multi-provider component', () => {
     await waitFor(() => {
       expect(api.downloadMod).toHaveBeenCalledWith(
         mockServer.id,
-        'https://cdn.spiget.org/file/spiget-resources/28140.jar',
+        'https://api.spiget.org/v2/resources/28140/versions/123/download',
         'LuckPerms.jar',
         undefined,
         expect.objectContaining({ projectId: '28140', provider: 'spiget' }),

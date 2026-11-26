@@ -1,11 +1,11 @@
+import { curseForgeChannel, matchesInstalledArtifact, normalizeModChannel, spigetChannel } from './mod-channels';
 import type { Mod, ModProvider, Server } from './types';
 import {
   getProjectVersions,
   getServerLoaders,
-  isVersionFileInstalled,
 } from './modrinth';
 import { getHangarVersions } from './hangar';
-import { getSpigetVersions } from './spiget';
+import { getSpigetDownloadUrl, getSpigetVersions } from './spiget';
 import { getCurseForgeFiles } from './curseforge';
 
 export interface AvailableModJar {
@@ -16,7 +16,10 @@ export interface AvailableModJar {
   filename: string;
   downloadUrl: string;
   sizeBytes?: number;
-  releaseType?: 'release' | 'beta' | 'alpha' | string;
+  releaseType?: string;
+  provider?: Mod['provider'];
+  projectId?: string;
+  projectSlug?: string;
   gameVersions?: string[];
   loaders?: string[];
   datePublished?: string;
@@ -77,20 +80,19 @@ export async function fetchModAvailableJars(
       for (const ver of vers) {
         for (const file of ver.files) {
           if (!file.filename.toLowerCase().endsWith('.jar')) continue;
-          const isCurrent =
-            file.filename.toLowerCase() === mod.file.toLowerCase() ||
-            `${file.filename.toLowerCase()}.disabled` === mod.file.toLowerCase() ||
-            isVersionFileInstalled(file, [mod]);
+          const isCurrent = matchesInstalledArtifact(mod, file.filename, file.hashes?.sha1);
 
           jars.push({
             versionId: ver.id,
+            provider,
+            projectId: ver.project_id,
             versionName: ver.name || ver.version_number,
             versionNumber: ver.version_number,
             filename: file.filename,
             downloadUrl: file.url,
             hashes: file.hashes,
             sizeBytes: file.size,
-            releaseType: ver.version_type,
+            releaseType: normalizeModChannel(ver.version_type),
             gameVersions: ver.game_versions,
             loaders: ver.loaders,
             datePublished: ver.date_published,
@@ -124,7 +126,7 @@ export async function fetchModAvailableJars(
             filename: dl.fileInfo.name,
             downloadUrl: dl.downloadUrl,
             sizeBytes: dl.fileInfo.sizeBytes,
-            releaseType: ver.channel?.name?.toLowerCase(),
+            releaseType: normalizeModChannel(ver.channel?.name),
             gameVersions: ver.platformDependencies?.PAPER,
             loaders: ['paper'],
             datePublished: ver.createdAt,
@@ -145,15 +147,16 @@ export async function fetchModAvailableJars(
       try {
         const vers = await getSpigetVersions(resourceId, signal);
         return vers.map((ver) => {
-          const isCurrent =
-            mod.version && ver.name && mod.version.trim() === ver.name.trim();
+          const isCurrent = mod.catalog_version_id
+            ? mod.catalog_version_id === String(ver.id)
+            : mod.version && ver.name && mod.version.trim() === ver.name.trim();
           return {
             versionId: String(ver.id),
             versionName: ver.name,
             versionNumber: ver.name,
-            filename: `${mod.name}-${ver.name}.jar`,
-            downloadUrl: `https://cdn.spiget.org/file/spiget-resources/${resourceId}.jar`,
-            releaseType: 'release',
+            filename: mod.file.replace(/\.disabled$/, ''),
+            downloadUrl: getSpigetDownloadUrl(resourceId, ver.id),
+            releaseType: spigetChannel(ver.name),
             loaders: ['spigot', 'paper'],
             datePublished: ver.releaseDate
               ? new Date(ver.releaseDate * 1000).toISOString()
@@ -190,7 +193,7 @@ export async function fetchModAvailableJars(
               filename: f.fileName,
               downloadUrl: f.downloadUrl as string,
               sizeBytes: f.fileLength,
-              releaseType: f.releaseType === 1 ? 'release' : f.releaseType === 2 ? 'beta' : 'alpha',
+              releaseType: curseForgeChannel(f.releaseType),
               gameVersions: f.gameVersions,
               datePublished: f.fileDate,
               isCurrent,

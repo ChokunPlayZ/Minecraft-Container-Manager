@@ -31,6 +31,9 @@ const (
 // valid .jar extension.
 var ErrInvalidModName = errors.New("invalid mod/plugin filename")
 
+// ErrModChannel is returned for a catalog replacement outside the installed channel.
+var ErrModChannel = errors.New("the build is outside the installed release channel")
+
 // ErrUnsupportedMods is returned when a server type has no mod/plugin directory.
 var ErrUnsupportedMods = errors.New("server type does not support mods/plugins")
 
@@ -46,7 +49,9 @@ type Mod struct {
 	Description      string `json:"description,omitempty"`  // description from jar manifest
 	ProjectID        string `json:"project_id,omitempty"`   // catalog project ID if known
 	ProjectSlug      string `json:"project_slug,omitempty"` // catalog project slug if known
-	Provider         string `json:"provider,omitempty"`     // catalog provider (e.g. "modrinth")
+	ReleaseType      string `json:"release_type,omitempty"`
+	CatalogVersionID string `json:"catalog_version_id,omitempty"`
+	Provider         string `json:"provider,omitempty"` // catalog provider (e.g. "modrinth")
 	IsClientOnly     bool   `json:"is_client_only,omitempty"`
 	ClientOnlyReason string `json:"client_only_reason,omitempty"`
 }
@@ -57,6 +62,8 @@ type ModDownloadMeta struct {
 	ProjectID        string            `json:"project_id,omitempty"`
 	ProjectSlug      string            `json:"project_slug,omitempty"`
 	Provider         string            `json:"provider,omitempty"`
+	ReleaseType      string            `json:"release_type,omitempty"`
+	CatalogVersionID string            `json:"catalog_version_id,omitempty"`
 	InstalledVersion string            `json:"installed_version,omitempty"`
 	DownloadURL      string            `json:"download_url,omitempty"`
 	SHA1             string            `json:"sha1,omitempty"`
@@ -289,6 +296,8 @@ func (s *Store) ListMods(ctx context.Context, id string) (ModListResult, error) 
 			m.ProjectID = meta.ProjectID
 			m.ProjectSlug = meta.ProjectSlug
 			m.Provider = meta.Provider
+			m.ReleaseType = meta.ReleaseType
+			m.CatalogVersionID = meta.CatalogVersionID
 		}
 		items = append(items, *m)
 	}
@@ -314,9 +323,9 @@ func (s *Store) GetMod(ctx context.Context, id, name string) (Mod, error) {
 func (s *Store) UploadMod(ctx context.Context, id, filename string, r io.Reader, meta ...ModDownloadMeta) (Mod, error) {
 	unlock := s.lockWorld(id, false)
 	defer unlock()
-	return s.uploadModLocked(ctx, id, filename, r, meta...)
+	return s.uploadModLocked(ctx, id, filename, r, "", false, meta...)
 }
-func (s *Store) uploadModLocked(ctx context.Context, id, filename string, r io.Reader, meta ...ModDownloadMeta) (Mod, error) {
+func (s *Store) uploadModLocked(ctx context.Context, id, filename string, r io.Reader, oldName string, allowChannelSwitch bool, meta ...ModDownloadMeta) (Mod, error) {
 	s.fileEditMu.Lock()
 	defer s.fileEditMu.Unlock()
 
@@ -349,13 +358,32 @@ func (s *Store) uploadModLocked(ctx context.Context, id, filename string, r io.R
 		return Mod{}, err
 	}
 	defer stageRoot.Close()
-	rel := string(kind) + "/" + filename
-	if _, err = storage.Write(ctx, stageRoot, rel, r, maxDownloadBytes, 0644); err != nil {
-		return Mod{}, err
-	}
 	var dMeta ModDownloadMeta
 	if len(meta) > 0 {
 		dMeta = meta[0]
+	}
+	if dMeta.ReleaseType != "" {
+		dMeta.ReleaseType = modReleaseType(dMeta.ReleaseType)
+	}
+	dir := root.Name() + "/" + string(kind)
+	enabled := true
+	var previous string
+	if oldName != "" {
+		var found bool
+		previous, found = resolveModDirEntry(dir, oldName)
+		if !found {
+			return Mod{}, ErrNotFound
+		}
+		enabled = !strings.HasSuffix(previous, ".disabled")
+	} else if dMeta.ReleaseType != "" {
+		previous, _ = resolveModDirEntry(dir, filename)
+	}
+	if !enabled {
+		filename += ".disabled"
+	}
+	rel := string(kind) + "/" + filename
+	if _, err = storage.Write(ctx, stageRoot, rel, r, maxDownloadBytes, 0644); err != nil {
+		return Mod{}, err
 	}
 	temp := root.Name() + "/" + stage + "/" + rel
 	hashes := map[string]string{}
@@ -379,15 +407,31 @@ func (s *Store) uploadModLocked(ctx context.Context, id, filename string, r io.R
 	if err = root.MkdirAll(string(kind), 0755); err != nil {
 		return Mod{}, err
 	}
-	dir := root.Name() + "/" + string(kind)
 	m, err := readModsMetaChecked(dir)
 	if err != nil {
 		return Mod{}, err
 	}
+	if previous != "" {
+		old, exists := m[previous]
+		if !exists {
+			old = m[strings.TrimSuffix(previous, ".disabled")]
+		}
+		if old.ReleaseType != "" && old.ReleaseType != dMeta.ReleaseType &&
+			(dMeta.ReleaseType != "" || dMeta.Provider != "" || dMeta.ProjectID != "") &&
+			(!allowChannelSwitch || !canSwitchModChannel(old.ReleaseType, dMeta.ReleaseType)) {
+			return Mod{}, ErrModChannel
+		}
+		delete(m, previous)
+		delete(m, strings.TrimSuffix(previous, ".disabled"))
+		delete(m, modDisplayBase(previous))
+		if dMeta.Provider == "" && dMeta.ProjectID == "" {
+			dMeta.Provider, dMeta.ProjectID, dMeta.ProjectSlug = old.Provider, old.ProjectID, old.ProjectSlug
+		}
+	}
 	if dMeta.Provider == "" && dMeta.ProjectID == "" {
 		for _, key := range []string{filename, modDisplayBase(filename), manifest.ModID, strings.ToLower(manifest.ModID)} {
 			if existing, ok := m[key]; ok && (existing.Provider != "" || existing.ProjectID != "") {
-				dMeta = existing
+				dMeta.Provider, dMeta.ProjectID, dMeta.ProjectSlug = existing.Provider, existing.ProjectID, existing.ProjectSlug
 				break
 			}
 		}
@@ -404,7 +448,15 @@ func (s *Store) uploadModLocked(ctx context.Context, id, filename string, r io.R
 	if _, err = storage.Write(ctx, stageRoot, string(kind)+"/.mcm_mods_meta.json", strings.NewReader(string(data)), 8<<20, 0644); err != nil {
 		return Mod{}, err
 	}
-	undo, finish, err := storage.PublishTree(root, stage, []string{rel + ".disabled"})
+	alternate := rel + ".disabled"
+	if !enabled {
+		alternate = strings.TrimSuffix(rel, ".disabled")
+	}
+	obsolete := []string{alternate}
+	if previous != "" && previous != filename {
+		obsolete = append(obsolete, string(kind)+"/"+previous)
+	}
+	undo, finish, err := storage.PublishTree(root, stage, obsolete)
 	if err != nil {
 		return Mod{}, err
 	}
@@ -413,7 +465,7 @@ func (s *Store) uploadModLocked(ctx context.Context, id, filename string, r io.R
 		return Mod{}, err
 	}
 	s.InvalidateModUpdatesCache(id)
-	return Mod{Name: modDisplayBase(filename), File: filename, Enabled: true, ModID: manifest.ModID, Title: manifest.Title, Version: manifest.Version, SHA1: manifest.SHA1, Description: manifest.Description, ProjectID: dMeta.ProjectID, ProjectSlug: dMeta.ProjectSlug, Provider: dMeta.Provider, IsClientOnly: manifest.IsClientOnly, ClientOnlyReason: manifest.ClientOnlyReason}, nil
+	return Mod{Name: modDisplayBase(filename), File: filename, Enabled: enabled, ModID: manifest.ModID, Title: manifest.Title, Version: manifest.Version, SHA1: manifest.SHA1, Description: manifest.Description, ProjectID: dMeta.ProjectID, ProjectSlug: dMeta.ProjectSlug, Provider: dMeta.Provider, ReleaseType: dMeta.ReleaseType, CatalogVersionID: dMeta.CatalogVersionID, IsClientOnly: manifest.IsClientOnly, ClientOnlyReason: manifest.ClientOnlyReason}, nil
 }
 
 // SetModEnabled enables or disables a mod/plugin by renaming the underlying file
@@ -454,6 +506,8 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 			m.ProjectID = meta.ProjectID
 			m.ProjectSlug = meta.ProjectSlug
 			m.Provider = meta.Provider
+			m.ReleaseType = meta.ReleaseType
+			m.CatalogVersionID = meta.CatalogVersionID
 		}
 		return m, nil
 	}
@@ -497,6 +551,8 @@ func (s *Store) SetModEnabled(ctx context.Context, id, name string, enabled bool
 		m.ProjectID = meta.ProjectID
 		m.ProjectSlug = meta.ProjectSlug
 		m.Provider = meta.Provider
+		m.ReleaseType = meta.ReleaseType
+		m.CatalogVersionID = meta.CatalogVersionID
 	}
 	s.InvalidateModUpdatesCache(id)
 	return m, nil
@@ -567,6 +623,12 @@ func resolveModDirEntry(dir, name string) (string, bool) {
 // DownloadMod fetches an artifact file from a remote URL (e.g. Modrinth CDN) and saves it
 // into the server's mod/plugin directory.
 func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL string, meta ...ModDownloadMeta) (Mod, error) {
+	return s.ReplaceModFromURL(ctx, id, filename, downloadURL, "", false, meta...)
+}
+
+// ReplaceModFromURL publishes a catalog build and its metadata together with
+// removal of the previous jar. A disabled jar stays disabled after replacement.
+func (s *Store) ReplaceModFromURL(ctx context.Context, id, filename, downloadURL, oldName string, allowChannelSwitch bool, meta ...ModDownloadMeta) (Mod, error) {
 	unlock := s.lockWorld(id, false)
 	defer unlock()
 	srv, err := s.Get(ctx, id)
@@ -588,7 +650,23 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 		return Mod{}, err
 	}
 	req.Header.Set("User-Agent", "mcm-panel/1.0")
-	resp, err := s.getProxy().Client().Do(req)
+	client := *s.getProxy().Client()
+	if u.Scheme == "https" && u.Host == "api.spiget.org" && spigetVersionDownloadPath.MatchString(u.Path) {
+		// Spiget hands off version-specific downloads to SpigotMC. The
+		// catalog client keeps redirects disabled for credentialed requests.
+		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+			if len(via) >= 10 || next.URL.Scheme != "https" {
+				return http.ErrUseLastResponse
+			}
+			switch next.URL.Host {
+			case "spigotmc.org", "www.spigotmc.org", "static.spigotmc.org", "cdn.spiget.org":
+				return nil
+			default:
+				return http.ErrUseLastResponse
+			}
+		}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return Mod{}, ErrDownloadFailed
 	}
@@ -596,7 +674,7 @@ func (s *Store) DownloadMod(ctx context.Context, id, filename, downloadURL strin
 	if resp.StatusCode != http.StatusOK {
 		return Mod{}, fmt.Errorf("%w: status %d", ErrDownloadFailed, resp.StatusCode)
 	}
-	return s.uploadModLocked(ctx, id, filename, resp.Body, meta...)
+	return s.uploadModLocked(ctx, id, filename, resp.Body, oldName, allowChannelSwitch, meta...)
 }
 
 // SanitizeClientMods inspects all enabled jar files in a server's mods directory

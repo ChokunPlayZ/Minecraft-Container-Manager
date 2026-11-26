@@ -1,3 +1,5 @@
+import { canSwitchModChannel, modChannelLabel, normalizeModChannel, RELEASE_CHANNEL, matchesInstalledArtifact } from '../api/mod-channels';
+import { ModChannelBadge, ModChannelFilter } from './mod-channel-filter';
 import { Select } from './ui/select';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -46,6 +48,16 @@ interface HangarBrowserProps {
   onModDeleted?: (modName: string) => void;
 }
 
+function buildChannel(ver: HangarVersion) {
+  return normalizeModChannel(ver.channel?.name || RELEASE_CHANNEL);
+}
+
+function installedChannel(mod: Mod | undefined, versions: HangarVersion[]): string {
+  if (mod?.release_type) return normalizeModChannel(mod.release_type);
+  const current = mod && versions.find((ver) => Object.values(ver.downloads || {}).some((dl) => !!dl.fileInfo && matchesInstalledArtifact(mod, dl.fileInfo.name)));
+  return current ? buildChannel(current) : RELEASE_CHANNEL;
+}
+
 export function HangarBrowser({
   server,
   installedMods,
@@ -71,6 +83,7 @@ export function HangarBrowser({
   // Version picker modal
   const [selectedProject, setSelectedProject] = useState<HangarProject | null>(null);
   const [versions, setVersions] = useState<HangarVersion[]>([]);
+  const [channelFilter, setChannelFilter] = useState<string>();
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [versionError, setVersionError] = useState<string | null>(null);
 
@@ -182,11 +195,12 @@ export function HangarBrowser({
       return;
     }
 
+    const controller = new AbortController();
     let isMounted = true;
     setLoadingVersions(true);
     setVersionError(null);
 
-    getHangarVersions(selectedProject.namespace.slug)
+    getHangarVersions(selectedProject.namespace.slug, { allPages: true }, controller.signal)
       .then((vers) => {
         if (!isMounted) return;
         setVersions(vers);
@@ -201,8 +215,18 @@ export function HangarBrowser({
 
     return () => {
       isMounted = false;
+      controller.abort();
     };
   }, [selectedProject]);
+
+  useEffect(() => {
+    setChannelFilter(undefined);
+  }, [selectedProject]);
+
+  const selectedInstalled = selectedProject ? findInstalledHangarProject(selectedProject, installedMods) : undefined;
+  const currentChannel = installedChannel(selectedInstalled, versions);
+  const visibleChannel = channelFilter ?? currentChannel;
+  const visibleBuilds = versions.filter((version) => visibleChannel === 'all' || buildChannel(version) === visibleChannel);
 
   const { confirm, dialog } = useModal();
   const [updatePrompt, setUpdatePrompt] = useState<{
@@ -210,6 +234,7 @@ export function HangarBrowser({
     existingMod: Mod;
     targetUrl: string;
     targetFilename: string;
+    build: { releaseType: string; versionId: string; allowChannelSwitch?: boolean };
     projectId?: string;
     projectSlug?: string;
     projectName?: string;
@@ -246,19 +271,21 @@ export function HangarBrowser({
     projectId?: string,
     projectSlug?: string,
     projectName?: string,
+    build?: { releaseType: string; versionId: string; allowChannelSwitch?: boolean },
     deleteOldMod?: Mod,
   ) {
     setInstallingId(projectSlug || filename);
     setError(null);
 
     try {
-      const mod = await api.downloadMod(server.id, url, filename, deleteOldMod?.name, {
+      const mod = await api.downloadMod(server.id, url, filename, deleteOldMod?.file, {
         projectId,
         projectSlug,
         provider: 'hangar',
+          ...build,
       });
       onModInstalled(mod);
-      if (deleteOldMod) {
+      if (deleteOldMod && deleteOldMod.file !== mod.file) {
         onModDeleted?.(deleteOldMod.name);
       }
 
@@ -323,24 +350,40 @@ export function HangarBrowser({
     }
   }
 
+  function hangarDownload(version: HangarVersion) {
+    const platform = server.server_type === 'waterfall' || server.server_type === 'bungeecord' ? 'WATERFALL' : 'PAPER';
+    const gameVersions = version.platformDependencies?.[platform];
+    if (server.version && gameVersions?.length && !gameVersions.includes(server.version)) return undefined;
+    return version.downloads?.[platform];
+  }
+
   async function handleOneClickInstall(project: HangarProject) {
     setInstallingId(project.namespace.slug);
     setError(null);
 
     try {
-      const vers = await getHangarVersions(project.namespace.slug);
-      if (vers.length === 0) {
+      const installed = findInstalledHangarProject(project, installedMods);
+      const preferred = installedChannel(installed, []);
+      const matches = (version: HangarVersion, channel: string) =>
+        buildChannel(version) === channel && Boolean(hangarDownload(version)?.downloadUrl);
+      const vers = await getHangarVersions(project.namespace.slug, {
+        allPages: true,
+        stopWhen: !installed || installed.release_type ? (version) => matches(version, preferred) : undefined,
+      });
+      const channel = installedChannel(installed, vers);
+      const latest = vers.find((version) => matches(version, channel));
+      if (!latest) {
         setSelectedProject(project);
         setNotification({
           type: 'error',
-          text: 'No release builds found. Please inspect versions manually.',
+          text: `No compatible ${modChannelLabel(channel)} build found. Choose a channel to see other builds.`,
         });
         setInstallingId(null);
         return;
       }
 
-      const latest = vers[0];
-      const download = latest.downloads?.PAPER || Object.values(latest.downloads || {})[0];
+      const build = { releaseType: buildChannel(latest), versionId: latest.name };
+      const download = hangarDownload(latest);
       if (!download?.downloadUrl || !download?.fileInfo?.name) {
         throw new Error('No direct download jar available for this release.');
       }
@@ -352,6 +395,7 @@ export function HangarBrowser({
           projectTitle: project.name,
           existingMod,
           targetUrl: download.downloadUrl,
+          build,
           targetFilename: download.fileInfo.name,
           projectId: String(project.id),
           projectSlug: project.namespace.slug,
@@ -367,6 +411,7 @@ export function HangarBrowser({
         String(project.id),
         project.namespace.slug,
         project.name,
+        build,
       );
     } catch (err: unknown) {
       setNotification({
@@ -378,18 +423,26 @@ export function HangarBrowser({
   }
 
   async function handleInstallVersion(version: HangarVersion, projectTitle: string) {
-    const download = version.downloads?.PAPER || Object.values(version.downloads || {})[0];
+    const download = hangarDownload(version);
     if (!download?.downloadUrl || !download?.fileInfo?.name) {
       setNotification({ type: 'error', text: 'No download URL available for this version.' });
       return;
     }
 
+    const releaseType = buildChannel(version);
+    const switching = Boolean(selectedInstalled && currentChannel !== releaseType);
+    if (switching && (!canSwitchModChannel(currentChannel, releaseType) || !(await confirm(
+      `Switch ${projectTitle} from ${modChannelLabel(currentChannel)} to ${modChannelLabel(releaseType)}? Future updates will stay on ${modChannelLabel(releaseType)}.`,
+      { title: 'Switch Release Channel', confirmLabel: `Switch to ${modChannelLabel(releaseType)}` },
+    )))) return;
+    const build = { releaseType, versionId: version.name, allowChannelSwitch: switching };
     const existingMod = findExistingOldJar(download.fileInfo.name, selectedProject ?? undefined);
-    if (existingMod) {
+    if (existingMod && !switching) {
       setUpdatePrompt({
         projectTitle,
         existingMod,
         targetUrl: download.downloadUrl,
+        build,
         targetFilename: download.fileInfo.name,
         projectId: selectedProject ? String(selectedProject.id) : undefined,
         projectSlug: selectedProject?.namespace.slug,
@@ -405,6 +458,8 @@ export function HangarBrowser({
       selectedProject ? String(selectedProject.id) : undefined,
       selectedProject?.namespace.slug,
       selectedProject?.name,
+      build,
+      switching ? selectedInstalled : undefined,
     );
   }
 
@@ -434,6 +489,7 @@ export function HangarBrowser({
               updatePrompt.projectId,
               updatePrompt.projectSlug,
               updatePrompt.projectName,
+              updatePrompt.build,
               updatePrompt.existingMod,
             )
           }
@@ -445,6 +501,7 @@ export function HangarBrowser({
               updatePrompt.projectId,
               updatePrompt.projectSlug,
               updatePrompt.projectName,
+              updatePrompt.build,
             )
           }
           onDeleteOldOnly={() => {
@@ -723,6 +780,7 @@ export function HangarBrowser({
             })()}
 
             <div className="flex-1 overflow-y-auto p-6 space-y-3">
+              <ModChannelFilter value={visibleChannel} channels={versions.map(buildChannel)} onChange={setChannelFilter} />
               {loadingVersions && (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-6 w-6 animate-spin text-sky-600" />
@@ -736,15 +794,19 @@ export function HangarBrowser({
                 </div>
               )}
 
-              {!loadingVersions && versions.length === 0 && !versionError && (
+              {!loadingVersions && visibleBuilds.length === 0 && !versionError && (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  No public versions found for this plugin.
+                  No builds match this channel.
                 </p>
               )}
 
               {!loadingVersions &&
-                versions.map((ver) => {
-                  const download = ver.downloads?.PAPER || Object.values(ver.downloads || {})[0];
+                visibleBuilds.map((ver) => {
+                  const channel = buildChannel(ver);
+                  const switching = Boolean(selectedInstalled && currentChannel !== channel);
+                  const locked = switching && !canSwitchModChannel(currentChannel, channel);
+
+                  const download = hangarDownload(ver);
                   const filename = download?.fileInfo?.name;
                   const isInstalled = isHangarVersionInstalled(ver, installedMods);
                   const isInstallingThis = installingId === ver.name;
@@ -757,12 +819,7 @@ export function HangarBrowser({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-foreground">{ver.name}</span>
-                          <span
-                            className="rounded-full px-2 py-0.2 text-[11px] font-semibold text-white uppercase"
-                            style={{ backgroundColor: ver.channel?.color || '#0284c7' }}
-                          >
-                            {ver.channel?.name || 'Release'}
-                          </span>
+                          <ModChannelBadge channel={channel} />
                           {isInstalled && (
                             <Badge
                               variant="secondary"
@@ -788,7 +845,7 @@ export function HangarBrowser({
                         <div className="flex items-center gap-1 shrink-0">
                           <Button
                             size="sm"
-                            disabled={isInstallingThis || !download?.downloadUrl}
+                            disabled={isInstallingThis || !download?.downloadUrl || locked}
                             onClick={() => void handleInstallVersion(ver, selectedProject.name)}
                             className="h-8 gap-1.5 border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300 text-xs"
                             title="Reinstall this version"
@@ -824,7 +881,7 @@ export function HangarBrowser({
                       ) : (
                         <Button
                           size="sm"
-                          disabled={isInstallingThis || !download?.downloadUrl}
+                          disabled={isInstallingThis || !download?.downloadUrl || locked}
                           onClick={() => void handleInstallVersion(ver, selectedProject.name)}
                           className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground"
                         >
@@ -836,7 +893,7 @@ export function HangarBrowser({
                           ) : (
                             <>
                               <Download className="h-3.5 w-3.5" />
-                              Install
+                              {locked ? 'Channel locked' : switching ? `Switch to ${modChannelLabel(channel)}` : 'Install'}
                             </>
                           )}
                         </Button>

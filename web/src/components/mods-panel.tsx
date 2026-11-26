@@ -1,3 +1,5 @@
+import { normalizeModChannel } from '../api/mod-channels';
+import { ModChannelBadge, ModChannelFilter } from './mod-channel-filter';
 import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -71,6 +73,7 @@ export function ModsPanel({ server }: { server: Server }) {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadStats, setUploadStats] = useState<{ fileName: string; loaded: number; total: number } | null>(null);
   const [installedSearch, setInstalledSearch] = useState('');
+  const [installedChannel, setInstalledChannel] = useState('all');
   const [updates, setUpdates] = useState<Record<string, ModUpdateInfo>>({});
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
@@ -391,10 +394,10 @@ export function ModsPanel({ server }: { server: Server }) {
     );
   }
 
+  const installedChannels = catalogItems.map((mod) => normalizeModChannel(mod.release_type));
   const filteredItems = catalogItems.filter(
-    (m) =>
-      m.name.toLowerCase().includes(installedSearch.toLowerCase()) ||
-      m.file.toLowerCase().includes(installedSearch.toLowerCase()),
+    (mod) => (installedChannel === 'all' || normalizeModChannel(mod.release_type) === installedChannel)
+      && (mod.name.toLowerCase().includes(installedSearch.toLowerCase()) || mod.file.toLowerCase().includes(installedSearch.toLowerCase())),
   );
 
   const detailsMod = catalogItems.find((mod) => mod.name === detailsModName);
@@ -428,6 +431,7 @@ export function ModsPanel({ server }: { server: Server }) {
     </div>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {installedModpack && <p className="text-sm">Modpack: {installedModpack.name} · {installedModpack.version}</p>}
+    {items.length > 0 && <ModChannelFilter value={installedChannel} channels={installedChannels} onChange={setInstalledChannel} />}
     <Input aria-label="Search installed mods" placeholder="Search installed content…" value={installedSearch} onChange={(event) => setInstalledSearch(event.target.value)} />
     <ul className="divide-y rounded-lg border bg-card">
       {filteredItems.map((item) => {
@@ -446,6 +450,7 @@ export function ModsPanel({ server }: { server: Server }) {
                 {item.name}
               </button>
               {provider && <Badge variant="outline" className="text-[11px]">{MOD_PROVIDER_LABELS[provider]}</Badge>}
+              <ModChannelBadge channel={item.release_type} />
             </div>
           </li>
         );
@@ -745,6 +750,7 @@ export function ModsPanel({ server }: { server: Server }) {
                 </div>
               )}
 
+              {items.length > 0 && <ModChannelFilter value={installedChannel} channels={installedChannels} onChange={setInstalledChannel} />}
               {/* Search filter for installed items */}
               {items.length > 3 && (
                 <div className="relative">
@@ -785,7 +791,7 @@ export function ModsPanel({ server }: { server: Server }) {
                   </div>
                 ) : filteredItems.length === 0 ? (
                   <p className="py-4 text-center text-xs text-muted-foreground">
-                    No {label.toLowerCase()} match &quot;{installedSearch}&quot;.
+                    No {label.toLowerCase()} match these filters.
                   </p>
                 ) : (
                   filteredItems.map((m) => {
@@ -818,6 +824,7 @@ export function ModsPanel({ server }: { server: Server }) {
                                   {MOD_PROVIDER_LABELS[provider]}
                                 </Badge>
                               )}
+                              <ModChannelBadge channel={m.release_type} />
                               {updateInfo && (
                                 <Badge
                                   variant="outline"
@@ -844,18 +851,15 @@ export function ModsPanel({ server }: { server: Server }) {
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-1.5">
-                          {updateInfo && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 gap-1 text-xs font-semibold border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
-                              title={`Update available: ${updateInfo.latestJar}. Click to pick a new jar`}
-                              onClick={() => setPickerMod({ mod: m, updateInfo })}
-                            >
-                              <ArrowUpCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                              Update
-                            </Button>
-                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1 text-xs"
+                            onClick={() => setPickerMod({ mod: m, updateInfo })}
+                          >
+                            {updateInfo && <ArrowUpCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />}
+                            {updateInfo ? 'Update' : 'Versions'}
+                          </Button>
                           <Button
                             variant="outline"
                             size="icon"
@@ -1044,11 +1048,7 @@ export function ModsPanel({ server }: { server: Server }) {
                                 <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-[11px] px-1.5 py-0 font-mono uppercase">
                                   {u.provider}
                                 </Badge>
-                                {u.latestReleaseType && (
-                                  <Badge variant="secondary" className="text-[11px] px-1.5 py-0 uppercase">
-                                    {u.latestReleaseType}
-                                  </Badge>
-                                )}
+                                <ModChannelBadge channel={u.latestReleaseType} />
                               </div>
 
                               <div className="flex items-center gap-2 text-xs flex-wrap rounded-lg bg-secondary/30 px-3 py-1.5 border border-border/60">

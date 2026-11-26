@@ -100,6 +100,8 @@ export async function getHangarVersions(
   options?: {
     limit?: number;
     offset?: number;
+    allPages?: boolean;
+    stopWhen?: (build: HangarVersion) => boolean;
   },
   signal?: AbortSignal,
 ): Promise<HangarVersion[]> {
@@ -109,23 +111,19 @@ export async function getHangarVersions(
     searchParams.set('offset', String(options.offset));
   }
 
-  const query = searchParams.toString();
-  const url = `${HANGAR_API_BASE}/projects/${encodeURIComponent(projectSlug)}/versions?${query}`;
-
-  const data = await rateLimitedFetchJson<HangarVersionsResult>(
-    url,
-    {
-      headers: {
-        Accept: 'application/json',
-      },
-    },
-    {
-      cacheTtlMs: 300000, // 5 minutes
-      signal,
-    },
-  );
-
-  const versions=data.result??[];
+  const versions: HangarVersion[] = [];
+  let offset = options?.offset ?? 0;
+  for (;;) {
+    const url = `${HANGAR_API_BASE}/projects/${encodeURIComponent(projectSlug)}/versions?${searchParams}`;
+    const page = await rateLimitedFetchJson<HangarVersionsResult>(
+      url, { headers: { Accept: 'application/json' } }, { cacheTtlMs: 300000, signal },
+    );
+    versions.push(...(page.result ?? []));
+    offset += page.result?.length ?? 0;
+    if (options?.stopWhen && (page.result ?? []).some(options.stopWhen)) break;
+    if (!options?.allPages || !page.result?.length || offset >= (page.pagination?.count ?? 0)) break;
+    searchParams.set('offset', String(offset));
+  }
  for(const version of versions)for(const download of Object.values(version.downloads??{}))rememberArtifactHashes(download.downloadUrl,{sha256:download.fileInfo?.sha256Hash});
  return versions;
 }

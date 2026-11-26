@@ -217,12 +217,34 @@ describe('Mod Update Tool & Jar Picker', () => {
           mockServer.id,
           'https://cdn.modrinth.com/data/fabric-api-0.105.0.jar',
           'fabric-api-0.105.0.jar',
-          'fabric-api', // deletes old jar by default
-          expect.anything(),
+          'fabric-api-0.100.0.jar',
+          expect.objectContaining({ releaseType: 'release', allowChannelSwitch: false }),
         );
         expect(onUpdated).toHaveBeenCalled();
         expect(onClose).toHaveBeenCalled();
       });
+    });
+
+    it('offers a more stable channel without changing the installed channel automatically', async () => {
+      const user = userEvent.setup();
+      const mod: Mod = { name: 'example', file: 'example-beta.jar.disabled', provider: 'modrinth', enabled: false, release_type: 'beta' };
+      vi.spyOn(api, 'getModAvailableVersions').mockResolvedValue([
+        { version_id: 'stable', version_name: 'Example Stable', version_number: '2.0', filename: 'example-release.jar', download_url: 'https://cdn.modrinth.com/stable.jar', release_type: 'release' },
+        { version_id: 'beta', version_name: 'Example Beta', version_number: '2.1-beta', filename: 'example-beta.jar', download_url: 'https://cdn.modrinth.com/beta.jar', release_type: 'beta', is_current: true },
+      ]);
+      const download = vi.spyOn(api, 'downloadMod').mockResolvedValue({ ...mod, release_type: 'release' });
+
+      render(<ModJarPickerDialog isOpen server={mockServer} mod={mod} onClose={vi.fn()} onUpdated={vi.fn()} />);
+      const showReleases = await screen.findByRole('button', { name: 'View Release builds' });
+      expect(screen.getByText('Example Beta')).toBeVisible();
+      expect(screen.queryByText('Example Stable')).toBeNull();
+      await user.click(showReleases);
+      expect(screen.getByText('Example Stable')).toBeVisible();
+      expect(download).not.toHaveBeenCalled();
+      await user.click(screen.getByRole('button', { name: 'Switch to Release' }));
+      expect(download).toHaveBeenCalledWith(mockServer.id, 'https://cdn.modrinth.com/stable.jar', 'example-release.jar', mod.file, expect.objectContaining({
+        allowChannelSwitch: true, releaseType: 'release', versionId: 'stable',
+      }));
     });
 
     it('supports uploading a replacement jar file directly from the Upload tab', async () => {

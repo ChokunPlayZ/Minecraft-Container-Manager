@@ -449,6 +449,8 @@ export interface Mod {
   project_id?: string;
   project_slug?: string;
   provider?: ModProvider;
+  release_type?: string;
+  catalog_version_id?: string;
 }
 
 export interface ModList {
@@ -459,6 +461,9 @@ export interface ModList {
 export interface AvailableModJar {
  hashes?: Record<string,string>;
   version_id: string;
+  provider?: ModProvider;
+  project_id?: string;
+  project_slug?: string;
   version_name: string;
   version_number: string;
   filename: string;
@@ -530,6 +535,8 @@ export interface ModTargetCompatibility {
   compatible_version?: string;
   compatible_jar?: string;
   download_url?: string;
+  catalog_version_id?: string;
+  hashes?: Record<string, string>;
   release_type?: string;
   release_date?: string;
   changelog?: string;

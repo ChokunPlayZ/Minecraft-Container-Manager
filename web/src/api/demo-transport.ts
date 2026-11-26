@@ -430,6 +430,8 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
     let projectId: string | undefined;
     let projectSlug: string | undefined;
     let provider: ModProvider | undefined;
+    let releaseType: string | undefined;
+    let versionId: string | undefined;
     if (init.body) {
       try {
         const parsed = JSON.parse(init.body as string);
@@ -443,6 +445,8 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
         if (parsed.project_id) projectId = parsed.project_id;
         if (parsed.project_slug) projectSlug = parsed.project_slug;
         if (parsed.provider) provider = parsed.provider;
+        releaseType = parsed.release_type;
+        versionId = parsed.catalog_version_id;
       } catch {
         // ignore
       }
@@ -463,6 +467,8 @@ export function handleMockRequest<T>(path: string, init: RequestInit = {}): T | 
       project_id: projectId,
       project_slug: projectSlug,
       provider,
+      release_type: releaseType,
+      catalog_version_id: versionId,
       ...(file.includes('graves-3.12.0')
         ? {
             mod_id: 'universal-graves',

@@ -1,3 +1,4 @@
+import { RELEASE_CHANNEL, curseForgeChannel, normalizeModChannel } from './mod-channels';
 import type {
   CurseForgeFile,
   CurseForgeMod,
@@ -33,6 +34,8 @@ export interface ResolvedDependency {
 
   // Target download info if missing
   versionNumber?: string;
+  releaseType?: string;
+  versionId?: string;
   filename?: string;
   downloadUrl?: string;
   fileSize?: number;
@@ -199,7 +202,7 @@ export async function resolveModrinthDependencies(
             signal,
           );
           if (versions.length > 0) {
-            targetVersion = versions[0];
+            targetVersion = versions.find((version) => normalizeModChannel(version.version_type || RELEASE_CHANNEL) === RELEASE_CHANNEL);
           }
         } catch {
           // If query fails, continue with partial metadata
@@ -221,6 +224,8 @@ export async function resolveModrinthDependencies(
         isLibrary,
         alreadyInstalled: false,
         versionNumber: targetVersion?.version_number,
+        releaseType: targetVersion ? normalizeModChannel(targetVersion.version_type || RELEASE_CHANNEL) : undefined,
+        versionId: targetVersion?.id,
         filename: primaryFile?.filename,
         downloadUrl: primaryFile?.url,
         fileSize: primaryFile?.size,
@@ -366,7 +371,7 @@ export async function resolveCurseForgeDependencies(
         gameVersion,
         modLoaderType,
       }, signal);
-      targetFile = fls.find((f) => f.fileName.toLowerCase().endsWith('.jar')) || fls[0];
+      targetFile = fls.find((file) => curseForgeChannel(file.releaseType) === RELEASE_CHANNEL && file.fileName.toLowerCase().endsWith('.jar'));
     } catch {
       // ignore
     }
@@ -391,6 +396,8 @@ export async function resolveCurseForgeDependencies(
       isLibrary,
       alreadyInstalled: false,
       versionNumber: targetFile?.displayName || targetFile?.fileName,
+      releaseType: targetFile ? curseForgeChannel(targetFile.releaseType) : undefined,
+      versionId: targetFile ? String(targetFile.id) : undefined,
       filename: targetFile?.fileName,
       downloadUrl,
       fileSize: targetFile?.fileLength,

@@ -447,7 +447,7 @@ describe('ModrinthBrowser component', () => {
         'server-1',
         'https://cdn.modrinth.com/data/chunky.jar',
         'Chunky-1.4.28.jar',
-        'Chunky',
+        'Chunky-1.4.27.jar',
         expect.objectContaining({ projectId: 'hit-2', projectSlug: 'chunky', provider: 'modrinth' }),
       );
       expect(onModInstalled).toHaveBeenCalled();

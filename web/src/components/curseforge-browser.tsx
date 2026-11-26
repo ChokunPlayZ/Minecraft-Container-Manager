@@ -1,3 +1,5 @@
+import { canSwitchModChannel, modChannelLabel, normalizeModChannel, RELEASE_CHANNEL, matchesInstalledArtifact, curseForgeChannel } from '../api/mod-channels';
+import { ModChannelBadge, ModChannelFilter } from './mod-channel-filter';
 import { Select } from './ui/select';
 import { DialogBackdrop } from './ui/dialog-backdrop';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -56,6 +58,16 @@ interface CurseForgeBrowserProps {
   onModDeleted?: (modName: string) => void;
 }
 
+function buildChannel(ver: CurseForgeFile) {
+  return curseForgeChannel(ver.releaseType);
+}
+
+function installedChannel(mod: Mod | undefined, versions: CurseForgeFile[]): string {
+  if (mod?.release_type) return normalizeModChannel(mod.release_type);
+  const current = mod && versions.find((ver) => matchesInstalledArtifact(mod, ver.fileName, ver.hashes?.find((hash) => hash.algo === 1)?.value));
+  return current ? buildChannel(current) : RELEASE_CHANNEL;
+}
+
 export function CurseForgeBrowser({
   server,
   installedMods,
@@ -87,6 +99,7 @@ export function CurseForgeBrowser({
   // Version picker modal
   const [selectedMod, setSelectedMod] = useState<CurseForgeMod | null>(null);
   const [files, setFiles] = useState<CurseForgeFile[]>([]);
+  const [channelFilter, setChannelFilter] = useState<string>();
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
@@ -174,6 +187,7 @@ export function CurseForgeBrowser({
       return;
     }
 
+    const controller = new AbortController();
     let isMounted = true;
     setLoadingFiles(true);
     setFileError(null);
@@ -181,7 +195,8 @@ export function CurseForgeBrowser({
     getCurseForgeFiles(selectedMod.id, {
       gameVersion: server.version,
       modLoaderType: loaderType,
-    })
+      allPages: true,
+    }, controller.signal)
       .then((fls) => {
         if (!isMounted) return;
         setFiles(fls);
@@ -196,8 +211,18 @@ export function CurseForgeBrowser({
 
     return () => {
       isMounted = false;
+      controller.abort();
     };
   }, [selectedMod, configured, server.version, loaderType]);
+
+  useEffect(() => {
+    setChannelFilter(undefined);
+  }, [selectedMod]);
+
+  const selectedInstalled = selectedMod ? findInstalledCurseForgeMod(selectedMod, installedMods) : undefined;
+  const currentChannel = installedChannel(selectedInstalled, files);
+  const visibleChannel = channelFilter ?? currentChannel;
+  const visibleBuilds = files.filter((version) => visibleChannel === 'all' || buildChannel(version) === visibleChannel);
 
   const { confirm, dialog } = useModal();
   const [updatePrompt, setUpdatePrompt] = useState<{
@@ -205,6 +230,7 @@ export function CurseForgeBrowser({
     existingMod: Mod;
     targetUrl: string;
     targetFilename: string;
+    build: { releaseType: string; versionId: string; allowChannelSwitch?: boolean };
     modId?: number | string;
     modSlug?: string;
     modName?: string;
@@ -217,6 +243,8 @@ export function CurseForgeBrowser({
       filename: string;
       iconUrl?: string | null;
       url: string;
+      build: { releaseType: string; versionId: string; allowChannelSwitch?: boolean };
+      existingMod?: Mod;
       modId?: number | string;
       modSlug?: string;
       modName?: string;
@@ -262,6 +290,7 @@ export function CurseForgeBrowser({
     modId?: number | string,
     modSlug?: string,
     modName?: string,
+    build?: { releaseType: string; versionId: string; allowChannelSwitch?: boolean },
     deleteOldMod?: Mod,
   ) {
     setInstallingId(modSlug || filename);
@@ -272,15 +301,16 @@ export function CurseForgeBrowser({
         server.id,
         downloadUrl,
         filename,
-        deleteOldMod?.name,
+        deleteOldMod?.file,
         {
           projectId: modId !== undefined ? String(modId) : undefined,
           projectSlug: modSlug,
           provider: 'curseforge',
+          ...build,
         },
       );
       onModInstalled(installed);
-      if (deleteOldMod) {
+      if (deleteOldMod && deleteOldMod.file !== installed.file) {
         onModDeleted?.(deleteOldMod.name);
       }
 
@@ -361,7 +391,7 @@ export function CurseForgeBrowser({
         currentName: primaryMod.title,
       });
 
-      const primaryExistingMod = findExistingOldJar(primaryMod.filename, {
+      const primaryExistingMod = primaryMod.existingMod ?? findExistingOldJar(primaryMod.filename, {
         name: primaryMod.modName || primaryMod.title,
         slug: primaryMod.modSlug || '',
       });
@@ -370,16 +400,17 @@ export function CurseForgeBrowser({
         server.id,
         primaryMod.url,
         primaryMod.filename,
-        primaryExistingMod?.name,
+        primaryExistingMod?.file,
         {
           projectId: primaryMod.modId !== undefined ? String(primaryMod.modId) : undefined,
           projectSlug: primaryMod.modSlug,
           provider: 'curseforge',
+          ...primaryMod.build,
         },
       );
 
       onModInstalled(downloadedPrimary);
-      if (primaryExistingMod) {
+      if (primaryExistingMod && primaryExistingMod.file !== downloadedPrimary.file) {
         onModDeleted?.(primaryExistingMod.name);
       }
       if (primaryMod.modSlug) {
@@ -406,16 +437,18 @@ export function CurseForgeBrowser({
           server.id,
           dep.downloadUrl,
           dep.filename,
-          depExistingMod?.name,
+          depExistingMod?.file,
           {
             projectId: dep.id,
             projectSlug: dep.slug,
             provider: 'curseforge',
+            releaseType: dep.releaseType,
+            versionId: dep.versionId,
           },
         );
 
         onModInstalled(downloadedDep);
-        if (depExistingMod) {
+        if (depExistingMod && depExistingMod.file !== downloadedDep.file) {
           onModDeleted?.(depExistingMod.name);
         }
         setInstalledSlugs((prev) => new Set([...prev, dep.slug, dep.title.toLowerCase()]));
@@ -447,30 +480,28 @@ export function CurseForgeBrowser({
     setError(null);
 
     try {
-      // Find compatible file
-      let targetFile: CurseForgeFile | undefined;
-      if (mod.latestFiles && mod.latestFiles.length > 0) {
-        targetFile = mod.latestFiles.find((f) => f.fileName.toLowerCase().endsWith('.jar')) || mod.latestFiles[0];
-      }
-
-      if (!targetFile) {
-        const fls = await getCurseForgeFiles(mod.id, {
-          gameVersion: server.version,
-          modLoaderType: loaderType,
-        });
-        targetFile = fls.find((f) => f.fileName.toLowerCase().endsWith('.jar')) || fls[0];
-      }
+      const installed = findInstalledCurseForgeMod(mod, installedMods);
+      const preferred = installedChannel(installed, []);
+      const matches = (file: CurseForgeFile, channel: string) =>
+        buildChannel(file) === channel && file.fileName.toLowerCase().endsWith('.jar');
+      const builds = await getCurseForgeFiles(mod.id, {
+        gameVersion: server.version, modLoaderType: loaderType, allPages: true,
+        stopWhen: !installed || installed.release_type ? (file) => matches(file, preferred) : undefined,
+      });
+      const channel = installedChannel(installed, builds);
+      const targetFile = builds.find((file) => matches(file, channel));
 
       if (!targetFile) {
         setSelectedMod(mod);
         setNotification({
           type: 'error',
-          text: 'No compatible jar file found for current version. Please choose manually.',
+          text: `No compatible ${modChannelLabel(channel)} build found. Choose a channel to see other builds.`,
         });
         setInstallingId(null);
         return;
       }
 
+      const build = { releaseType: buildChannel(targetFile), versionId: String(targetFile.id) };
       let downloadUrl = targetFile.downloadUrl;
       if (!downloadUrl) {
         downloadUrl = await getCurseForgeDownloadUrl(mod.id, targetFile.id);
@@ -497,6 +528,7 @@ export function CurseForgeBrowser({
                 filename: targetFile.fileName,
                 iconUrl: mod.logo?.thumbnailUrl || mod.logo?.url,
                 url: downloadUrl,
+                build,
                 modId: mod.id,
                 modSlug: mod.slug,
                 modName: mod.name,
@@ -517,6 +549,7 @@ export function CurseForgeBrowser({
           projectTitle: mod.name,
           existingMod,
           targetUrl: downloadUrl,
+          build,
           targetFilename: targetFile.fileName,
           modId: mod.id,
           modSlug: mod.slug,
@@ -525,7 +558,7 @@ export function CurseForgeBrowser({
         return;
       }
 
-      await executeInstall(downloadUrl, targetFile.fileName, mod.name, mod.id, mod.slug, mod.name);
+      await executeInstall(downloadUrl, targetFile.fileName, mod.name, mod.id, mod.slug, mod.name, build);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
@@ -537,6 +570,13 @@ export function CurseForgeBrowser({
 
   async function handleInstallFile(file: CurseForgeFile, modName: string) {
     if (!configured || !selectedMod) return;
+    const releaseType = buildChannel(file);
+    const switching = Boolean(selectedInstalled && currentChannel !== releaseType);
+    if (switching && (!canSwitchModChannel(currentChannel, releaseType) || !(await confirm(
+      `Switch ${modName} from ${modChannelLabel(currentChannel)} to ${modChannelLabel(releaseType)}? Future updates will stay on ${modChannelLabel(releaseType)}.`,
+      { title: 'Switch Release Channel', confirmLabel: `Switch to ${modChannelLabel(releaseType)}` },
+    )))) return;
+    const build = { releaseType, versionId: String(file.id), allowChannelSwitch: switching };
     setInstallingId(file.id);
 
     try {
@@ -565,6 +605,8 @@ export function CurseForgeBrowser({
                 filename: file.fileName,
                 iconUrl: selectedMod?.logo?.thumbnailUrl || selectedMod?.logo?.url,
                 url: downloadUrl,
+                build,
+                existingMod: switching ? selectedInstalled : undefined,
                 modId: selectedMod?.id,
                 modSlug: selectedMod?.slug,
                 modName: selectedMod?.name,
@@ -579,12 +621,13 @@ export function CurseForgeBrowser({
       }
 
       const existingMod = findExistingOldJar(file.fileName, selectedMod);
-      if (existingMod) {
+      if (existingMod && !switching) {
         setInstallingId(null);
         setUpdatePrompt({
           projectTitle: modName,
           existingMod,
           targetUrl: downloadUrl,
+          build,
           targetFilename: file.fileName,
           modId: selectedMod.id,
           modSlug: selectedMod.slug,
@@ -593,7 +636,7 @@ export function CurseForgeBrowser({
         return;
       }
 
-      await executeInstall(downloadUrl, file.fileName, modName, selectedMod.id, selectedMod.slug, selectedMod.name);
+      await executeInstall(downloadUrl, file.fileName, modName, selectedMod.id, selectedMod.slug, selectedMod.name, build, switching ? selectedInstalled : undefined);
     } catch (err: unknown) {
       setNotification({
         type: 'error',
@@ -640,15 +683,16 @@ export function CurseForgeBrowser({
           onSkipAndInstallPrimaryOnly={() => {
             const { primaryMod } = dependencyPrompt;
             setDependencyPrompt(null);
-            const existingMod = findExistingOldJar(primaryMod.filename, {
+            const existingMod = primaryMod.existingMod ?? findExistingOldJar(primaryMod.filename, {
               name: primaryMod.modName || primaryMod.title,
               slug: primaryMod.modSlug || '',
             });
-            if (existingMod) {
+            if (existingMod && !primaryMod.build.allowChannelSwitch) {
               setUpdatePrompt({
                 projectTitle: primaryMod.title,
                 existingMod,
                 targetUrl: primaryMod.url,
+                build: primaryMod.build,
                 targetFilename: primaryMod.filename,
                 modId: primaryMod.modId,
                 modSlug: primaryMod.modSlug,
@@ -663,6 +707,8 @@ export function CurseForgeBrowser({
               primaryMod.modId,
               primaryMod.modSlug,
               primaryMod.modName,
+              primaryMod.build,
+              existingMod,
             );
           }}
           onCancel={() => {
@@ -687,6 +733,7 @@ export function CurseForgeBrowser({
               updatePrompt.modId,
               updatePrompt.modSlug,
               updatePrompt.modName,
+              updatePrompt.build,
               updatePrompt.existingMod,
             )
           }
@@ -698,6 +745,7 @@ export function CurseForgeBrowser({
               updatePrompt.modId,
               updatePrompt.modSlug,
               updatePrompt.modName,
+              updatePrompt.build,
             )
           }
           onDeleteOldOnly={() => {
@@ -982,6 +1030,7 @@ export function CurseForgeBrowser({
                 );
               })()}
 
+              <ModChannelFilter value={visibleChannel} channels={files.map(buildChannel)} onChange={setChannelFilter} />
               {loadingFiles && (
                 <div className="flex flex-col items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-6 w-6 animate-spin text-orange-600" />
@@ -995,14 +1044,18 @@ export function CurseForgeBrowser({
                 </div>
               )}
 
-              {!loadingFiles && files.length === 0 && !fileError && (
+              {!loadingFiles && visibleBuilds.length === 0 && !fileError && (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  No compatible files found for this Minecraft version.
+                  No builds match this channel.
                 </p>
               )}
 
               {!loadingFiles &&
-                files.map((fl) => {
+                visibleBuilds.map((fl) => {
+                  const channel = buildChannel(fl);
+                  const switching = Boolean(selectedInstalled && currentChannel !== channel);
+                  const locked = switching && !canSwitchModChannel(currentChannel, channel);
+
                   const isFileInstalled = installedMods.some(
                     (m) =>
                       m.file.toLowerCase() === fl.fileName.toLowerCase() ||
@@ -1024,9 +1077,7 @@ export function CurseForgeBrowser({
                           <span className="font-semibold text-foreground truncate">
                             {fl.displayName || fl.fileName}
                           </span>
-                          <Badge variant="outline" className="text-[11px] uppercase">
-                            {fl.releaseType === 1 ? 'Release' : fl.releaseType === 2 ? 'Beta' : 'Alpha'}
-                          </Badge>
+                          <ModChannelBadge channel={channel} />
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {fl.fileName} · {formatFileSize(fl.fileLength)} · {formatCount(fl.downloadCount)} downloads
@@ -1039,7 +1090,7 @@ export function CurseForgeBrowser({
                             size="sm"
                             variant="secondary"
                             onClick={() => void handleInstallFile(fl, selectedMod.name)}
-                            disabled={installingId === fl.id}
+                            disabled={installingId === fl.id || locked}
                             className="h-8 gap-1.5 text-xs text-muted-foreground"
                             title="Reinstall this version"
                           >
@@ -1063,11 +1114,11 @@ export function CurseForgeBrowser({
                         <Button
                           size="sm"
                           onClick={() => void handleInstallFile(fl, selectedMod.name)}
-                          disabled={installingId === fl.id}
+                          disabled={installingId === fl.id || locked}
                           className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground shrink-0"
                         >
                           <Download className="h-3.5 w-3.5" />
-                          Install
+                          {locked ? 'Channel locked' : switching ? `Switch to ${modChannelLabel(channel)}` : 'Install'}
                         </Button>
                       )}
                     </div>
