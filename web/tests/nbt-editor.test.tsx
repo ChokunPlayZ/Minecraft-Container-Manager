@@ -230,13 +230,20 @@ describe('NBT entry points', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Open as NBT' }) !== null).toBe(supported);
   });
 
-  it('finds offline player data by name and opens quick edit from Players', async () => {
+  it.each([
+    {
+      uuid: '8667ba71-b85a-4004-af54-457a9734eed7',
+      path: 'survival/players/data/8667ba71-b85a-4004-af54-457a9734eed7.dat',
+      subtitle: '8667ba71-b85a-4004-af54-457a9734eed7 · survival',
+    },
+    { uuid: '', path: 'survival/players/Steve.dat', subtitle: 'survival' },
+  ])('finds offline player data by name and opens $path', async ({ uuid, path, subtitle }) => {
     vi.spyOn(nbtApi, 'players').mockResolvedValue({
       players: [
         {
-          uuid: '8667ba71-b85a-4004-af54-457a9734eed7',
+          uuid,
           name: 'Steve',
-          world: 'world',
+          world: 'survival',
           path,
           modified_at: '',
         },
@@ -245,7 +252,9 @@ describe('NBT entry points', () => {
     render(<PlayersPanel server={server} />);
     await userEvent.click(screen.getByRole('button', { name: 'Player data' }));
     fireEvent.change(await screen.findByLabelText('Search saved players'), { target: { value: 'steve' } });
-    await userEvent.click(await screen.findByRole('button', { name: /Steve.*Open player data/ }));
+    const player = await screen.findByRole('button', { name: `Steve ${subtitle} Open player data` });
+    await userEvent.click(player);
+    expect(nbtApi.read).toHaveBeenCalledWith('one', path);
     expect(await screen.findByLabelText('Health')).toHaveValue('20');
   });
 

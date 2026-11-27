@@ -59,8 +59,7 @@ export function PlayerDataPanel({
         <div>
           <h3 className="section-heading">Player data</h3>
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-            Edit saved health, food, XP, position and inventory. Players are listed from world playerdata
-            folders, including offline players. Open other NBT files from Files.
+            Edit saved health, food, XP, position and inventory, including for offline players.
           </p>
         </div>
         <Button size="sm" variant="outline" disabled={busy} onClick={() => void load()}>
@@ -121,7 +120,7 @@ export function PlayerDataPanel({
                     <span className="min-w-0">
                       <span className="block break-all text-sm font-medium">{p.name || p.uuid}</span>
                       <span className="block break-all font-mono text-xs text-muted-foreground">
-                        {p.name ? `${p.uuid} · ` : ''}
+                        {p.name && p.uuid ? `${p.uuid} · ` : ''}
                         {p.world}
                       </span>
                     </span>

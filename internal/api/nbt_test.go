@@ -29,12 +29,13 @@ func TestNBTEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := mustSession(t, d, user.ID)
-	_, err = d.DB.Exec(`INSERT INTO servers(id,name,server_type,version,ram_mb,host_port,state,created_at,updated_at) VALUES('one','Test','paper','1.21.4',2048,25565,'stopped','2026-01-01','2026-01-01')`)
+	_, err = d.DB.Exec(`INSERT INTO servers(id,name,server_type,version,ram_mb,host_port,state,created_at,updated_at) VALUES('one','Test','fabric','26.1',2048,25565,'stopped','2026-01-01','2026-01-01')`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := servers.NewStore(d, nil, nil, 25565, 25575, dir, "")
-	const rel = "world/playerdata/8667ba71-b85a-4004-af54-457a9734eed7.dat"
+	const playerID = "8667ba71-b85a-4004-af54-457a9734eed7"
+	const rel = "survival/players/data/" + playerID + ".dat"
 	data, err := nbt.Encode(nbt.Document{Compression: "gzip", Root: nbt.Tag{Type: 10, Children: []nbt.Tag{{Type: 4, Name: "long", Value: "9223372036854775807"}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +68,14 @@ func TestNBTEndpoints(t *testing.T) {
 		if r := call("GET", route, "", true, false); r.Code != 200 || r.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("read: %d %s", r.Code, r.Body)
 		}
+	}
+	list := call("GET", "/api/servers/one/players/data", "", true, false)
+	var savedPlayers struct{ Players []servers.PlayerDataFile }
+	if err := json.Unmarshal(list.Body.Bytes(), &savedPlayers); err != nil {
+		t.Fatal(err)
+	}
+	if players := savedPlayers.Players; len(players) != 1 || players[0].Path != rel || players[0].UUID != playerID || players[0].World != "survival" {
+		t.Fatalf("unexpected saved players: %+v", players)
 	}
 	read := call("GET", "/api/servers/one/files/nbt?path="+rel, "", true, false)
 	var file servers.NBTFile

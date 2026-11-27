@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mcm-panel/mcm/internal/jars"
 	"github.com/mcm-panel/mcm/internal/nbt"
 )
 
@@ -137,23 +138,64 @@ func TestPlayerDataDiscovery(t *testing.T) {
 	s := worldStore(t)
 	ctx := context.Background()
 	const id = "8667ba71-b85a-4004-af54-457a9734eed7"
-	for _, rel := range []string{"world/playerdata/" + id + ".dat", "worlds/modded/playerdata/" + id + ".dat", "world/playerdata/not-a-uuid.dat", "world/playerdata/" + id + ".dat_old", "plugins/playerdata/" + id + ".dat", ".mcm-world-trash/deleted/playerdata/" + id + ".dat"} {
-		worldPut(t, s, rel, levelNBT(t))
+	want := map[string]PlayerDataFile{
+		"world/playerdata/" + id + ".dat":         {UUID: id, Name: "Steve", World: "world"},
+		"worlds/modded/playerdata/" + id + ".dat": {UUID: id, Name: "Steve", World: "worlds/modded"},
+		"survival/players/data/" + id + ".dat":    {UUID: id, Name: "Steve", World: "survival"},
+		"worlds/modern/survival/season/one/players/data/" + id + ".dat": {
+			UUID: id, Name: "Steve", World: "worlds/modern/survival/season/one",
+		},
+		"classic/players/OldSteve.dat": {Name: "OldSteve", World: "classic"},
+	}
+	data := levelNBT(t)
+	for rel := range want {
+		worldPut(t, s, rel, data)
+	}
+	worldPut(t, s, "classic/level.dat", data)
+	worldPut(t, s, "survival/level.dat", data)
+	for _, rel := range []string{
+		"world/playerdata/not-a-uuid.dat",
+		"world/playerdata/" + id + ".dat_old",
+		"survival/players/data/" + id + ".dat_old",
+		"survival/players/stats/" + id + ".json",
+		"survival/data/" + id + ".dat",
+		"plugins/playerdata/" + id + ".dat",
+		"plugins/world/players/data/" + id + ".dat",
+		".mcm-world-trash/deleted/playerdata/" + id + ".dat",
+		".mcm-world-trash/deleted/players/data/" + id + ".dat",
+		"config/players/settings.dat",
+		"classic/players/not-a-player.dat",
+	} {
+		worldPut(t, s, rel, data)
 	}
 	worldPut(t, s, "usercache.json", []byte(`[{"uuid":"`+id+`","name":"Steve"}]`))
-	if err := os.Symlink(t.TempDir(), filepath.Join(s.dataPath("one"), "linked-world")); err != nil {
+	if err := os.Symlink("survival", filepath.Join(s.dataPath("one"), "linked-world")); err != nil {
 		t.Fatal(err)
 	}
-	players, err := s.ListPlayerData(ctx, "one")
-	if err != nil || len(players) != 2 {
-		t.Fatalf("players=%+v err=%v", players, err)
+	for _, jarType := range []jars.JarType{
+		jars.TypeVanilla, jars.TypeFabric, jars.TypeQuilt, jars.TypeForge, jars.TypeNeoForge,
+		jars.TypePaper, jars.TypeSpigot, jars.TypePurpur, jars.TypeFolia, jars.TypePufferfish, jars.TypeLeaf,
+		jars.TypeSponge, jars.TypeMohist, jars.TypeYouer, jars.TypeKetting, jars.TypeCrucible, jars.TypeCustom,
+	} {
+		t.Run(string(jarType), func(t *testing.T) {
+			if _, err := s.db.Exec(`UPDATE servers SET server_type=? WHERE id='one'`, jarType); err != nil {
+				t.Fatal(err)
+			}
+			players, err := s.ListPlayerData(ctx, "one")
+			if err != nil || len(players) != len(want) {
+				t.Fatalf("players=%+v err=%v", players, err)
+			}
+			seen := make(map[string]bool, len(players))
+			for _, p := range players {
+				entry, ok := want[p.Path]
+				if !ok || seen[p.Path] || p.UUID != entry.UUID || p.Name != entry.Name || p.World != entry.World || p.ModifiedAt.IsZero() {
+					t.Fatalf("unexpected player: %+v", p)
+				}
+				seen[p.Path] = true
+			}
+		})
 	}
-	for _, p := range players {
-		if p.UUID != id || p.Name != "Steve" || p.ModifiedAt.IsZero() {
-			t.Fatalf("bad player: %+v", p)
-		}
-	}
-	if _, err = s.ListPlayerData(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ListPlayerData(ctx, "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("missing server", err)
 	}
 }

@@ -201,8 +201,8 @@ func (s *Store) WriteNBT(ctx context.Context, id, rel, expected string, doc nbt.
 	return NBTFile{Path: rel, Revision: nbtRevision(data), Editable: true, Document: doc, BackupPath: backup}, nil
 }
 
-// Discovery only inspects playerdata directories, not potentially huge region
-// trees. It supports world folders nested by modded/multiworld servers.
+// Discovery recognizes Java player save layouts by path, including world folders
+// nested by modded or multiworld servers.
 func (s *Store) ListPlayerData(ctx context.Context, id string) ([]PlayerDataFile, error) {
 	unlock := s.lockWorld(id, false)
 	defer unlock()
@@ -251,41 +251,72 @@ func (s *Store) ListPlayerData(ctx context.Context, id string) ([]PlayerDataFile
 		if visited > 50000 {
 			return fmt.Errorf("%w: too many folders to discover player data", nbt.ErrInvalid)
 		}
-		if !d.IsDir() {
+		if rel == "." || !d.IsDir() {
 			return nil
 		}
-		if rel != "." && strings.HasPrefix(d.Name(), ".") {
-			return fs.SkipDir
-		}
-		if strings.Count(rel, "/") > 5 {
-			return fs.SkipDir
-		}
-		if d.Name() == "playerdata" {
-			entries, err := fs.ReadDir(root.FS(), rel)
-			if err != nil {
-				return err
-			}
-			for _, e := range entries {
-				if e.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(strings.ToLower(e.Name()), ".dat") {
-					continue
-				}
-				u, err := uuid.Parse(strings.TrimSuffix(e.Name(), path.Ext(e.Name())))
-				if err != nil {
-					continue
-				}
-				info, err := e.Info()
-				if err != nil || !info.Mode().IsRegular() {
-					continue
-				}
-				result = append(result, PlayerDataFile{UUID: u.String(), Name: names[u.String()], World: path.Dir(rel), Path: path.Join(rel, e.Name()), ModifiedAt: info.ModTime()})
-			}
+		if strings.HasPrefix(d.Name(), ".") {
 			return fs.SkipDir
 		}
 		switch d.Name() {
-		case "region", "entities", "poi", "plugins", "mods", "libraries", "backups", ".mcm-trash":
+		case "region", "entities", "poi", "plugins", "mods", "libraries", "backups":
 			return fs.SkipDir
 		}
-		return nil
+		world := path.Dir(rel)
+		depth := strings.Count(rel, "/")
+		modern := d.Name() == "data" && path.Base(world) == "players"
+		if modern {
+			world = path.Dir(world)
+			depth-- // players/data adds a directory below the same world.
+		}
+		if depth > 5 {
+			return fs.SkipDir
+		}
+		byName := d.Name() == "players"
+		if !modern && !byName && d.Name() != "playerdata" {
+			return nil
+		}
+		if byName {
+			// Before UUID filenames, player saves sat directly in a world's players folder.
+			info, err := root.Lstat(path.Join(world, "level.dat"))
+			if err != nil || !info.Mode().IsRegular() {
+				return nil
+			}
+		}
+		entries, err := fs.ReadDir(root.FS(), rel)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			ext := path.Ext(e.Name())
+			if !e.Type().IsRegular() || !strings.EqualFold(ext, ".dat") {
+				continue
+			}
+			stem := strings.TrimSuffix(e.Name(), ext)
+			player := PlayerDataFile{World: world, Path: path.Join(rel, e.Name())}
+			if byName {
+				if !playerNamePattern.MatchString(stem) {
+					continue
+				}
+				player.Name = stem
+			} else {
+				u, err := uuid.Parse(stem)
+				if err != nil {
+					continue
+				}
+				player.UUID = u.String()
+				player.Name = names[player.UUID]
+			}
+			info, err := e.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			player.ModifiedAt = info.ModTime()
+			result = append(result, player)
+		}
+		if byName {
+			return nil // Also visit the modern players/data subdirectory if it exists.
+		}
+		return fs.SkipDir
 	})
 	if err != nil {
 		return nil, err
