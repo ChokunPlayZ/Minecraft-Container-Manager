@@ -1,12 +1,13 @@
 import { usePermissions } from '../lib/auth';
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { Server, WhitelistEntry } from '../api/types';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { PlayerAvatar } from './player-avatar';
 import { useModal } from './ui/modal';
 
 export function WhitelistPanel({ server }: { server: Server }) {
@@ -98,7 +99,7 @@ export function WhitelistPanel({ server }: { server: Server }) {
               className="flex items-center justify-between gap-2 rounded-md border p-2.5 text-sm"
             >
               <div className="flex min-w-0 items-center gap-2">
-                <ShieldCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <PlayerAvatar name={e.name} size={28} />
                 <span className="truncate font-medium">{e.name}</span>
               </div>
               <Button
